@@ -43,7 +43,7 @@ class DispatchTests(unittest.TestCase):
         app = AnalyticsApp(market=FixtureMarketDataProvider())
         status, health = dispatch(app, "GET", "/health")
         self.assertEqual(status, 200)
-        self.assertEqual(health["phase"], "P3.5")
+        self.assertEqual(health["phase"], "P4")
         self.assertEqual(health["market_provider"], "fixture")
         self.assertTrue(health["market_data_synthetic"])
 

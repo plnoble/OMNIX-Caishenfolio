@@ -48,7 +48,7 @@ class AkshareFailClosedTests(unittest.TestCase):
         app = AnalyticsApp(market=AkshareMarketDataProvider())
         status, health = dispatch(app, "GET", "/health")
         self.assertEqual(status, 200)
-        self.assertEqual(health["phase"], "P3.5")
+        self.assertEqual(health["phase"], "P4")
         self.assertEqual(health["market_provider"], "akshare")
         self.assertIn("market_provider_ready", health)
         self.assertFalse(health["market_data_synthetic"])

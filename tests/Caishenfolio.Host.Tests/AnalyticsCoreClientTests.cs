@@ -11,7 +11,7 @@ public class AnalyticsCoreClientTests
     public async Task GetHealthAsync_ParsesPayload()
     {
         var json = """
-            {"status":"ok","product":"OMNIX-Caishenfolio","version":"0.5.1","phase":"P3.5","disclaimer":"研究/模拟结论，非投资建议。","live_trading_enabled":false,"market_provider":"akshare","market_provider_ready":true,"market_data_synthetic":false}
+            {"status":"ok","product":"OMNIX-Caishenfolio","version":"0.7.0","phase":"P4","disclaimer":"研究/模拟结论，非投资建议。","live_trading_enabled":false,"market_provider":"akshare","market_provider_ready":true,"market_data_synthetic":false}
             """;
         using var http = new HttpClient(new StubHandler(json))
         {
@@ -23,7 +23,7 @@ public class AnalyticsCoreClientTests
 
         Assert.Equal("ok", health.Status);
         Assert.Equal("OMNIX-Caishenfolio", health.Product);
-        Assert.Equal("P3.5", health.Phase);
+        Assert.Equal("P4", health.Phase);
         Assert.False(health.LiveTradingEnabled);
         Assert.Equal("akshare", health.MarketProvider);
         Assert.True(health.MarketProviderReady);

@@ -64,7 +64,7 @@ class SymbolAndProviderTests(unittest.TestCase):
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["product"], "Caishenfolio")
         self.assertFalse(payload["live_trading_enabled"])
-        self.assertEqual(payload["phase"], "P3.5")
+        self.assertEqual(payload["phase"], "P4")
 
 
 if __name__ == "__main__":

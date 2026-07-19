@@ -53,7 +53,7 @@ class ResearchCommandTests(unittest.TestCase):
     def test_health_phase_p3(self) -> None:
         status, health = dispatch(AnalyticsApp(market=FixtureMarketDataProvider()), "GET", "/health")
         self.assertEqual(status, 200)
-        self.assertEqual(health["phase"], "P3.5")
+        self.assertEqual(health["phase"], "P4")
 
     def test_get_task_and_artifacts(self) -> None:
         app = AnalyticsApp(market=FixtureMarketDataProvider())
