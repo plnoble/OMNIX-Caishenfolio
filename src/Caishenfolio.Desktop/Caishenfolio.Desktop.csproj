@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Caishenfolio.Host\Caishenfolio.Host.csproj" />
+  </ItemGroup>
+
+  <!-- Ship docs with the Desktop so in-app viewers work from bin output. -->
+  <ItemGroup>
+    <Content Include="..\..\docs\API.md" Link="docs\API.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\docs\MARKET_PROVIDERS.md" Link="docs\MARKET_PROVIDERS.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,264 @@
+<Window x:Class="Caishenfolio.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="OMNIX-Caishenfolio"
+        Height="820"
+        Width="1180"
+        MinHeight="640"
+        MinWidth="980"
+        WindowStartupLocation="CenterScreen"
+        Background="#0F1419"
+        Foreground="#E7ECF1">
+    <Window.Resources>
+        <Style x:Key="BarsCellText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#F2F5F8" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="4,0" />
+        </Style>
+    </Window.Resources>
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" Margin="0,0,0,4">
+            <Border DockPanel.Dock="Right"
+                    Background="#243041"
+                    CornerRadius="8"
+                    Padding="12,6"
+                    VerticalAlignment="Center">
+                <TextBlock x:Name="VersionBadge"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           Foreground="#9FE8C2" />
+            </Border>
+            <TextBlock x:Name="TitleText" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Center" />
+        </DockPanel>
+        <TextBlock x:Name="PhaseText" Grid.Row="1" FontSize="13" Opacity="0.8" Margin="0,0,0,10" TextWrapping="Wrap" />
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,10">
+            <Button Content="启动分析核心" Padding="12,6" Margin="0,0,8,0" Click="StartCoreButton_OnClick" />
+            <Button Content="健康检查" Padding="12,6" Margin="0,0,8,0" Click="HealthButton_OnClick" />
+            <Button Content="停止核心" Padding="12,6" Margin="0,0,8,0" Click="StopCoreButton_OnClick" />
+            <Button Content="数据源与密钥" Padding="12,6" Click="DataSourceButton_OnClick" />
+        </StackPanel>
+
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="320" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Left: watchlist + search -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" MinHeight="160" />
+                    <RowDefinition Height="10" />
+                    <RowDefinition Height="*" MinHeight="160" />
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Background="#1A222C" CornerRadius="10" Padding="12">
+                    <DockPanel LastChildFill="True">
+                        <TextBlock DockPanel.Dock="Top" Text="我的关注" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <TextBlock DockPanel.Dock="Top"
+                                   Text="收藏标的，单击即可填入并加载。无需每次手输。"
+                                   TextWrapping="Wrap" Opacity="0.7" FontSize="11" Margin="0,0,0,8" />
+                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+                            <Button Content="加入关注" Padding="10,4" Margin="0,0,8,0" Click="AddWatchButton_OnClick" />
+                            <Button Content="取消关注" Padding="10,4" Margin="0,0,8,0" Click="RemoveWatchButton_OnClick" />
+                            <Button Content="同步缓存" Padding="10,4" Click="SyncWatchCacheButton_OnClick" />
+                        </StackPanel>
+                        <ListBox x:Name="WatchList"
+                                 Background="#12181F"
+                                 Foreground="#E7ECF1"
+                                 BorderThickness="0"
+                                 DisplayMemberPath="Display"
+                                 MouseDoubleClick="WatchList_OnMouseDoubleClick"
+                                 SelectionChanged="WatchList_OnSelectionChanged" />
+                    </DockPanel>
+                </Border>
+
+                <Border Grid.Row="2" Background="#1A222C" CornerRadius="10" Padding="12">
+                    <DockPanel LastChildFill="True">
+                        <TextBlock DockPanel.Dock="Top" Text="添加标的（搜索）" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <TextBlock DockPanel.Dock="Top"
+                                   Text="不知道代码时用：搜名称/代码 → 选中 → 加入关注。日常看盘请用上方「我的关注」。"
+                                   TextWrapping="Wrap"
+                                   Opacity="0.8"
+                                   FontSize="11"
+                                   Margin="0,0,0,6" />
+                        <TextBlock DockPanel.Dock="Top"
+                                   x:Name="MarketHintText"
+                                   TextWrapping="Wrap"
+                                   Opacity="0.7"
+                                   FontSize="11"
+                                   Margin="0,0,0,8" />
+                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBox x:Name="SearchBox" Width="170" Padding="6,4" KeyDown="SearchBox_OnKeyDown" />
+                            <Button Content="搜索" Margin="8,0,0,0" Padding="10,4" Click="SearchButton_OnClick" />
+                        </StackPanel>
+                        <ListBox x:Name="SymbolList"
+                                 Background="#12181F"
+                                 Foreground="#E7ECF1"
+                                 BorderThickness="0"
+                                 DisplayMemberPath="Display"
+                                 SelectionChanged="SymbolList_OnSelectionChanged" />
+                    </DockPanel>
+                </Border>
+            </Grid>
+
+            <!-- Right: chart + bars -->
+            <Border Grid.Column="2" Background="#1A222C" CornerRadius="10" Padding="12">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="220" />
+                        <RowDefinition Height="8" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="行情 · K线 · 研究" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8" />
+
+                    <WrapPanel Grid.Row="1" Margin="0,0,0,6">
+                        <TextBlock Text="标的" VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <TextBox x:Name="SymbolBox" Width="130" Padding="6,4" Text="SSE:600000" Margin="0,0,8,4" />
+                        <TextBlock x:Name="SymbolMarketTag" VerticalAlignment="Center" Margin="0,0,10,4"
+                                   FontWeight="SemiBold" Foreground="#7DD3A7" Text="【A股】" />
+                        <TextBlock Text="周期" VerticalAlignment="Center" Margin="0,0,6,4" />
+                        <ComboBox x:Name="IntervalCombo" Width="92" Padding="4" Margin="0,0,10,4" SelectedIndex="5">
+                            <ComboBoxItem Tag="1m" Content="1分钟" />
+                            <ComboBoxItem Tag="5m" Content="5分钟" />
+                            <ComboBoxItem Tag="15m" Content="15分钟" />
+                            <ComboBoxItem Tag="30m" Content="30分钟" />
+                            <ComboBoxItem Tag="60m" Content="60分钟" />
+                            <ComboBoxItem Tag="daily" Content="日K" IsSelected="True" />
+                            <ComboBoxItem Tag="weekly" Content="周K" />
+                            <ComboBoxItem Tag="monthly" Content="月K" />
+                            <ComboBoxItem Tag="quarterly" Content="季K" />
+                            <ComboBoxItem Tag="yearly" Content="年K" />
+                        </ComboBox>
+                        <TextBlock Text="复权" VerticalAlignment="Center" Margin="0,0,6,4" />
+                        <ComboBox x:Name="AdjustmentCombo" Width="88" Padding="4" Margin="0,0,10,4" SelectedIndex="0">
+                            <ComboBoxItem Tag="raw" Content="不复权" IsSelected="True" />
+                            <ComboBoxItem Tag="forward" Content="前复权" />
+                            <ComboBoxItem Tag="backward" Content="后复权" />
+                        </ComboBox>
+                        <TextBlock Text="开始" VerticalAlignment="Center" Margin="0,0,6,4" />
+                        <TextBox x:Name="StartDateBox" Width="92" Padding="6,4" Margin="0,0,8,4" />
+                        <TextBlock Text="结束" VerticalAlignment="Center" Margin="0,0,6,4" />
+                        <TextBox x:Name="EndDateBox" Width="92" Padding="6,4" Margin="0,0,4,4" />
+                    </WrapPanel>
+
+                    <StackPanel Grid.Row="2" Margin="0,0,0,6">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <Button Content="加载行情" Padding="10,5" Margin="0,0,6,0" Click="LoadBarsButton_OnClick" />
+                            <Button Content="近1月" Padding="10,5" Margin="0,0,6,0" Click="QuickRange1M_OnClick" />
+                            <Button Content="近3月" Padding="10,5" Margin="0,0,6,0" Click="QuickRange3M_OnClick" />
+                            <Button Content="近1年" Padding="10,5" Margin="0,0,6,0" Click="QuickRange1Y_OnClick" />
+                            <Button Content="重置最新" Padding="10,5" Margin="0,0,6,0" Click="ResetLatestRangeButton_OnClick" />
+                            <Button Content="加入关注" Padding="10,5" Margin="0,0,6,0" Click="AddWatchButton_OnClick" />
+                            <Button Content="研究快照" Padding="10,5" Margin="0,0,6,0" Click="ResearchButton_OnClick" />
+                            <Button Content="清理缓存" Padding="10,5" Click="ClearCacheButton_OnClick" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <TextBlock Text="图工具" VerticalAlignment="Center" Margin="0,0,8,0" Opacity="0.85" />
+                            <Button Content="十字光标" Padding="8,4" Margin="0,0,6,0" Click="ChartModeCrosshair_OnClick" />
+                            <Button Content="平移" Padding="8,4" Margin="0,0,6,0" Click="ChartModePan_OnClick" />
+                            <Button Content="趋势线" Padding="8,4" Margin="0,0,6,0" Click="ChartModeTrend_OnClick" />
+                            <Button Content="水平线" Padding="8,4" Margin="0,0,6,0" Click="ChartModeHoriz_OnClick" />
+                            <Button Content="清除画线" Padding="8,4" Margin="0,0,6,0" Click="ChartClearDraw_OnClick" />
+                            <Button Content="重置缩放" Padding="8,4" Click="ChartResetZoom_OnClick" />
+                        </StackPanel>
+                        <TextBlock x:Name="ChartPeriodHint" Opacity="0.85" FontSize="12"
+                                   Text="滚轮缩放 · 右键拖拽平移 · 趋势线/水平线：点两点完成" />
+                        <TextBlock x:Name="CrosshairLabel" Margin="0,4,0,0" FontFamily="Consolas" FontSize="12"
+                                   Foreground="#E8F0FF" Text="" />
+                    </StackPanel>
+
+                    <Border Grid.Row="3" Background="#0E141A" CornerRadius="6" BorderBrush="#2A3542" BorderThickness="1" Height="260">
+                        <Canvas x:Name="ChartCanvas"
+                                ClipToBounds="True"
+                                Background="#0E141A"
+                                SizeChanged="ChartCanvas_OnSizeChanged" />
+                    </Border>
+
+                    <DataGrid x:Name="BarsGrid"
+                              Grid.Row="5"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="True"
+                              CanUserAddRows="False"
+                              CanUserResizeRows="False"
+                              HeadersVisibility="Column"
+                              GridLinesVisibility="Horizontal"
+                              HorizontalGridLinesBrush="#2A3542"
+                              Background="#0E141A"
+                              Foreground="#F2F5F8"
+                              BorderThickness="0"
+                              RowBackground="#0E141A"
+                              AlternatingRowBackground="#151C24"
+                              RowHeight="28"
+                              ColumnHeaderHeight="32"
+                              FontSize="13">
+                        <DataGrid.Resources>
+                            <Style TargetType="DataGridColumnHeader">
+                                <Setter Property="Background" Value="#243041" />
+                                <Setter Property="Foreground" Value="#F7FAFC" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                                <Setter Property="BorderBrush" Value="#2A3542" />
+                                <Setter Property="BorderThickness" Value="0,0,1,1" />
+                                <Setter Property="Padding" Value="10,6" />
+                            </Style>
+                            <Style TargetType="DataGridCell">
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="Foreground" Value="#F2F5F8" />
+                                <Setter Property="BorderThickness" Value="0" />
+                                <Setter Property="Padding" Value="8,4" />
+                                <Style.Triggers>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter Property="Background" Value="#2B4C6F" />
+                                        <Setter Property="Foreground" Value="#FFFFFF" />
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.Resources>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="日期" Binding="{Binding DateText}" Width="100" ElementStyle="{StaticResource BarsCellText}" />
+                            <DataGridTextColumn Header="开" Binding="{Binding Open, StringFormat={}{0:0.####}}" Width="70" ElementStyle="{StaticResource BarsCellText}" />
+                            <DataGridTextColumn Header="高" Binding="{Binding High, StringFormat={}{0:0.####}}" Width="70" ElementStyle="{StaticResource BarsCellText}" />
+                            <DataGridTextColumn Header="低" Binding="{Binding Low, StringFormat={}{0:0.####}}" Width="70" ElementStyle="{StaticResource BarsCellText}" />
+                            <DataGridTextColumn Header="收" Binding="{Binding Close, StringFormat={}{0:0.####}}" Width="70" ElementStyle="{StaticResource BarsCellText}" />
+                            <DataGridTextColumn Header="成交量" Binding="{Binding Volume, StringFormat={}{0:N0}}" Width="100" ElementStyle="{StaticResource BarsCellText}" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock x:Name="ResearchStatusText"
+                               Grid.Row="6"
+                               TextWrapping="Wrap"
+                               Opacity="0.9"
+                               Margin="0,8,0,0"
+                               FontFamily="Consolas"
+                               FontSize="12" />
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="4" Background="#1A222C" CornerRadius="10" Padding="12" Margin="0,10,0,0">
+            <StackPanel>
+                <TextBlock Text="运行状态" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,6" />
+                <TextBlock x:Name="StatusText" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" />
+                <TextBlock x:Name="DisclaimerText" TextWrapping="Wrap" Opacity="0.75" Margin="0,8,0,0" />
+            </StackPanel>
+        </Border>
+
+        <TextBlock x:Name="VersionText" Grid.Row="5" Margin="0,8,0,0" Opacity="0.55" FontSize="12" />
+    </Grid>
+</Window>

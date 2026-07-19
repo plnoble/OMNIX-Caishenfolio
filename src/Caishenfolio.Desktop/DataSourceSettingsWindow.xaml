@@ -1,0 +1,127 @@
+<Window x:Class="Caishenfolio.Desktop.DataSourceSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="OMNIX-Caishenfolio · 数据源与存储"
+        Height="720"
+        Width="760"
+        MinHeight="480"
+        MinWidth="560"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F1419"
+        Foreground="#E7ECF1">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="18">
+        <StackPanel>
+            <TextBlock Text="行情数据源与密钥"
+                       FontSize="20"
+                       FontWeight="SemiBold"
+                       Margin="0,0,0,8" />
+            <TextBlock TextWrapping="Wrap"
+                       Opacity="0.85"
+                       Margin="0,0,0,14"
+                       Text="密钥只保存在本机 State 目录，不会写入代码仓库。保存后请「停止核心」再「启动分析核心」使配置生效。真实行情失败不会造假数据。" />
+
+            <TextBlock Text="主数据源模式" FontWeight="SemiBold" Margin="0,0,0,6" />
+            <ComboBox x:Name="ProviderCombo" Margin="0,0,0,12" Padding="6">
+                <ComboBoxItem Tag="auto" Content="auto — 自动组合（推荐：免费源优先，密钥源备用）" IsSelected="True" />
+                <ComboBoxItem Tag="akshare" Content="akshare — 免费（东财/新浪/腾讯等，A股主力）" />
+                <ComboBoxItem Tag="yfinance" Content="yfinance — 免费（Yahoo，美股/部分港股）" />
+                <ComboBoxItem Tag="tushare" Content="tushare — 需 Token（A股，免费额度/积分）" />
+                <ComboBoxItem Tag="alphavantage" Content="alphavantage — 需 API Key（美股，免费档限额）" />
+                <ComboBoxItem Tag="fixture" Content="fixture — 合成演示（非真实）" />
+            </ComboBox>
+
+            <CheckBox x:Name="TrustEnvCheck"
+                      Content="遵循系统代理（HTTP_PROXY）。若出现 ProxyError 请取消勾选"
+                      Margin="0,0,0,16"
+                      Foreground="#E7ECF1" />
+
+            <Border Background="#1A222C" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="Tushare Pro Token（需你申请）" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock TextWrapping="Wrap" Opacity="0.75" FontSize="12" Margin="0,0,0,6"
+                               Text="免费注册后获得 token；部分接口按积分计费。https://tushare.pro" />
+                    <PasswordBox x:Name="TushareTokenBox" Padding="6" Margin="0,0,0,6" />
+                    <CheckBox x:Name="ShowTushareCheck"
+                              Content="显示明文"
+                              Foreground="#E7ECF1"
+                              Checked="ShowTushareCheck_OnChanged"
+                              Unchecked="ShowTushareCheck_OnChanged" />
+                    <TextBox x:Name="TushareTokenPlainBox"
+                             Padding="6"
+                             Visibility="Collapsed"
+                             Margin="0,6,0,0" />
+                </StackPanel>
+            </Border>
+
+            <Border Background="#1A222C" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="Alpha Vantage API Key（需你申请）" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock TextWrapping="Wrap" Opacity="0.75" FontSize="12" Margin="0,0,0,6"
+                               Text="免费档有日调用限额；付费档更高。https://www.alphavantage.co/support/#api-key" />
+                    <PasswordBox x:Name="AlphaKeyBox" Padding="6" Margin="0,0,0,6" />
+                    <CheckBox x:Name="ShowAlphaCheck"
+                              Content="显示明文"
+                              Foreground="#E7ECF1"
+                              Checked="ShowAlphaCheck_OnChanged"
+                              Unchecked="ShowAlphaCheck_OnChanged" />
+                    <TextBox x:Name="AlphaKeyPlainBox"
+                             Padding="6"
+                             Visibility="Collapsed"
+                             Margin="0,6,0,0" />
+                </StackPanel>
+            </Border>
+
+            <Border Background="#1A222C" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="本地 K 线缓存位置（可自选）" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock TextWrapping="Wrap" Opacity="0.75" FontSize="12" Margin="0,0,0,8"
+                               Text="关注列表增量行情保存在此文件。可改到大容量盘。保存后需重启分析核心。" />
+                    <DockPanel Margin="0,0,0,8">
+                        <Button DockPanel.Dock="Right" Content="浏览…" Padding="10,4" Margin="8,0,0,0"
+                                Click="BrowseCachePath_OnClick" />
+                        <TextBox x:Name="BarsCachePathBox" Padding="6" />
+                    </DockPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="最大占用(MB)" VerticalAlignment="Center" Margin="0,0,8,0" />
+                        <TextBox x:Name="BarsCacheMaxMbBox" Width="80" Padding="6" Text="512" />
+                        <Button Content="恢复默认路径" Padding="10,4" Margin="12,0,0,0"
+                                Click="ResetCachePath_OnClick" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Background="#1A222C" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="免费源（无需填写 Key）" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock TextWrapping="Wrap" LineHeight="20"
+                               Text="• akshare：A股/港股/美股/ETF/基金（公开网页源）&#x0a;• yfinance：美股/部分港股&#x0a;安装：pip install akshare pandas yfinance" />
+                </StackPanel>
+            </Border>
+
+            <Border Background="#1A222C" CornerRadius="8" Padding="12" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="未接入 / 需商务（仅说明）" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock TextWrapping="Wrap" Opacity="0.85" LineHeight="20"
+                               Text="Wind、同花顺 iFinD、Bloomberg 等为机构付费授权，默认不接入。Polygon/Finnhub 等可后续加（需 Key）。详见 docs/MARKET_PROVIDERS.md" />
+                </StackPanel>
+            </Border>
+
+            <TextBlock x:Name="PathText" Opacity="0.7" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,12" />
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="打开说明文档"
+                        Padding="12,6"
+                        Margin="0,0,8,0"
+                        Click="OpenDocsButton_OnClick" />
+                <Button Content="保存"
+                        Padding="16,6"
+                        Margin="0,0,8,0"
+                        Click="SaveButton_OnClick" />
+                <Button Content="关闭"
+                        Padding="16,6"
+                        IsCancel="True"
+                        Click="CloseButton_OnClick" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Window>

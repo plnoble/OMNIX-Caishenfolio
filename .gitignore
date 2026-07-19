@@ -1,0 +1,26 @@
+bin/
+obj/
+.local/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.user
+*.suo
+.vs/
+.idea/
+*.log
+dist/
+*.egg-info/
+.pytest_cache/
+.coverage
+*.msi
+*.wixpdb
+*.db
+.DS_Store
+Thumbs.db
+# local runtime state (never commit secrets/cache)
+**/market_credentials.json
+**/bars_cache.db
+**/symbol_name_index.json
+**/watchlist.json

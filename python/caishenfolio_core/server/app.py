@@ -1,0 +1,383 @@
+from __future__ import annotations
+
+import json
+import os
+from datetime import date
+from typing import Any
+from urllib.parse import parse_qs
+
+from caishenfolio_core import PRODUCT_NAME, RESEARCH_DISCLAIMER, __version__
+from caishenfolio_core.data.bar_interval import BarInterval
+from caishenfolio_core.data.models import Adjustment
+from caishenfolio_core.market.bar_cache import BarsSqliteCache
+from caishenfolio_core.market.cached_market import CachingMarketFacade
+from caishenfolio_core.market.factory import create_market_provider, provider_status
+from caishenfolio_core.market.fixture import FixtureMarketDataProvider
+from caishenfolio_core.market.network import trust_env_enabled
+from caishenfolio_core.market.symbol_index import fuzzy_search_a_share
+from caishenfolio_core.security.loopback import ensure_loopback, is_denied_wildcard
+from caishenfolio_core.tasks.models import TaskKind, TaskStatus
+from caishenfolio_core.tasks.store import InMemoryTaskStore
+
+
+def _cache_enabled() -> bool:
+    return (os.environ.get("CAISHENFOLIO_BARS_CACHE") or "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
+class AnalyticsApp:
+    def __init__(
+        self,
+        *,
+        market: Any | None = None,
+        tasks: InMemoryTaskStore | None = None,
+        cache: BarsSqliteCache | None = None,
+    ) -> None:
+        self.market = market if market is not None else create_market_provider()
+        self.tasks = tasks or InMemoryTaskStore()
+        self.cache = cache
+        if self.cache is None and isinstance(self.market, CachingMarketFacade):
+            self.cache = self.market.cache
+        elif self.cache is None and _cache_enabled() and not isinstance(self.market, FixtureMarketDataProvider):
+            try:
+                self.cache = BarsSqliteCache()
+            except Exception:  # noqa: BLE001
+                self.cache = None
+
+    def health(self) -> dict[str, object]:
+        status = provider_status(self.market)
+        payload: dict[str, object] = {
+            "status": "ok",
+            "product": PRODUCT_NAME,
+            "version": __version__,
+            "phase": "P3.6",
+            "disclaimer": RESEARCH_DISCLAIMER,
+            "live_trading_enabled": False,
+        }
+        payload.update(status)
+        if self.cache is not None:
+            payload["bars_cache"] = self.cache.stats().to_dict()
+        return payload
+
+    def market_diagnostics(self) -> dict[str, object]:
+        status = provider_status(self.market)
+        tips: list[str] = []
+        ready = bool(status.get("market_provider_ready"))
+        synthetic = bool(status.get("market_data_synthetic"))
+        if not ready:
+            tips.append("请安装免费源: pip install akshare pandas yfinance")
+        tips.append("支持模糊搜索：输入「浦发」可匹配名称。")
+        tips.append("K线周期：1/5/15/30/60分钟、日/周/月/季/年。")
+        tips.append("本地 bars 缓存默认开启，关注列表可增量同步。")
+        if synthetic:
+            tips.append("当前为 fixture 合成数据，仅供演示。")
+        if not synthetic and trust_env_enabled():
+            tips.append("Proxy 问题时设 CAISHENFOLIO_HTTP_TRUST_ENV=0 或关闭系统代理。")
+        payload = {
+            **status,
+            "tips": tips,
+            "supported_examples": [
+                "SSE:600000",
+                "SZSE:000001",
+                "HKEX:00700",
+                "NASDAQ:AAPL",
+            ],
+            "intervals": [i.value for i in BarInterval],
+        }
+        if self.cache is not None:
+            payload["bars_cache"] = self.cache.stats().to_dict()
+        return payload
+
+    def search_symbols(self, query: str = "", limit: int = 20) -> dict[str, object]:
+        limit = max(1, min(int(limit), 50))
+        # Local fuzzy first (fast, good for 浦发)
+        local = fuzzy_search_a_share(query, limit=limit)
+        remote: list[Any] = []
+        try:
+            remote = self.market.search(query, limit=limit) or []
+        except Exception:  # noqa: BLE001
+            remote = []
+        merged = []
+        seen: set[str] = set()
+        for hit in list(local) + list(remote):
+            sym = hit.symbol if hasattr(hit, "symbol") else str(hit.get("symbol", ""))
+            if not sym or sym in seen:
+                continue
+            seen.add(sym)
+            merged.append(hit if hasattr(hit, "to_dict") else hit)
+            if len(merged) >= limit:
+                break
+        items = [h.to_dict() if hasattr(h, "to_dict") else h for h in merged]
+        provider = "symbol_index+upstream" if local else getattr(self.market, "PROVIDER_CODE", "unknown")
+        return {"items": items, "provider": provider, "fuzzy": True}
+
+    def market_bars(
+        self,
+        symbol: str,
+        start: str,
+        end: str,
+        adjustment: str = Adjustment.RAW.value,
+        interval: str = BarInterval.DAILY.value,
+    ) -> dict[str, object]:
+        provider = getattr(self.market, "PROVIDER_CODE", "unknown")
+        try:
+            start_date = date.fromisoformat(start)
+            end_date = date.fromisoformat(end)
+            adj = Adjustment(adjustment)
+            bar_interval = BarInterval.parse(interval)
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "provider": provider,
+                "data": None,
+                "warnings": [],
+                "error": str(exc),
+                "interval": interval,
+            }
+
+        try:
+            result = self.market.historical_bars(symbol, start_date, end_date, adj, bar_interval)
+        except TypeError:
+            result = self.market.historical_bars(symbol, start_date, end_date, adj)
+        return {
+            "ok": result.ok,
+            "provider": result.provider,
+            "interval": bar_interval.value,
+            "interval_label": bar_interval.label_zh,
+            "adjustment": adj.value,
+            "from_cache": "served_with_disk_cache" in (result.warnings or ()),
+            "data": None
+            if result.data is None
+            else [
+                {
+                    "timestamp_utc": bar.timestamp_utc.isoformat(),
+                    "open": bar.open,
+                    "high": bar.high,
+                    "low": bar.low,
+                    "close": bar.close,
+                    "volume": bar.volume,
+                    "amount": bar.amount,
+                    "currency": bar.currency,
+                    "adjustment": bar.adjustment.value,
+                    "provider": bar.provider,
+                    "provenance": dict(bar.provenance),
+                }
+                for bar in result.data
+            ],
+            "warnings": list(result.warnings),
+            "error": result.error,
+        }
+
+    def cache_stats(self) -> dict[str, object]:
+        if self.cache is None:
+            return {"ok": False, "error": "缓存未启用"}
+        return {"ok": True, **self.cache.stats().to_dict()}
+
+    def cache_clear(self, symbol: str | None = None) -> dict[str, object]:
+        if self.cache is None:
+            return {"ok": False, "error": "缓存未启用"}
+        self.cache.clear(symbol=symbol or None)
+        return {"ok": True, **self.cache.stats().to_dict()}
+
+    def cache_sync(self, symbols: list[str], years: int = 10) -> dict[str, object]:
+        if not isinstance(self.market, CachingMarketFacade):
+            # wrap ad-hoc
+            facade = CachingMarketFacade(self.market, self.cache)
+        else:
+            facade = self.market
+        results = []
+        for sym in symbols:
+            sym = str(sym).strip()
+            if not sym:
+                continue
+            results.append(facade.sync_symbol(sym, years=years))
+        stats = self.cache.stats().to_dict() if self.cache else {}
+        return {"ok": True, "items": results, "bars_cache": stats}
+
+    def list_tasks(self, kind: str | None = None, status: str | None = None, limit: int = 50) -> dict[str, object]:
+        kind_enum = TaskKind(kind) if kind else None
+        status_enum = TaskStatus(status) if status else None
+        items = self.tasks.list_tasks(kind=kind_enum, status=status_enum, limit=limit)
+        return {"items": [item.to_dict() for item in items]}
+
+    def create_task(self, kind: str, title: str, metadata: dict[str, str] | None = None) -> dict[str, object]:
+        task = self.tasks.create_task(TaskKind(kind), title, metadata=metadata)
+        return task.to_dict()
+
+    def list_audit(self, task_id: str, event_type: str | None = None, limit: int = 50) -> dict[str, object]:
+        items = self.tasks.list_audit(task_id, event_type=event_type, limit=limit)
+        return {"items": [item.to_dict() for item in items]}
+
+    def get_task(self, task_id: str) -> dict[str, object] | None:
+        task = self.tasks.get_task(task_id)
+        return None if task is None else task.to_dict()
+
+    def list_artifacts(self, task_id: str) -> dict[str, object]:
+        task = self.tasks.get_task(task_id)
+        if task is None:
+            return {"error": f"未知任务 '{task_id}'。", "items": []}
+        items = []
+        for artifact_id in task.artifact_ids:
+            artifact = self.tasks.get_artifact(artifact_id)
+            if artifact is not None:
+                items.append(artifact.to_dict())
+        return {"items": items}
+
+    def research_symbol_snapshot(
+        self,
+        symbol: str,
+        start: str,
+        end: str,
+        adjustment: str = Adjustment.RAW.value,
+    ) -> dict[str, object]:
+        provider = getattr(self.market, "PROVIDER_CODE", "unknown")
+        title = f"标的快照 {symbol}".strip()
+        task = self.tasks.create_task(
+            TaskKind.RESEARCH,
+            title,
+            metadata={
+                "symbol": symbol,
+                "start": start,
+                "end": end,
+                "adjustment": adjustment,
+                "command": "symbol_snapshot",
+                "provider": str(provider),
+            },
+        )
+        self.tasks.update_status(task.id, TaskStatus.RUNNING, "正在加载行情…")
+        bars_payload = self.market_bars(symbol, start, end, adjustment)
+        if not bars_payload.get("ok"):
+            failed = self.tasks.update_status(
+                task.id,
+                TaskStatus.FAILED,
+                str(bars_payload.get("error") or "行情获取失败。"),
+            )
+            return {
+                "ok": False,
+                "task": failed.to_dict(),
+                "artifact": None,
+                "bars": bars_payload,
+                "disclaimer": RESEARCH_DISCLAIMER,
+                "error": bars_payload.get("error"),
+            }
+
+        bars = bars_payload.get("data") or []
+        closes = [float(bar["close"]) for bar in bars if bar.get("close") is not None]
+        summary = {
+            "symbol": symbol,
+            "start": start,
+            "end": end,
+            "adjustment": adjustment,
+            "provider": bars_payload.get("provider"),
+            "bar_count": len(bars),
+            "first_close": closes[0] if closes else None,
+            "last_close": closes[-1] if closes else None,
+            "min_close": min(closes) if closes else None,
+            "max_close": max(closes) if closes else None,
+            "warnings": list(bars_payload.get("warnings") or []),
+            "disclaimer": RESEARCH_DISCLAIMER,
+            "synthetic": bars_payload.get("provider") == FixtureMarketDataProvider.PROVIDER_CODE,
+        }
+        artifact = self.tasks.add_artifact(
+            task.id,
+            kind="research_snapshot",
+            title=f"{symbol} 行情快照",
+            uri_or_payload=json.dumps(summary, ensure_ascii=False),
+            content_type="application/json",
+        )
+        done = self.tasks.update_status(
+            task.id,
+            TaskStatus.SUCCEEDED,
+            f"{len(bars)} 根K线；最新收盘={summary['last_close']}；数据源={bars_payload.get('provider')}",
+        )
+        audits = self.tasks.list_audit(task.id)
+        return {
+            "ok": True,
+            "task": done.to_dict(),
+            "artifact": artifact.to_dict(),
+            "summary": summary,
+            "audit": [item.to_dict() for item in audits],
+            "disclaimer": RESEARCH_DISCLAIMER,
+            "error": None,
+        }
+
+
+def health_payload() -> dict[str, object]:
+    return AnalyticsApp(market=FixtureMarketDataProvider(), cache=None).health() | {"phase": "P3.5"}
+
+
+def validate_bind_host(host: str) -> str:
+    if is_denied_wildcard(host):
+        raise ValueError(f"禁止绑定通配/非回环地址 '{host}'。")
+    ensure_loopback(host)
+    return host
+
+
+def dispatch(app: AnalyticsApp, method: str, path: str, query: str = "", body: dict[str, Any] | None = None) -> tuple[int, dict[str, object]]:
+    body = body or {}
+    params = {key: values[-1] for key, values in parse_qs(query, keep_blank_values=True).items()}
+    normalized = path.rstrip("/") or "/"
+
+    if method == "GET" and normalized == "/health":
+        return 200, app.health()
+    if method == "GET" and normalized == "/market/diagnostics":
+        return 200, app.market_diagnostics()
+    if method == "GET" and normalized == "/market/cache":
+        return 200, app.cache_stats()
+    if method == "POST" and normalized == "/market/cache/clear":
+        return 200, app.cache_clear(str(body.get("symbol") or "") or None)
+    if method == "POST" and normalized == "/market/cache/sync":
+        symbols = body.get("symbols") or []
+        if isinstance(symbols, str):
+            symbols = [symbols]
+        years = int(body.get("years", 10))
+        return 200, app.cache_sync([str(s) for s in symbols], years=years)
+    if method == "GET" and normalized == "/symbols/search":
+        return 200, app.search_symbols(params.get("q", ""), int(params.get("limit", "20")))
+    if method == "GET" and normalized == "/market/bars":
+        if "symbol" not in params or "start" not in params or "end" not in params:
+            return 400, {"error": "必须提供 symbol、start、end。"}
+        return 200, app.market_bars(
+            params["symbol"],
+            params["start"],
+            params["end"],
+            params.get("adjustment", Adjustment.RAW.value),
+            params.get("interval", BarInterval.DAILY.value),
+        )
+    if method == "GET" and normalized == "/tasks":
+        return 200, app.list_tasks(params.get("kind"), params.get("status"), int(params.get("limit", "50")))
+    if method == "POST" and normalized == "/tasks":
+        try:
+            return 200, app.create_task(str(body.get("kind", "system")), str(body.get("title", "")), body.get("metadata"))
+        except (ValueError, KeyError) as exc:
+            return 400, {"error": str(exc)}
+    if method == "GET" and normalized.startswith("/tasks/") and normalized.endswith("/audit"):
+        task_id = normalized[len("/tasks/") : -len("/audit")]
+        return 200, app.list_audit(task_id, params.get("event_type"), int(params.get("limit", "50")))
+    if method == "GET" and normalized.startswith("/tasks/") and normalized.endswith("/artifacts"):
+        task_id = normalized[len("/tasks/") : -len("/artifacts")]
+        payload = app.list_artifacts(task_id)
+        if "error" in payload and not payload.get("items"):
+            return 404, payload
+        return 200, payload
+    if method == "GET" and normalized.startswith("/tasks/") and normalized.count("/") == 2:
+        task_id = normalized[len("/tasks/") :]
+        task = app.get_task(task_id)
+        if task is None:
+            return 404, {"error": f"未知任务 '{task_id}'。"}
+        return 200, task
+    if method == "POST" and normalized == "/research/symbol-snapshot":
+        symbol = str(body.get("symbol", "")).strip()
+        start = str(body.get("start", "")).strip()
+        end = str(body.get("end", "")).strip()
+        adjustment = str(body.get("adjustment", Adjustment.RAW.value))
+        if not symbol or not start or not end:
+            return 400, {"error": "必须提供 symbol、start、end。"}
+        result = app.research_symbol_snapshot(symbol, start, end, adjustment)
+        return (200 if result.get("ok") else 422), result
+
+    return 404, {"error": f"未知路由 {method} {normalized}"}

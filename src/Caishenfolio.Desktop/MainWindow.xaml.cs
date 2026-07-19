@@ -1,0 +1,734 @@
+using System.IO;
+using System.Net.Http;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using Caishenfolio.Host;
+using Caishenfolio.Host.MarketData;
+using Caishenfolio.Host.Python;
+using Caishenfolio.Host.Security;
+using Caishenfolio.Host.Tasks;
+using Progress = System.Progress<string>;
+
+namespace Caishenfolio.Desktop;
+
+public partial class MainWindow : Window
+{
+    private readonly AnalyticsCoreProcessBroker _broker = new(port: 8765);
+    private readonly PathRootPolicy _pathRoots = new();
+    private readonly SqliteTaskStore _taskStore;
+    private readonly TaskMirrorService _taskMirror;
+    private readonly MarketCredentialsStore _credentials;
+    private readonly WatchlistStore _watchlist;
+    private AnalyticsCoreClient? _client;
+    private IReadOnlyList<MarketBarDto> _lastBars = Array.Empty<MarketBarDto>();
+    private string _lastName = "";
+    private CandleChartPainter? _chart;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        Title = $"{ProductInfo.Name}  v{ProductInfo.Version}";
+        TitleText.Text = ProductInfo.Name;
+        VersionBadge.Text = $"v{ProductInfo.Version} · {ProductInfo.Phase}";
+        PhaseText.Text = $"{ProductInfo.Brand} · {ProductInfo.Phase} · {ProductInfo.ScopeSummary}";
+        DisclaimerText.Text = ProductInfo.ResearchDisclaimer;
+        VersionText.Text = $"{ProductInfo.Name}  版本 v{ProductInfo.Version}  阶段 {ProductInfo.Phase}";
+        StatusText.Text = "分析核心未启动。正在自动准备依赖与核心…";
+        ResearchStatusText.Text = "双击关注 = 最新区间秒开；搜索支持「浦发」等模糊名称。";
+        MarketHintText.Text = MarketLabels.FormatHint();
+
+        var localApp = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Caishenfolio");
+        _pathRoots
+            .Register(PathRootKind.Import, Path.Combine(localApp, "import"))
+            .Register(PathRootKind.Artifact, Path.Combine(localApp, "artifact"))
+            .Register(PathRootKind.Run, Path.Combine(localApp, "run"))
+            .Register(PathRootKind.State, Path.Combine(localApp, "state"));
+        _taskStore = SqliteTaskStore.UnderStateRoot(_pathRoots.GetRoot(PathRootKind.State));
+        _taskMirror = new TaskMirrorService(_taskStore);
+        _credentials = new MarketCredentialsStore(_pathRoots.GetRoot(PathRootKind.State));
+        _watchlist = new WatchlistStore(_pathRoots.GetRoot(PathRootKind.State));
+
+        _chart = new CandleChartPainter(ChartCanvas, CrosshairLabel);
+
+        SymbolBox.TextChanged += (_, _) => UpdateSymbolMarketTag();
+        IntervalCombo.SelectionChanged += (_, _) =>
+        {
+            ApplyDefaultDateRange(SelectedInterval());
+            UpdateChartPeriodHint();
+        };
+        UpdateSymbolMarketTag();
+        ApplyDefaultDateRange("daily");
+        UpdateChartPeriodHint();
+        RefreshWatchListUi();
+
+        Loaded += async (_, _) =>
+        {
+            await EnsureCoreReadyAsync(auto: true).ConfigureAwait(true);
+            await SyncWatchlistCacheQuietAsync().ConfigureAwait(true);
+        };
+
+        Closed += (_, _) =>
+        {
+            _client?.Dispose();
+            _broker.Dispose();
+            _taskStore.Dispose();
+        };
+    }
+
+    private async void StartCoreButton_OnClick(object sender, RoutedEventArgs e) =>
+        await EnsureCoreReadyAsync(auto: false).ConfigureAwait(true);
+
+    private async Task EnsureCoreReadyAsync(bool auto)
+    {
+        try
+        {
+            if (_broker.IsRunning && _client is not null)
+            {
+                if (!auto)
+                {
+                    await RefreshHealthAsync().ConfigureAwait(true);
+                }
+
+                return;
+            }
+
+            var prefix = auto ? "启动时自动" : "";
+            StatusText.Text = $"{prefix}准备中：检测/安装 Python 行情依赖…";
+            var progress = new Progress(msg => StatusText.Text = msg);
+            var bootstrap = await PythonDependencyBootstrap
+                .EnsureMarketDependenciesAsync("python", progress)
+                .ConfigureAwait(true);
+            if (!bootstrap.Ok)
+            {
+                StatusText.Text = $"依赖未就绪：{bootstrap.Message}";
+                return;
+            }
+
+            var repoRoot = FindRepoRoot();
+            StatusText.Text = $"{prefix}启动分析核心…";
+            _broker.Start("python", repoRoot, _credentials);
+            _client?.Dispose();
+            _client = new AnalyticsCoreClient(_broker.BaseAddress);
+            await RefreshHealthAsync().ConfigureAwait(true);
+            if (auto)
+            {
+                StatusText.Text += "（已自动启动分析核心；无需每次手动点「启动」）";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"启动失败：{HumanizeUiError(ex.Message)}" +
+                              (auto ? " 可稍后手动点「启动分析核心」。" : "");
+        }
+    }
+
+    private async void HealthButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await RefreshHealthAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"健康检查失败：{HumanizeUiError(ex.Message)}";
+        }
+    }
+
+    private void StopCoreButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        _broker.Stop();
+        _client?.Dispose();
+        _client = null;
+        StatusText.Text = "分析核心已停止。";
+    }
+
+    private void DataSourceButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var window = new DataSourceSettingsWindow(_credentials) { Owner = this };
+        window.ShowDialog();
+        StatusText.Text = "数据源配置已打开过。若已保存，请停止并重新启动分析核心。";
+    }
+
+    private async void SearchButton_OnClick(object sender, RoutedEventArgs e) =>
+        await SearchSymbolsAsync().ConfigureAwait(true);
+
+    private async void SearchBox_OnKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            await SearchSymbolsAsync().ConfigureAwait(true);
+        }
+    }
+
+    private void SymbolList_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (SymbolList.SelectedItem is SymbolRow item)
+        {
+            ApplySymbolSelection(item.Symbol, item.Name);
+        }
+    }
+
+    private void WatchList_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (WatchList.SelectedItem is SymbolRow item)
+        {
+            ApplySymbolSelection(item.Symbol, item.Name);
+        }
+    }
+
+    private async void WatchList_OnMouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (WatchList.SelectedItem is SymbolRow item)
+        {
+            ApplySymbolSelection(item.Symbol, item.Name);
+            // 关注双击：回到最新推荐区间 + 当前周期，直接加载
+            ApplyDefaultDateRange(SelectedInterval());
+            await LoadBarsAsync().ConfigureAwait(true);
+        }
+    }
+
+    private void ResetLatestRangeButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        ApplyDefaultDateRange(SelectedInterval());
+        StatusText.Text = $"已重置为最新推荐区间：{StartDateBox.Text} ~ {EndDateBox.Text}（{IntervalLabel(SelectedInterval())}）";
+    }
+
+    private async void QuickRange1M_OnClick(object sender, RoutedEventArgs e)
+    {
+        ApplyQuickRange(months: 1);
+        await LoadBarsAsync().ConfigureAwait(true);
+    }
+
+    private async void QuickRange3M_OnClick(object sender, RoutedEventArgs e)
+    {
+        ApplyQuickRange(months: 3);
+        await LoadBarsAsync().ConfigureAwait(true);
+    }
+
+    private async void QuickRange1Y_OnClick(object sender, RoutedEventArgs e)
+    {
+        ApplyQuickRange(months: 12);
+        await LoadBarsAsync().ConfigureAwait(true);
+    }
+
+    private void ApplyQuickRange(int months)
+    {
+        var end = TradingCalendar.LastWeekdayOnOrBefore(TradingCalendar.TodayLocal());
+        var start = end.AddMonths(-months);
+        StartDateBox.Text = TradingCalendar.Format(start);
+        EndDateBox.Text = TradingCalendar.Format(end);
+    }
+
+    private void ApplyDefaultDateRange(string interval)
+    {
+        var (start, end) = TradingCalendar.DefaultRange(interval);
+        StartDateBox.Text = TradingCalendar.Format(start);
+        EndDateBox.Text = TradingCalendar.Format(end);
+    }
+
+    private async void SyncWatchCacheButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await SyncWatchlistCacheQuietAsync(forceStatus: true).ConfigureAwait(true);
+    }
+
+    private async void ClearCacheButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var client = EnsureClient();
+            await client.ClearBarsCacheAsync().ConfigureAwait(true);
+            StatusText.Text = "已清理本地 K 线缓存。下次加载将重新从上游拉取。";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"清理缓存失败：{HumanizeUiError(ex.Message)}";
+        }
+    }
+
+    private async Task SyncWatchlistCacheQuietAsync(bool forceStatus = false)
+    {
+        try
+        {
+            if (_client is null || !_broker.IsRunning)
+            {
+                return;
+            }
+
+            var symbols = _watchlist.Load().Select(x => x.Symbol).Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+            if (symbols.Count == 0)
+            {
+                if (forceStatus)
+                {
+                    StatusText.Text = "关注列表为空，无需同步缓存。";
+                }
+
+                return;
+            }
+
+            if (forceStatus)
+            {
+                StatusText.Text = $"正在增量同步关注列表缓存（{symbols.Count} 只）…";
+            }
+
+            var result = await _client.SyncWatchlistCacheAsync(symbols, years: 10).ConfigureAwait(true);
+            if (forceStatus || true)
+            {
+                StatusText.Text = $"关注缓存同步完成：{result}";
+            }
+        }
+        catch (Exception ex)
+        {
+            if (forceStatus)
+            {
+                StatusText.Text = $"缓存同步失败：{HumanizeUiError(ex.Message)}";
+            }
+        }
+    }
+
+    private void AddWatchButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var symbol = SymbolBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(symbol))
+        {
+            StatusText.Text = "请先填写或选择标的，再加入关注。";
+            return;
+        }
+
+        var name = string.IsNullOrWhiteSpace(_lastName) ? symbol : _lastName;
+        // try take name from selected search row
+        if (SymbolList.SelectedItem is SymbolRow searchRow
+            && string.Equals(searchRow.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+        {
+            name = searchRow.Name;
+        }
+
+        if (WatchList.SelectedItem is SymbolRow watchRow
+            && string.Equals(watchRow.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+        {
+            name = watchRow.Name;
+        }
+
+        var marketLabel = MarketLabels.FromSymbol(symbol);
+        _watchlist.Add(new WatchlistItem
+        {
+            Symbol = symbol,
+            Name = name,
+            MarketLabel = marketLabel,
+            Market = marketLabel,
+            Note = "",
+        });
+        RefreshWatchListUi();
+        StatusText.Text = $"已加入关注：{MarketLabels.FormatRow(symbol, name)}";
+    }
+
+    private void RemoveWatchButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        string? symbol = null;
+        if (WatchList.SelectedItem is SymbolRow row)
+        {
+            symbol = row.Symbol;
+        }
+        else if (!string.IsNullOrWhiteSpace(SymbolBox.Text))
+        {
+            symbol = SymbolBox.Text.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(symbol))
+        {
+            StatusText.Text = "请先在关注列表中选中一项，或填写要取消的标的。";
+            return;
+        }
+
+        _watchlist.Remove(symbol);
+        RefreshWatchListUi();
+        StatusText.Text = $"已取消关注：{symbol}";
+    }
+
+    private async void LoadBarsButton_OnClick(object sender, RoutedEventArgs e) =>
+        await LoadBarsAsync().ConfigureAwait(true);
+
+    private async void ResearchButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var client = EnsureClient();
+            var symbol = SymbolBox.Text.Trim();
+            var start = StartDateBox.Text.Trim();
+            var end = EndDateBox.Text.Trim();
+            StatusText.Text = $"正在运行研究快照：{MarketLabels.FormatRow(symbol, _lastName)} …";
+            var result = await client.RunSymbolSnapshotAsync(symbol, start, end).ConfigureAwait(true);
+            var mirrored = _taskMirror.MirrorResearchSnapshot(result);
+
+            if (result.Ok)
+            {
+                await LoadBarsAsync().ConfigureAwait(true);
+            }
+
+            var artifactId = result.Artifact?.Id ?? mirrored.ArtifactIds.FirstOrDefault() ?? "无";
+            ResearchStatusText.Text =
+                $"研究成功={YesNo(result.Ok)}；任务={result.Task?.Id ?? "无"}；状态={result.Task?.Status ?? "无"}；" +
+                $"镜像={mirrored.Id}；产物={artifactId}；摘要={result.Task?.Summary ?? result.Error ?? "无"}";
+            StatusText.Text = result.Ok
+                ? $"研究快照成功（{MarketLabels.FromSymbol(symbol)} {symbol}）。"
+                : $"研究快照失败：{HumanizeUiError(result.Error ?? "未知错误")}";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"研究失败：{HumanizeUiError(ex.Message)}";
+            ResearchStatusText.Text = HumanizeUiError(ex.Message);
+        }
+    }
+
+    private void ChartCanvas_OnSizeChanged(object sender, SizeChangedEventArgs e) => RedrawChart();
+
+    private void ChartModeCrosshair_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_chart is null)
+        {
+            return;
+        }
+
+        _chart.Mode = ChartDrawMode.Crosshair;
+        CrosshairLabel.Text = "模式：十字光标（移动鼠标查看 OHLC；滚轮缩放）";
+    }
+
+    private void ChartModePan_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_chart is null)
+        {
+            return;
+        }
+
+        _chart.Mode = ChartDrawMode.Pan;
+        CrosshairLabel.Text = "模式：平移（按住左键左右拖；也可用右键拖）";
+    }
+
+    private void ChartModeTrend_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_chart is null)
+        {
+            return;
+        }
+
+        _chart.Mode = ChartDrawMode.TrendLine;
+        CrosshairLabel.Text = "模式：趋势线（点一下起点，再点一下终点）";
+    }
+
+    private void ChartModeHoriz_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_chart is null)
+        {
+            return;
+        }
+
+        _chart.Mode = ChartDrawMode.HorizLine;
+        CrosshairLabel.Text = "模式：水平线（点一下定位，再点一下确认）";
+    }
+
+    private void ChartClearDraw_OnClick(object sender, RoutedEventArgs e)
+    {
+        _chart?.ClearDrawings();
+        CrosshairLabel.Text = "已清除画线。";
+    }
+
+    private void ChartResetZoom_OnClick(object sender, RoutedEventArgs e)
+    {
+        _chart?.ResetView();
+        CrosshairLabel.Text = "已重置缩放，显示全部已加载K线。";
+    }
+
+    private async Task LoadBarsAsync()
+    {
+        try
+        {
+            var client = EnsureClient();
+            var symbol = SymbolBox.Text.Trim();
+            var start = StartDateBox.Text.Trim();
+            var end = EndDateBox.Text.Trim();
+            var market = MarketLabels.FromSymbol(symbol);
+            var interval = SelectedInterval();
+            var adjustment = SelectedAdjustment();
+            var intervalZh = IntervalLabel(interval);
+            StatusText.Text = $"正在加载【{market}】{intervalZh}：{symbol} …";
+            var bars = await client
+                .GetMarketBarsAsync(symbol, start, end, adjustment: adjustment, interval: interval)
+                .ConfigureAwait(true);
+            if (!bars.Ok || bars.Data is null)
+            {
+                BarsGrid.ItemsSource = null;
+                _lastBars = Array.Empty<MarketBarDto>();
+                RedrawChart();
+                StatusText.Text = $"行情加载失败：{HumanizeUiError(bars.Error ?? "未知错误")}";
+                return;
+            }
+
+            _lastBars = bars.Data;
+            BarsGrid.ItemsSource = bars.Data.Select(BarRow.FromDto).ToList();
+            var label = string.IsNullOrWhiteSpace(bars.IntervalLabel) ? intervalZh : bars.IntervalLabel;
+            var cacheHint = bars.FromCache ? "·本地缓存" : "·在线";
+            ChartPeriodHint.Text =
+                $"当前：{label} / {AdjustmentLabel(adjustment)} {cacheHint}（{DescribeInterval(interval)}；MA5/10/20+量+十字光标）";
+            RedrawChart();
+            var warnings = bars.Warnings.Count == 0 ? "" : "；警告=" + string.Join("，", bars.Warnings);
+            StatusText.Text =
+                $"已加载【{market}】{label} {bars.Data.Count} 根：{symbol}，数据源={bars.Provider}{cacheHint}{warnings}";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"行情加载失败：{HumanizeUiError(ex.Message)}";
+        }
+    }
+
+    private string SelectedInterval()
+    {
+        if (IntervalCombo.SelectedItem is ComboBoxItem item && item.Tag is string tag)
+        {
+            return tag;
+        }
+
+        return "daily";
+    }
+
+    private string SelectedAdjustment()
+    {
+        if (AdjustmentCombo.SelectedItem is ComboBoxItem item && item.Tag is string tag)
+        {
+            return tag;
+        }
+
+        return "raw";
+    }
+
+    private static string IntervalLabel(string interval) => interval switch
+    {
+        "1m" => "1分钟",
+        "5m" => "5分钟",
+        "15m" => "15分钟",
+        "30m" => "30分钟",
+        "60m" => "60分钟",
+        "weekly" => "周K",
+        "monthly" => "月K",
+        "quarterly" => "季K",
+        "yearly" => "年K",
+        _ => "日K",
+    };
+
+    private static string AdjustmentLabel(string adj) => adj switch
+    {
+        "forward" => "前复权",
+        "backward" => "后复权",
+        _ => "不复权",
+    };
+
+    private static string DescribeInterval(string interval) => interval switch
+    {
+        "1m" => "每根≈1分钟",
+        "5m" => "每根≈5分钟",
+        "15m" => "每根≈15分钟",
+        "30m" => "每根≈30分钟",
+        "60m" => "每根≈60分钟",
+        "weekly" => "每根≈1周",
+        "monthly" => "每根≈1月",
+        "quarterly" => "每根≈1季（由日K聚合）",
+        "yearly" => "每根≈1年（由日K聚合）",
+        _ => "每根=1个交易日",
+    };
+
+    private void UpdateChartPeriodHint()
+    {
+        var interval = SelectedInterval();
+        ChartPeriodHint.Text =
+            $"当前选择：{IntervalLabel(interval)} / {AdjustmentLabel(SelectedAdjustment())}（{DescribeInterval(interval)}；加载后刷新）";
+    }
+
+    private async Task SearchSymbolsAsync()
+    {
+        try
+        {
+            var client = EnsureClient();
+            var query = SearchBox.Text;
+            StatusText.Text = $"正在搜索：{query} …";
+            var response = await client.SearchSymbolsAsync(query).ConfigureAwait(true);
+            SymbolList.ItemsSource = response.Items
+                .Select(item => new SymbolRow(item.Symbol, item.Name, item.Market, item.AssetClass))
+                .ToList();
+            StatusText.Text =
+                $"搜索「{query}」：{response.Items.Count} 条（列表已带【A股/港股/美股】标签），数据源={response.Provider}";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"搜索失败：{HumanizeUiError(ex.Message)}";
+        }
+    }
+
+    private void ApplySymbolSelection(string symbol, string name)
+    {
+        SymbolBox.Text = symbol;
+        _lastName = name;
+        UpdateSymbolMarketTag();
+    }
+
+    private void UpdateSymbolMarketTag()
+    {
+        var symbol = SymbolBox.Text.Trim();
+        var label = MarketLabels.FromSymbol(symbol);
+        SymbolMarketTag.Text = $"【{label}】";
+    }
+
+    private void RefreshWatchListUi()
+    {
+        WatchList.ItemsSource = _watchlist.Load()
+            .Select(item => new SymbolRow(
+                item.Symbol,
+                string.IsNullOrWhiteSpace(item.Name) ? item.Symbol : item.Name,
+                item.Market,
+                item.AssetClass))
+            .ToList();
+    }
+
+    private void RedrawChart()
+    {
+        if (ChartCanvas.ActualWidth <= 1 || ChartCanvas.ActualHeight <= 1)
+        {
+            return;
+        }
+
+        _chart ??= new CandleChartPainter(ChartCanvas, CrosshairLabel);
+        _chart.SetBars(_lastBars);
+    }
+
+    private async Task RefreshHealthAsync()
+    {
+        var client = EnsureClient();
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            try
+            {
+                var health = await client.GetHealthAsync().ConfigureAwait(true);
+                var provider = string.IsNullOrWhiteSpace(health.MarketProvider) ? "未知" : health.MarketProvider;
+                var providerOk = health.MarketProviderReady ? "可用" : "不可用";
+                var synthetic = health.MarketDataSynthetic ? "是（演示）" : "否（真实）";
+                StatusText.Text =
+                    $"状态={health.Status}；阶段={health.Phase}；行情源={provider}（{providerOk}）；" +
+                    $"合成数据={synthetic}；声明={health.Disclaimer}";
+                return;
+            }
+            catch (HttpRequestException) when (attempt < 29)
+            {
+                await Task.Delay(200).ConfigureAwait(true);
+            }
+            catch (TaskCanceledException) when (attempt < 29)
+            {
+                await Task.Delay(200).ConfigureAwait(true);
+            }
+        }
+
+        StatusText.Text = "健康检查失败：核心未响应。请先启动分析核心。";
+    }
+
+    private AnalyticsCoreClient EnsureClient()
+    {
+        _client ??= AnalyticsCoreClient.ForLoopback(_broker.Port);
+        return _client;
+    }
+
+    private static string YesNo(bool value) => value ? "是" : "否";
+
+    private static string HumanizeUiError(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return "未知错误";
+        }
+
+        if (message.Contains("积极拒绝", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("refused", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("10061", StringComparison.Ordinal))
+        {
+            return "无法连接分析核心（127.0.0.1:8765）。请先点击「启动分析核心」。";
+        }
+
+        if (message.Contains("Proxy", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("代理", StringComparison.Ordinal))
+        {
+            return message + " —— 可在「数据源与密钥」取消「遵循系统代理」，保存后重启核心。";
+        }
+
+        if (message.Contains("Timeout", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("canceled", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("超时", StringComparison.Ordinal))
+        {
+            return "请求超时。可能是网络/代理慢，或分析核心卡在上游。可：1) 检查核心已启动；2) 数据源关闭系统代理；3) 稍后重试。原错误：" + message;
+        }
+
+        return message;
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var pythonDir = Path.Combine(dir.FullName, "python", "caishenfolio_core");
+            var solution = Path.Combine(dir.FullName, "Caishenfolio.slnx");
+            if (Directory.Exists(pythonDir) && File.Exists(solution))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("无法定位 Caishenfolio 仓库根目录。");
+    }
+
+    private sealed class SymbolRow
+    {
+        public SymbolRow(string symbol, string name, string market, string assetClass)
+        {
+            Symbol = symbol;
+            Name = name;
+            Market = market;
+            AssetClass = assetClass;
+            Display = MarketLabels.FormatRow(symbol, name, market, assetClass);
+        }
+
+        public string Symbol { get; }
+        public string Name { get; }
+        public string Market { get; }
+        public string AssetClass { get; }
+        public string Display { get; }
+    }
+
+    private sealed class BarRow
+    {
+        public string DateText { get; init; } = "";
+        public decimal Open { get; init; }
+        public decimal High { get; init; }
+        public decimal Low { get; init; }
+        public decimal Close { get; init; }
+        public decimal Volume { get; init; }
+
+        public static BarRow FromDto(MarketBarDto bar)
+        {
+            var dateText = bar.TimestampUtc;
+            if (DateTimeOffset.TryParse(bar.TimestampUtc, out var dto))
+            {
+                dateText = dto.UtcDateTime.ToString("yyyy-MM-dd");
+            }
+
+            return new BarRow
+            {
+                DateText = dateText,
+                Open = bar.Open,
+                High = bar.High,
+                Low = bar.Low,
+                Close = bar.Close,
+                Volume = bar.Volume,
+            };
+        }
+    }
+}

@@ -1,0 +1,25 @@
+[project]
+name = "caishenfolio-core"
+version = "0.4.0"
+description = "Caishenfolio Analytics Core — research/simulation only"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = []
+server = ["fastapi>=0.115", "uvicorn>=0.30"]
+# Real market data. Never required for unit tests (use fixture).
+market = [
+  "akshare>=1.14.0",
+  "pandas>=2.0",
+  "yfinance>=0.2.40",
+  "tushare>=1.4.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["caishenfolio_core*"]
