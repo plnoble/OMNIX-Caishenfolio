@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from caishenfolio_core.market.fixture import FixtureMarketDataProvider
-from caishenfolio_core.research.backtest import ma_cross_backtest
+from caishenfolio_core.research.backtest import CostModel, ma_cross_backtest
 from caishenfolio_core.research.compare import compare_normalized_closes
 from caishenfolio_core.research.report import build_markdown_report, write_report
 from caishenfolio_core.server.app import AnalyticsApp, dispatch
@@ -32,6 +32,18 @@ class BacktestUnitTests(unittest.TestCase):
         self.assertTrue(result.ok, msg=result.error)
         self.assertIsNotNone(result.total_return)
         self.assertIsNotNone(result.buy_hold_return)
+
+        costly = ma_cross_backtest(
+            bars,
+            symbol="SSE:600000",
+            fast=5,
+            slow=20,
+            costs=CostModel(commission_rate=0.001, stamp_duty_rate=0.001, slippage_rate=0.001),
+        )
+        self.assertTrue(costly.ok, msg=costly.error)
+        # higher costs should not beat free model on same path (usually)
+        self.assertIsNotNone(costly.cost_model)
+        self.assertIn("commission_rate", costly.cost_model)
 
 
 class CompareUnitTests(unittest.TestCase):

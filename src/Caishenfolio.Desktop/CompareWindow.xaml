@@ -1,0 +1,57 @@
+<Window x:Class="Caishenfolio.Desktop.CompareWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="多股对比叠线图"
+        Height="560"
+        Width="920"
+        MinHeight="420"
+        MinWidth="720"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F1419"
+        Foreground="#E7ECF1">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="TitleBlock"
+                   Grid.Row="0"
+                   FontSize="18"
+                   FontWeight="SemiBold"
+                   Margin="0,0,0,10"
+                   Text="归一化收盘价对比（起点=100）" />
+
+        <Border Grid.Row="1"
+                Background="#0E141A"
+                CornerRadius="8"
+                BorderBrush="#2A3542"
+                BorderThickness="1">
+            <Canvas x:Name="ChartCanvas"
+                    Background="#0E141A"
+                    ClipToBounds="True"
+                    SizeChanged="ChartCanvas_OnSizeChanged" />
+        </Border>
+
+        <TextBlock x:Name="LegendText"
+                   Grid.Row="2"
+                   Margin="0,10,0,6"
+                   TextWrapping="Wrap"
+                   Opacity="0.95" />
+
+        <TextBlock x:Name="SummaryText"
+                   Grid.Row="3"
+                   TextWrapping="Wrap"
+                   FontFamily="Consolas"
+                   FontSize="12"
+                   Opacity="0.9"
+                   Margin="0,0,0,10" />
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="关闭" Padding="16,6" IsCancel="True" Click="Close_OnClick" />
+        </StackPanel>
+    </Grid>
+</Window>

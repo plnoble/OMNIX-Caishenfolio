@@ -17,7 +17,7 @@ from caishenfolio_core.market.network import trust_env_enabled
 from caishenfolio_core.market.fund_catalog import search_funds
 from caishenfolio_core.market.parquet_store import export_bars_parquet, parquet_available
 from caishenfolio_core.market.symbol_index import fuzzy_search_a_share
-from caishenfolio_core.research.backtest import ma_cross_backtest
+from caishenfolio_core.research.backtest import cost_model_from_dict, ma_cross_backtest
 from caishenfolio_core.research.compare import compare_normalized_closes
 from caishenfolio_core.research.report import build_markdown_report, write_report
 from caishenfolio_core.security.loopback import ensure_loopback, is_denied_wildcard
@@ -214,6 +214,7 @@ class AnalyticsApp:
         slow: int = 20,
         adjustment: str = Adjustment.RAW.value,
         interval: str = BarInterval.DAILY.value,
+        costs: dict[str, Any] | None = None,
     ) -> dict[str, object]:
         bars_payload = self.market_bars(symbol, start, end, adjustment, interval)
         if not bars_payload.get("ok") or not bars_payload.get("data"):
@@ -228,6 +229,7 @@ class AnalyticsApp:
             symbol=symbol,
             fast=fast,
             slow=slow,
+            costs=cost_model_from_dict(costs),
         )
         payload = result.to_dict()
         payload["bars_provider"] = bars_payload.get("provider")
@@ -511,6 +513,7 @@ def dispatch(app: AnalyticsApp, method: str, path: str, query: str = "", body: d
         end = str(body.get("end", "")).strip()
         if not symbol or not start or not end:
             return 400, {"error": "必须提供 symbol、start、end。"}
+        costs = body.get("costs") if isinstance(body.get("costs"), dict) else None
         result = app.research_backtest_ma(
             symbol,
             start,
@@ -519,6 +522,7 @@ def dispatch(app: AnalyticsApp, method: str, path: str, query: str = "", body: d
             slow=int(body.get("slow", 20)),
             adjustment=str(body.get("adjustment", Adjustment.RAW.value)),
             interval=str(body.get("interval", BarInterval.DAILY.value)),
+            costs=costs,
         )
         return (200 if result.get("ok") else 422), result
     if method == "POST" and normalized == "/research/compare":

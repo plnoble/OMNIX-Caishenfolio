@@ -212,10 +212,11 @@ public sealed class AnalyticsCoreClient : IDisposable
         int slow = 20,
         string adjustment = "raw",
         string interval = "daily",
+        object? costs = null,
         CancellationToken cancellationToken = default) =>
         PostJsonAsync(
             "research/backtest-ma",
-            new { symbol, start, end, fast, slow, adjustment, interval },
+            new { symbol, start, end, fast, slow, adjustment, interval, costs },
             cancellationToken);
 
     public Task<JsonElement> CompareSymbolsAsync(

@@ -448,7 +448,6 @@ public partial class MainWindow : Window
             var symbols = _watchlist.Load().Select(x => x.Symbol).Take(4).ToList();
             if (symbols.Count < 2)
             {
-                // fall back: current + first watch or require 2
                 if (!string.IsNullOrWhiteSpace(SymbolBox.Text))
                 {
                     symbols.Insert(0, SymbolBox.Text.Trim());
@@ -458,18 +457,27 @@ public partial class MainWindow : Window
 
             if (symbols.Count < 2)
             {
-                StatusText.Text = "多股对比至少需要 2 个标的：请先在关注列表加入 2 只以上，或当前标的+关注。";
+                StatusText.Text = "多股对比至少需要 2 个标的：请先在关注列表加入 2 只以上。";
                 return;
             }
 
-            StatusText.Text = $"正在对比：{string.Join("、", symbols)} …";
+            StatusText.Text = $"正在对比并绘制叠线图：{string.Join("、", symbols)} …";
             var result = await client
-                .CompareSymbolsAsync(symbols, StartDateBox.Text.Trim(), EndDateBox.Text.Trim(),
-                    SelectedAdjustment(), SelectedInterval())
+                .CompareSymbolsAsync(
+                    symbols,
+                    StartDateBox.Text.Trim(),
+                    EndDateBox.Text.Trim(),
+                    SelectedAdjustment(),
+                    SelectedInterval())
                 .ConfigureAwait(true);
             ResearchStatusText.Text = result.ToString();
+
+            var win = new CompareWindow { Owner = this };
+            win.LoadFromCompareJson(result);
+            win.Show();
+
             StatusText.Text = result.TryGetProperty("ok", out var ok) && ok.GetBoolean()
-                ? $"对比完成（归一化收盘，起点=100）：{string.Join("、", symbols)}"
+                ? $"对比叠线图已打开：{string.Join("、", symbols)}（归一化起点=100）"
                 : $"对比失败：{(result.TryGetProperty("error", out var err) ? err.GetString() : "未知")}";
         }
         catch (Exception ex)
@@ -484,7 +492,18 @@ public partial class MainWindow : Window
         {
             var client = EnsureClient();
             var symbol = SymbolBox.Text.Trim();
-            StatusText.Text = $"正在回测 MA5/MA20 交叉：{symbol} …";
+            StatusText.Text = $"正在回测 MA5/MA20（含手续费/滑点/涨跌停约束）：{symbol} …";
+            // 简化 A 股口径默认成本；可后续做成设置面板
+            var costs = new
+            {
+                commission_rate = 0.0003,
+                commission_min = 0.0,
+                stamp_duty_rate = 0.0005,
+                slippage_rate = 0.0005,
+                limit_up_pct = 0.10,
+                limit_down_pct = 0.10,
+                enforce_limit = true,
+            };
             var result = await client
                 .RunMaBacktestAsync(
                     symbol,
@@ -493,7 +512,8 @@ public partial class MainWindow : Window
                     fast: 5,
                     slow: 20,
                     adjustment: SelectedAdjustment(),
-                    interval: SelectedInterval())
+                    interval: SelectedInterval(),
+                    costs: costs)
                 .ConfigureAwait(true);
             ResearchStatusText.Text = result.ToString();
             if (result.TryGetProperty("ok", out var ok) && ok.GetBoolean())
@@ -502,8 +522,10 @@ public partial class MainWindow : Window
                 var bh = result.TryGetProperty("buy_hold_return", out var br) ? br.GetDouble() : 0;
                 var trades = result.TryGetProperty("trades", out var t) ? t.GetInt32() : 0;
                 var dd = result.TryGetProperty("max_drawdown", out var md) ? md.GetDouble() : 0;
+                var skipped = result.TryGetProperty("skipped_signals", out var sk) ? sk.GetInt32() : 0;
                 StatusText.Text =
-                    $"回测完成 {symbol}：策略收益={total:P2}，买入持有={bh:P2}，交易次数={trades}，最大回撤={dd:P2}（模拟，非投资建议）";
+                    $"回测完成 {symbol}：策略={total:P2}，买入持有={bh:P2}，成交={trades}，跳过信号(涨跌停等)={skipped}，最大回撤={dd:P2}" +
+                    "；成本模型：佣金万3+卖出印花税万5+滑点万5+10%涨跌停约束（模拟，非投资建议）";
             }
             else
             {
