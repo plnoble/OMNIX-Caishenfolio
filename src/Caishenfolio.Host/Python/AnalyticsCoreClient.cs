@@ -180,6 +180,87 @@ public sealed class AnalyticsCoreClient : IDisposable
         return payload;
     }
 
+    public async Task<JsonElement> PostJsonAsync(
+        string relativePath,
+        object body,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = new StringContent(
+            JsonSerializer.Serialize(body),
+            Encoding.UTF8,
+            "application/json");
+        using var response = await _http
+            .PostAsync(relativePath, content, cancellationToken)
+            .ConfigureAwait(false);
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var clone = doc.RootElement.Clone();
+        if (!response.IsSuccessStatusCode
+            && response.StatusCode != System.Net.HttpStatusCode.UnprocessableEntity)
+        {
+            response.EnsureSuccessStatusCode();
+        }
+
+        return clone;
+    }
+
+    public Task<JsonElement> RunMaBacktestAsync(
+        string symbol,
+        string start,
+        string end,
+        int fast = 5,
+        int slow = 20,
+        string adjustment = "raw",
+        string interval = "daily",
+        CancellationToken cancellationToken = default) =>
+        PostJsonAsync(
+            "research/backtest-ma",
+            new { symbol, start, end, fast, slow, adjustment, interval },
+            cancellationToken);
+
+    public Task<JsonElement> CompareSymbolsAsync(
+        IEnumerable<string> symbols,
+        string start,
+        string end,
+        string adjustment = "raw",
+        string interval = "daily",
+        CancellationToken cancellationToken = default) =>
+        PostJsonAsync(
+            "research/compare",
+            new { symbols = symbols.ToArray(), start, end, adjustment, interval },
+            cancellationToken);
+
+    public Task<JsonElement> ExportReportAsync(
+        string artifactRoot,
+        string title,
+        string? symbol,
+        IEnumerable<object> sections,
+        string? filename = null,
+        CancellationToken cancellationToken = default) =>
+        PostJsonAsync(
+            "research/export-report",
+            new
+            {
+                artifact_root = artifactRoot,
+                title,
+                symbol,
+                sections = sections.ToArray(),
+                filename,
+            },
+            cancellationToken);
+
+    public Task<JsonElement> ExportParquetAsync(
+        string symbol,
+        string start,
+        string end,
+        string adjustment = "raw",
+        string interval = "daily",
+        CancellationToken cancellationToken = default) =>
+        PostJsonAsync(
+            "market/export-parquet",
+            new { symbol, start, end, adjustment, interval },
+            cancellationToken);
+
     public void Dispose()
     {
         if (_ownsClient)

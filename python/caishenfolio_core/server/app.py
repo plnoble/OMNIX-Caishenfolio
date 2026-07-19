@@ -14,7 +14,12 @@ from caishenfolio_core.market.cached_market import CachingMarketFacade
 from caishenfolio_core.market.factory import create_market_provider, provider_status
 from caishenfolio_core.market.fixture import FixtureMarketDataProvider
 from caishenfolio_core.market.network import trust_env_enabled
+from caishenfolio_core.market.fund_catalog import search_funds
+from caishenfolio_core.market.parquet_store import export_bars_parquet, parquet_available
 from caishenfolio_core.market.symbol_index import fuzzy_search_a_share
+from caishenfolio_core.research.backtest import ma_cross_backtest
+from caishenfolio_core.research.compare import compare_normalized_closes
+from caishenfolio_core.research.report import build_markdown_report, write_report
 from caishenfolio_core.security.loopback import ensure_loopback, is_denied_wildcard
 from caishenfolio_core.tasks.models import TaskKind, TaskStatus
 from caishenfolio_core.tasks.store import InMemoryTaskStore
@@ -54,7 +59,7 @@ class AnalyticsApp:
             "status": "ok",
             "product": PRODUCT_NAME,
             "version": __version__,
-            "phase": "P3.6",
+            "phase": "P4",
             "disclaimer": RESEARCH_DISCLAIMER,
             "live_trading_enabled": False,
         }
@@ -96,6 +101,7 @@ class AnalyticsApp:
         limit = max(1, min(int(limit), 50))
         # Local fuzzy first (fast, good for 浦发)
         local = fuzzy_search_a_share(query, limit=limit)
+        funds = search_funds(query, limit=limit)
         remote: list[Any] = []
         try:
             remote = self.market.search(query, limit=limit) or []
@@ -103,7 +109,7 @@ class AnalyticsApp:
             remote = []
         merged = []
         seen: set[str] = set()
-        for hit in list(local) + list(remote):
+        for hit in list(local) + list(funds) + list(remote):
             sym = hit.symbol if hasattr(hit, "symbol") else str(hit.get("symbol", ""))
             if not sym or sym in seen:
                 continue
@@ -112,7 +118,7 @@ class AnalyticsApp:
             if len(merged) >= limit:
                 break
         items = [h.to_dict() if hasattr(h, "to_dict") else h for h in merged]
-        provider = "symbol_index+upstream" if local else getattr(self.market, "PROVIDER_CODE", "unknown")
+        provider = "symbol_index+fund_catalog+upstream"
         return {"items": items, "provider": provider, "fuzzy": True}
 
     def market_bars(
@@ -197,6 +203,126 @@ class AnalyticsApp:
             results.append(facade.sync_symbol(sym, years=years))
         stats = self.cache.stats().to_dict() if self.cache else {}
         return {"ok": True, "items": results, "bars_cache": stats}
+
+    def research_backtest_ma(
+        self,
+        symbol: str,
+        start: str,
+        end: str,
+        *,
+        fast: int = 5,
+        slow: int = 20,
+        adjustment: str = Adjustment.RAW.value,
+        interval: str = BarInterval.DAILY.value,
+    ) -> dict[str, object]:
+        bars_payload = self.market_bars(symbol, start, end, adjustment, interval)
+        if not bars_payload.get("ok") or not bars_payload.get("data"):
+            return {
+                "ok": False,
+                "error": bars_payload.get("error") or "无法加载K线。",
+                "bars": bars_payload,
+                "disclaimer": RESEARCH_DISCLAIMER,
+            }
+        result = ma_cross_backtest(
+            list(bars_payload["data"]),
+            symbol=symbol,
+            fast=fast,
+            slow=slow,
+        )
+        payload = result.to_dict()
+        payload["bars_provider"] = bars_payload.get("provider")
+        payload["interval"] = bars_payload.get("interval")
+        return payload
+
+    def research_compare(
+        self,
+        symbols: list[str],
+        start: str,
+        end: str,
+        *,
+        adjustment: str = Adjustment.RAW.value,
+        interval: str = BarInterval.DAILY.value,
+    ) -> dict[str, object]:
+        series: dict[str, list[dict[str, Any]]] = {}
+        errors: list[str] = []
+        for sym in symbols:
+            sym = str(sym).strip()
+            if not sym:
+                continue
+            bars_payload = self.market_bars(sym, start, end, adjustment, interval)
+            if bars_payload.get("ok") and bars_payload.get("data"):
+                series[sym] = list(bars_payload["data"])
+            else:
+                errors.append(f"{sym}: {bars_payload.get('error') or 'no data'}")
+        cmp = compare_normalized_closes(series)
+        if errors:
+            cmp["fetch_errors"] = errors
+        return cmp
+
+    def research_export_report(
+        self,
+        *,
+        artifact_root: str,
+        title: str,
+        symbol: str | None,
+        sections: list[dict[str, Any]],
+        filename: str | None = None,
+    ) -> dict[str, object]:
+        if not artifact_root or not str(artifact_root).strip():
+            return {"ok": False, "error": "artifact_root 必填（Host Artifact 路径）。"}
+        md = build_markdown_report(
+            title=title or "研究报告",
+            symbol=symbol,
+            sections=sections,
+            product=PRODUCT_NAME,
+        )
+        written = write_report(md, artifact_root, filename=filename)
+        # also map to task artifact record
+        task = self.tasks.create_task(
+            TaskKind.REPORT,
+            title or "研究报告",
+            metadata={"symbol": symbol or "", "path": str(written.get("markdown_path") or "")},
+        )
+        self.tasks.update_status(task.id, TaskStatus.RUNNING)
+        art = self.tasks.add_artifact(
+            task.id,
+            kind="report_markdown",
+            title=title or "报告",
+            uri_or_payload=str(written.get("markdown_path") or ""),
+            content_type="text/markdown",
+        )
+        self.tasks.update_status(task.id, TaskStatus.SUCCEEDED, "报告已写入 Artifact 根。")
+        return {
+            **written,
+            "task": task.to_dict(),
+            "artifact": art.to_dict(),
+            "disclaimer": RESEARCH_DISCLAIMER,
+        }
+
+    def export_parquet(
+        self,
+        symbol: str,
+        start: str,
+        end: str,
+        *,
+        adjustment: str = Adjustment.RAW.value,
+        interval: str = BarInterval.DAILY.value,
+    ) -> dict[str, object]:
+        bars_payload = self.market_bars(symbol, start, end, adjustment, interval)
+        if not bars_payload.get("ok") or not bars_payload.get("data"):
+            return {
+                "ok": False,
+                "error": bars_payload.get("error") or "无K线可导出",
+                "parquet_available": parquet_available(),
+            }
+        result = export_bars_parquet(
+            list(bars_payload["data"]),
+            symbol=symbol,
+            interval=str(bars_payload.get("interval") or interval),
+            adjustment=adjustment,
+        )
+        result["parquet_available"] = parquet_available()
+        return result
 
     def list_tasks(self, kind: str | None = None, status: str | None = None, limit: int = 50) -> dict[str, object]:
         kind_enum = TaskKind(kind) if kind else None
@@ -307,7 +433,7 @@ class AnalyticsApp:
 
 
 def health_payload() -> dict[str, object]:
-    return AnalyticsApp(market=FixtureMarketDataProvider(), cache=None).health() | {"phase": "P3.5"}
+    return AnalyticsApp(market=FixtureMarketDataProvider(), cache=None).health() | {"phase": "P4"}
 
 
 def validate_bind_host(host: str) -> str:
@@ -378,6 +504,61 @@ def dispatch(app: AnalyticsApp, method: str, path: str, query: str = "", body: d
         if not symbol or not start or not end:
             return 400, {"error": "必须提供 symbol、start、end。"}
         result = app.research_symbol_snapshot(symbol, start, end, adjustment)
+        return (200 if result.get("ok") else 422), result
+    if method == "POST" and normalized == "/research/backtest-ma":
+        symbol = str(body.get("symbol", "")).strip()
+        start = str(body.get("start", "")).strip()
+        end = str(body.get("end", "")).strip()
+        if not symbol or not start or not end:
+            return 400, {"error": "必须提供 symbol、start、end。"}
+        result = app.research_backtest_ma(
+            symbol,
+            start,
+            end,
+            fast=int(body.get("fast", 5)),
+            slow=int(body.get("slow", 20)),
+            adjustment=str(body.get("adjustment", Adjustment.RAW.value)),
+            interval=str(body.get("interval", BarInterval.DAILY.value)),
+        )
+        return (200 if result.get("ok") else 422), result
+    if method == "POST" and normalized == "/research/compare":
+        symbols = body.get("symbols") or []
+        if isinstance(symbols, str):
+            symbols = [s.strip() for s in symbols.split(",") if s.strip()]
+        start = str(body.get("start", "")).strip()
+        end = str(body.get("end", "")).strip()
+        if not symbols or not start or not end:
+            return 400, {"error": "必须提供 symbols、start、end。"}
+        result = app.research_compare(
+            [str(s) for s in symbols],
+            start,
+            end,
+            adjustment=str(body.get("adjustment", Adjustment.RAW.value)),
+            interval=str(body.get("interval", BarInterval.DAILY.value)),
+        )
+        return (200 if result.get("ok") else 422), result
+    if method == "POST" and normalized == "/research/export-report":
+        result = app.research_export_report(
+            artifact_root=str(body.get("artifact_root", "")),
+            title=str(body.get("title", "研究报告")),
+            symbol=body.get("symbol"),
+            sections=list(body.get("sections") or []),
+            filename=body.get("filename"),
+        )
+        return (200 if result.get("ok") else 400), result
+    if method == "POST" and normalized == "/market/export-parquet":
+        symbol = str(body.get("symbol", "")).strip()
+        start = str(body.get("start", "")).strip()
+        end = str(body.get("end", "")).strip()
+        if not symbol or not start or not end:
+            return 400, {"error": "必须提供 symbol、start、end。"}
+        result = app.export_parquet(
+            symbol,
+            start,
+            end,
+            adjustment=str(body.get("adjustment", Adjustment.RAW.value)),
+            interval=str(body.get("interval", BarInterval.DAILY.value)),
+        )
         return (200 if result.get("ok") else 422), result
 
     return 404, {"error": f"未知路由 {method} {normalized}"}

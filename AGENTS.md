@@ -45,7 +45,11 @@ Follow `agent-dev-protocol` under `.claude/skills/agent-dev-protocol/SKILL.md`.
 
 ## Current Phase
 
-**P3 — 中文 Desktop + 真实行情（AkShare，fail-closed）**
+**P4 — 研究工作流（对比/回测/报告/Parquet；不含安装包）**
+
+Completed earlier:
+
+- **P3.x — 行情 UI、缓存、画线、品牌 OMNIX**
 
 Completed earlier:
 

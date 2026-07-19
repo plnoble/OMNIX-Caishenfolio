@@ -45,7 +45,11 @@
             <Button Content="启动分析核心" Padding="12,6" Margin="0,0,8,0" Click="StartCoreButton_OnClick" />
             <Button Content="健康检查" Padding="12,6" Margin="0,0,8,0" Click="HealthButton_OnClick" />
             <Button Content="停止核心" Padding="12,6" Margin="0,0,8,0" Click="StopCoreButton_OnClick" />
-            <Button Content="数据源与密钥" Padding="12,6" Click="DataSourceButton_OnClick" />
+            <Button Content="数据源与密钥" Padding="12,6" Margin="0,0,8,0" Click="DataSourceButton_OnClick" />
+            <Button Content="多股对比" Padding="12,6" Margin="0,0,8,0" Click="CompareWatch_OnClick" />
+            <Button Content="MA回测" Padding="12,6" Margin="0,0,8,0" Click="MaBacktest_OnClick" />
+            <Button Content="导出报告" Padding="12,6" Margin="0,0,8,0" Click="ExportReport_OnClick" />
+            <Button Content="导出Parquet" Padding="12,6" Click="ExportParquet_OnClick" />
         </StackPanel>
 
         <Grid Grid.Row="3">

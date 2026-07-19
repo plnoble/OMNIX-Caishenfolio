@@ -29,6 +29,10 @@ python -m caishenfolio_core.server --host 127.0.0.1 --port 8765
 | GET | `/tasks/{id}/audit` | 任务审计事件 |
 | GET | `/tasks/{id}/artifacts` | 任务产物列表 |
 | POST | `/research/symbol-snapshot` | 研究快照（Task+Artifact+Audit） |
+| POST | `/research/backtest-ma` | MA 交叉简单回测（模拟） |
+| POST | `/research/compare` | 多标的归一化收盘价对比 |
+| POST | `/research/export-report` | 导出 Markdown/HTML 报告到 Artifact 根 |
+| POST | `/market/export-parquet` | 导出 K 线为 Parquet（无 pyarrow 则 JSONL） |
 
 ---
 

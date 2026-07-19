@@ -440,6 +440,167 @@ public partial class MainWindow : Window
         CrosshairLabel.Text = "已重置缩放，显示全部已加载K线。";
     }
 
+    private async void CompareWatch_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var client = EnsureClient();
+            var symbols = _watchlist.Load().Select(x => x.Symbol).Take(4).ToList();
+            if (symbols.Count < 2)
+            {
+                // fall back: current + first watch or require 2
+                if (!string.IsNullOrWhiteSpace(SymbolBox.Text))
+                {
+                    symbols.Insert(0, SymbolBox.Text.Trim());
+                    symbols = symbols.Distinct(StringComparer.OrdinalIgnoreCase).Take(4).ToList();
+                }
+            }
+
+            if (symbols.Count < 2)
+            {
+                StatusText.Text = "多股对比至少需要 2 个标的：请先在关注列表加入 2 只以上，或当前标的+关注。";
+                return;
+            }
+
+            StatusText.Text = $"正在对比：{string.Join("、", symbols)} …";
+            var result = await client
+                .CompareSymbolsAsync(symbols, StartDateBox.Text.Trim(), EndDateBox.Text.Trim(),
+                    SelectedAdjustment(), SelectedInterval())
+                .ConfigureAwait(true);
+            ResearchStatusText.Text = result.ToString();
+            StatusText.Text = result.TryGetProperty("ok", out var ok) && ok.GetBoolean()
+                ? $"对比完成（归一化收盘，起点=100）：{string.Join("、", symbols)}"
+                : $"对比失败：{(result.TryGetProperty("error", out var err) ? err.GetString() : "未知")}";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"对比失败：{HumanizeUiError(ex.Message)}";
+        }
+    }
+
+    private async void MaBacktest_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var client = EnsureClient();
+            var symbol = SymbolBox.Text.Trim();
+            StatusText.Text = $"正在回测 MA5/MA20 交叉：{symbol} …";
+            var result = await client
+                .RunMaBacktestAsync(
+                    symbol,
+                    StartDateBox.Text.Trim(),
+                    EndDateBox.Text.Trim(),
+                    fast: 5,
+                    slow: 20,
+                    adjustment: SelectedAdjustment(),
+                    interval: SelectedInterval())
+                .ConfigureAwait(true);
+            ResearchStatusText.Text = result.ToString();
+            if (result.TryGetProperty("ok", out var ok) && ok.GetBoolean())
+            {
+                var total = result.TryGetProperty("total_return", out var tr) ? tr.GetDouble() : 0;
+                var bh = result.TryGetProperty("buy_hold_return", out var br) ? br.GetDouble() : 0;
+                var trades = result.TryGetProperty("trades", out var t) ? t.GetInt32() : 0;
+                var dd = result.TryGetProperty("max_drawdown", out var md) ? md.GetDouble() : 0;
+                StatusText.Text =
+                    $"回测完成 {symbol}：策略收益={total:P2}，买入持有={bh:P2}，交易次数={trades}，最大回撤={dd:P2}（模拟，非投资建议）";
+            }
+            else
+            {
+                StatusText.Text =
+                    $"回测失败：{(result.TryGetProperty("error", out var err) ? err.GetString() : "未知")}";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"回测失败：{HumanizeUiError(ex.Message)}";
+        }
+    }
+
+    private async void ExportReport_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var client = EnsureClient();
+            var symbol = SymbolBox.Text.Trim();
+            var artifactRoot = _pathRoots.GetRoot(PathRootKind.Artifact);
+            StatusText.Text = "正在导出研究报告…";
+            var sections = new List<object>
+            {
+                new
+                {
+                    heading = "标的与区间",
+                    body = new Dictionary<string, string>
+                    {
+                        ["symbol"] = symbol,
+                        ["market"] = MarketLabels.FromSymbol(symbol),
+                        ["start"] = StartDateBox.Text.Trim(),
+                        ["end"] = EndDateBox.Text.Trim(),
+                        ["interval"] = IntervalLabel(SelectedInterval()),
+                        ["adjustment"] = AdjustmentLabel(SelectedAdjustment()),
+                    },
+                },
+                new
+                {
+                    heading = "运行摘要",
+                    body = ResearchStatusText.Text,
+                },
+                new
+                {
+                    heading = "说明",
+                    body = new List<string>
+                    {
+                        "本报告由本地研究工作台生成。",
+                        "行情可能来自公开源或本地缓存，失败不会伪造数据。",
+                        ProductInfo.ResearchDisclaimer,
+                    },
+                },
+            };
+            var result = await client
+                .ExportReportAsync(
+                    artifactRoot,
+                    $"研究报告_{symbol.Replace(':', '_')}",
+                    symbol,
+                    sections)
+                .ConfigureAwait(true);
+            ResearchStatusText.Text = result.ToString();
+            StatusText.Text = result.TryGetProperty("ok", out var ok) && ok.GetBoolean()
+                ? $"报告已导出到：{(result.TryGetProperty("markdown_path", out var p) ? p.GetString() : artifactRoot)}"
+                : $"导出失败：{(result.TryGetProperty("error", out var err) ? err.GetString() : "未知")}";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"导出报告失败：{HumanizeUiError(ex.Message)}";
+        }
+    }
+
+    private async void ExportParquet_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var client = EnsureClient();
+            var symbol = SymbolBox.Text.Trim();
+            StatusText.Text = $"正在导出 {symbol} 到 Parquet/JSONL…";
+            var result = await client
+                .ExportParquetAsync(
+                    symbol,
+                    StartDateBox.Text.Trim(),
+                    EndDateBox.Text.Trim(),
+                    SelectedAdjustment(),
+                    SelectedInterval())
+                .ConfigureAwait(true);
+            ResearchStatusText.Text = result.ToString();
+            StatusText.Text = result.TryGetProperty("ok", out var ok) && ok.GetBoolean()
+                ? $"导出成功：{(result.TryGetProperty("path", out var p) ? p.GetString() : "")}" +
+                  (result.TryGetProperty("warning", out var w) ? "；" + w.GetString() : "")
+                : $"导出失败：{(result.TryGetProperty("error", out var err) ? err.GetString() : "未知")}";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"导出失败：{HumanizeUiError(ex.Message)}";
+        }
+    }
+
     private async Task LoadBarsAsync()
     {
         try
