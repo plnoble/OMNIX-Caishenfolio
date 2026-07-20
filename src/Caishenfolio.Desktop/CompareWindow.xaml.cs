@@ -1,21 +1,37 @@
 using System.Text.Json;
 using System.Windows;
-using System.Windows.Controls;
+using Caishenfolio.Host;
+using Caishenfolio.Host.Python;
 
 namespace Caishenfolio.Desktop;
 
 public partial class CompareWindow : Window
 {
+    private readonly AnalyticsCoreClient? _client;
+    private readonly string? _artifactRoot;
+    private readonly string _rangeStart;
+    private readonly string _rangeEnd;
     private List<string> _dates = new();
     private Dictionary<string, IReadOnlyList<double>> _series = new();
+    private JsonElement _raw;
+    private string _summaryForReport = "";
 
-    public CompareWindow()
+    public CompareWindow(
+        AnalyticsCoreClient? client = null,
+        string? artifactRoot = null,
+        string rangeStart = "",
+        string rangeEnd = "")
     {
         InitializeComponent();
+        _client = client;
+        _artifactRoot = artifactRoot;
+        _rangeStart = rangeStart;
+        _rangeEnd = rangeEnd;
     }
 
     public void LoadFromCompareJson(JsonElement result)
     {
+        _raw = result;
         _dates = new List<string>();
         _series = new Dictionary<string, IReadOnlyList<double>>(StringComparer.OrdinalIgnoreCase);
 
@@ -25,6 +41,7 @@ public partial class CompareWindow : Window
             SummaryText.Text = result.TryGetProperty("error", out var err)
                 ? err.GetString()
                 : "未知错误";
+            _summaryForReport = SummaryText.Text;
             return;
         }
 
@@ -89,6 +106,7 @@ public partial class CompareWindow : Window
         }
 
         SummaryText.Text = string.Join(Environment.NewLine, summaryLines);
+        _summaryForReport = SummaryText.Text;
         Redraw();
     }
 
@@ -102,6 +120,80 @@ public partial class CompareWindow : Window
         }
 
         CompareChartPainter.Draw(ChartCanvas, _dates, _series, LegendText);
+    }
+
+    private async void ExportReport_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_client is null || string.IsNullOrWhiteSpace(_artifactRoot))
+        {
+            MessageBox.Show(this, "无法导出：缺少客户端或 Artifact 路径。", "导出", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        try
+        {
+            var symbols = string.Join(", ", _series.Keys);
+            var sections = new List<object>
+            {
+                new
+                {
+                    heading = "对比区间",
+                    body = new Dictionary<string, string>
+                    {
+                        ["start"] = _rangeStart,
+                        ["end"] = _rangeEnd,
+                        ["symbols"] = symbols,
+                        ["method"] = "归一化收盘价（起点=100）",
+                    },
+                },
+                new
+                {
+                    heading = "对比摘要",
+                    body = _summaryForReport,
+                },
+                new
+                {
+                    heading = "图例说明",
+                    body = LegendText.Text,
+                },
+                new
+                {
+                    heading = "说明",
+                    body = new List<string>
+                    {
+                        "叠线图见软件对比窗口；本报告保存文字摘要。",
+                        ProductInfo.ResearchDisclaimer,
+                    },
+                },
+            };
+
+            var result = await _client
+                .ExportReportAsync(
+                    _artifactRoot,
+                    $"对比报告_{DateTime.Now:yyyyMMdd_HHmmss}",
+                    symbols,
+                    sections)
+                .ConfigureAwait(true);
+
+            if (result.TryGetProperty("ok", out var ok) && ok.GetBoolean())
+            {
+                var path = result.TryGetProperty("markdown_path", out var p) ? p.GetString() : _artifactRoot;
+                MessageBox.Show(this, $"对比报告已导出：\n{path}", "导出成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                MessageBox.Show(
+                    this,
+                    result.TryGetProperty("error", out var err) ? err.GetString() : "导出失败",
+                    "导出失败",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "导出失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private void Close_OnClick(object sender, RoutedEventArgs e) => Close();

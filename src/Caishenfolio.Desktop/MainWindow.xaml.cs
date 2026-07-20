@@ -472,12 +472,19 @@ public partial class MainWindow : Window
                 .ConfigureAwait(true);
             ResearchStatusText.Text = result.ToString();
 
-            var win = new CompareWindow { Owner = this };
+            var win = new CompareWindow(
+                client,
+                _pathRoots.GetRoot(PathRootKind.Artifact),
+                StartDateBox.Text.Trim(),
+                EndDateBox.Text.Trim())
+            {
+                Owner = this,
+            };
             win.LoadFromCompareJson(result);
             win.Show();
 
             StatusText.Text = result.TryGetProperty("ok", out var ok) && ok.GetBoolean()
-                ? $"对比叠线图已打开：{string.Join("、", symbols)}（归一化起点=100）"
+                ? $"对比叠线图已打开：{string.Join("、", symbols)}（可点「导出对比报告」）"
                 : $"对比失败：{(result.TryGetProperty("error", out var err) ? err.GetString() : "未知")}";
         }
         catch (Exception ex)
@@ -490,30 +497,29 @@ public partial class MainWindow : Window
     {
         try
         {
+            var settings = new BacktestSettingsWindow { Owner = this };
+            if (settings.ShowDialog() != true || !settings.Confirmed)
+            {
+                StatusText.Text = "已取消回测。";
+                return;
+            }
+
             var client = EnsureClient();
             var symbol = SymbolBox.Text.Trim();
-            StatusText.Text = $"正在回测 MA5/MA20（含手续费/滑点/涨跌停约束）：{symbol} …";
-            // 简化 A 股口径默认成本；可后续做成设置面板
-            var costs = new
-            {
-                commission_rate = 0.0003,
-                commission_min = 0.0,
-                stamp_duty_rate = 0.0005,
-                slippage_rate = 0.0005,
-                limit_up_pct = 0.10,
-                limit_down_pct = 0.10,
-                enforce_limit = true,
-            };
+            var start = StartDateBox.Text.Trim();
+            var end = EndDateBox.Text.Trim();
+            StatusText.Text =
+                $"正在回测 MA{settings.Fast}/MA{settings.Slow}（自定义成本与涨跌停）：{symbol} …";
             var result = await client
                 .RunMaBacktestAsync(
                     symbol,
-                    StartDateBox.Text.Trim(),
-                    EndDateBox.Text.Trim(),
-                    fast: 5,
-                    slow: 20,
+                    start,
+                    end,
+                    fast: settings.Fast,
+                    slow: settings.Slow,
                     adjustment: SelectedAdjustment(),
                     interval: SelectedInterval(),
-                    costs: costs)
+                    costs: settings.Costs)
                 .ConfigureAwait(true);
             ResearchStatusText.Text = result.ToString();
             if (result.TryGetProperty("ok", out var ok) && ok.GetBoolean())
@@ -524,8 +530,19 @@ public partial class MainWindow : Window
                 var dd = result.TryGetProperty("max_drawdown", out var md) ? md.GetDouble() : 0;
                 var skipped = result.TryGetProperty("skipped_signals", out var sk) ? sk.GetInt32() : 0;
                 StatusText.Text =
-                    $"回测完成 {symbol}：策略={total:P2}，买入持有={bh:P2}，成交={trades}，跳过信号(涨跌停等)={skipped}，最大回撤={dd:P2}" +
-                    "；成本模型：佣金万3+卖出印花税万5+滑点万5+10%涨跌停约束（模拟，非投资建议）";
+                    $"回测完成 {symbol}：策略={total:P2}，买入持有={bh:P2}，成交={trades}，跳过={skipped}，最大回撤={dd:P2}（见权益曲线窗口）";
+
+                var resultWin = new BacktestResultWindow(
+                    client,
+                    _pathRoots.GetRoot(PathRootKind.Artifact),
+                    symbol,
+                    start,
+                    end,
+                    result)
+                {
+                    Owner = this,
+                };
+                resultWin.Show();
             }
             else
             {

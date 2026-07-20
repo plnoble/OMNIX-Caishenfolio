@@ -1,0 +1,76 @@
+<Window x:Class="Caishenfolio.Desktop.BacktestSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="回测参数"
+        Height="480"
+        Width="460"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F1419"
+        Foreground="#E7ECF1"
+        ResizeMode="NoResize">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="MA 交叉回测参数" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                <TextBlock TextWrapping="Wrap" Opacity="0.8" FontSize="12" Margin="0,0,0,14"
+                           Text="以下为研究用简化模型，不是券商实盘费率。结果仅供模拟，非投资建议。" />
+
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="140" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="快线 MA" Margin="0,0,0,8" />
+                    <TextBox x:Name="FastBox" Grid.Row="0" Grid.Column="1" Padding="6" Text="5" Margin="0,0,0,8" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="慢线 MA" Margin="0,0,0,8" />
+                    <TextBox x:Name="SlowBox" Grid.Row="1" Grid.Column="1" Padding="6" Text="20" Margin="0,0,0,8" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="佣金比例" Margin="0,0,0,8" />
+                    <TextBox x:Name="CommissionBox" Grid.Row="2" Grid.Column="1" Padding="6" Text="0.0003" Margin="0,0,0,8" ToolTip="如万3填 0.0003" />
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Text="印花税(卖出)" Margin="0,0,0,8" />
+                    <TextBox x:Name="StampBox" Grid.Row="3" Grid.Column="1" Padding="6" Text="0.0005" Margin="0,0,0,8" />
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Text="滑点比例" Margin="0,0,0,8" />
+                    <TextBox x:Name="SlippageBox" Grid.Row="4" Grid.Column="1" Padding="6" Text="0.0005" Margin="0,0,0,8" />
+
+                    <TextBlock Grid.Row="5" Grid.Column="0" VerticalAlignment="Center" Text="涨停幅度" Margin="0,0,0,8" />
+                    <TextBox x:Name="LimitUpBox" Grid.Row="5" Grid.Column="1" Padding="6" Text="0.10" Margin="0,0,0,8" />
+
+                    <TextBlock Grid.Row="6" Grid.Column="0" VerticalAlignment="Center" Text="跌停幅度" Margin="0,0,0,8" />
+                    <TextBox x:Name="LimitDownBox" Grid.Row="6" Grid.Column="1" Padding="6" Text="0.10" Margin="0,0,0,8" />
+
+                    <CheckBox x:Name="EnforceLimitCheck"
+                              Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2"
+                              Content="启用涨跌停约束（涨停不买、跌停不卖）"
+                              IsChecked="True"
+                              Foreground="#E7ECF1"
+                              Margin="0,4,0,0" />
+                </Grid>
+            </StackPanel>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="取消" Padding="14,6" Margin="0,0,8,0" IsCancel="True" Click="Cancel_OnClick" />
+            <Button Content="开始回测" Padding="14,6" IsDefault="True" Click="Ok_OnClick" />
+        </StackPanel>
+    </Grid>
+</Window>
