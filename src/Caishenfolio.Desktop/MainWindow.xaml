@@ -180,13 +180,17 @@
                             <Button Content="平移" Padding="8,4" Margin="0,0,6,0" Click="ChartModePan_OnClick" />
                             <Button Content="趋势线" Padding="8,4" Margin="0,0,6,0" Click="ChartModeTrend_OnClick" />
                             <Button Content="水平线" Padding="8,4" Margin="0,0,6,0" Click="ChartModeHoriz_OnClick" />
+                            <Button Content="点选买点" Padding="8,4" Margin="0,0,6,0" Click="ChartPickPlanBuy_OnClick"
+                                    ToolTip="在K线上点一下 = 添加计划买横线" />
+                            <Button Content="点选卖点" Padding="8,4" Margin="0,0,6,0" Click="ChartPickPlanSell_OnClick"
+                                    ToolTip="在K线上点一下 = 添加计划卖横线" />
                             <Button Content="计划/成交" Padding="8,4" Margin="0,0,6,0" Click="PricePlan_OnClick"
-                                    ToolTip="记录计划买/卖点（K线横线）与真实成交" />
+                                    ToolTip="记录计划买/卖点（K线横线）与真实成交；可从图点选填价" />
                             <Button Content="清除画线" Padding="8,4" Margin="0,0,6,0" Click="ChartClearDraw_OnClick" />
                             <Button Content="重置缩放" Padding="8,4" Click="ChartResetZoom_OnClick" />
                         </StackPanel>
                         <TextBlock x:Name="ChartPeriodHint" Opacity="0.85" FontSize="12"
-                                   Text="滚轮缩放 · 右键拖拽 · 计划买/卖横线 · 趋势线/水平线" />
+                                   Text="滚轮缩放 · 右键拖拽 · 点选买/卖点 · 计划横线 · 趋势/水平线" />
                         <TextBlock x:Name="CrosshairLabel" Margin="0,4,0,0" FontFamily="Consolas" FontSize="12"
                                    Foreground="#E8F0FF" Text="" />
                     </StackPanel>

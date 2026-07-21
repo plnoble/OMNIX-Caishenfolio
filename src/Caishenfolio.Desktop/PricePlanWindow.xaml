@@ -21,7 +21,7 @@
             <TextBlock Text="计划买/卖点 · 真实成交记录" FontSize="18" FontWeight="SemiBold" />
             <TextBlock x:Name="ContextText" Margin="0,4,0,0" FontFamily="Consolas" FontSize="12" Opacity="0.9" />
             <TextBlock TextWrapping="Wrap" Opacity="0.75" FontSize="12" Margin="0,4,0,0"
-                       Text="计划价位会在主图 K 线上画横线，并显示距现价的百分比与价差。真实成交单独记录用于盈亏。不连接券商、不自动下单。" />
+                       Text="计划价位会在主图 K 线上画横线，并显示距现价的百分比与价差。真实成交单独记录用于盈亏。不连接券商、不自动下单。也可用主图「点选买点/卖点」直接取价。" />
         </StackPanel>
 
         <Grid Grid.Row="1">
@@ -53,6 +53,10 @@
                         </Grid>
                         <StackPanel Orientation="Horizontal">
                             <Button Content="添加计划线" Padding="10,5" Margin="0,0,8,0" Click="AddPlan_OnClick" />
+                            <Button Content="图上点选买" Padding="10,5" Margin="0,0,8,0" Click="PickPlanBuy_OnClick"
+                                    ToolTip="回到主图点击取计划买价" />
+                            <Button Content="图上点选卖" Padding="10,5" Margin="0,0,8,0" Click="PickPlanSell_OnClick"
+                                    ToolTip="回到主图点击取计划卖价" />
                             <Button Content="删除选中" Padding="10,5" Margin="0,0,8,0" Click="RemovePlan_OnClick" />
                             <Button Content="停用选中" Padding="10,5" Click="DeactivatePlan_OnClick" />
                         </StackPanel>
@@ -89,6 +93,8 @@
                         </Grid>
                         <StackPanel Orientation="Horizontal">
                             <Button Content="登记成交" Padding="10,5" Margin="0,0,8,0" Click="AddFill_OnClick" />
+                            <Button Content="图上取买价" Padding="10,5" Margin="0,0,8,0" Click="PickFillBuy_OnClick" />
+                            <Button Content="图上取卖价" Padding="10,5" Margin="0,0,8,0" Click="PickFillSell_OnClick" />
                             <Button Content="删除选中" Padding="10,5" Click="RemoveFill_OnClick" />
                         </StackPanel>
                     </StackPanel>

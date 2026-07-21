@@ -10,24 +10,50 @@ public partial class PricePlanWindow : Window
 {
     private readonly PricePlanStore _store;
     private readonly string _symbol;
-    private readonly double? _lastPrice;
+    private double? _lastPrice;
     private readonly Action? _onChanged;
+    private readonly Action<string>? _onRequestPick;
 
     public PricePlanWindow(
         PricePlanStore store,
         string symbol,
         double? lastPrice = null,
-        Action? onChanged = null)
+        Action? onChanged = null,
+        Action<string>? onRequestPick = null)
     {
         InitializeComponent();
         _store = store;
         _symbol = symbol.Trim();
         _lastPrice = lastPrice;
         _onChanged = onChanged;
+        _onRequestPick = onRequestPick;
         ContextText.Text =
             $"{MarketLabels.FromSymbol(_symbol)}  {_symbol}" +
             (lastPrice is null ? "" : $"  |  现价参考 {lastPrice:0.####}");
         Reload();
+    }
+
+    /// <summary>Called when MainWindow adds a plan from chart pick.</summary>
+    public void NotifyExternalChange(double? lastPrice = null)
+    {
+        if (lastPrice is not null)
+        {
+            _lastPrice = lastPrice;
+            ContextText.Text =
+                $"{MarketLabels.FromSymbol(_symbol)}  {_symbol}  |  现价参考 {lastPrice:0.####}";
+        }
+
+        Reload();
+    }
+
+    /// <summary>Fill fill-price box from chart pick; user still confirms qty.</summary>
+    public void ApplyPickedFillPrice(double price, string side)
+    {
+        FillPriceBox.Text = price.ToString("0.####", CultureInfo.InvariantCulture);
+        SelectSide(FillSideBox, side);
+        Activate();
+        FillQtyBox.Focus();
+        StatusText.Text = $"已从图取{(side == "buy" ? "买" : "卖")}价 {price:0.####}，请填数量后点「登记成交」。";
     }
 
     private void Reload()
@@ -200,6 +226,34 @@ public partial class PricePlanWindow : Window
         StatusText.Text = "已同步到 K 线。";
     }
 
+    private void PickPlanBuy_OnClick(object sender, RoutedEventArgs e)
+    {
+        _onRequestPick?.Invoke("plan_buy");
+        StatusText.Text = "请在主窗口 K 线图上点击，添加计划买点。";
+        Owner?.Activate();
+    }
+
+    private void PickPlanSell_OnClick(object sender, RoutedEventArgs e)
+    {
+        _onRequestPick?.Invoke("plan_sell");
+        StatusText.Text = "请在主窗口 K 线图上点击，添加计划卖点。";
+        Owner?.Activate();
+    }
+
+    private void PickFillBuy_OnClick(object sender, RoutedEventArgs e)
+    {
+        _onRequestPick?.Invoke("fill_buy");
+        StatusText.Text = "请在主窗口 K 线图上点击取买价。";
+        Owner?.Activate();
+    }
+
+    private void PickFillSell_OnClick(object sender, RoutedEventArgs e)
+    {
+        _onRequestPick?.Invoke("fill_sell");
+        StatusText.Text = "请在主窗口 K 线图上点击取卖价。";
+        Owner?.Activate();
+    }
+
     private void Close_OnClick(object sender, RoutedEventArgs e) => Close();
 
     private void Notify() => _onChanged?.Invoke();
@@ -212,6 +266,19 @@ public partial class PricePlanWindow : Window
         }
 
         return "buy";
+    }
+
+    private static void SelectSide(ComboBox box, string side)
+    {
+        for (var i = 0; i < box.Items.Count; i++)
+        {
+            if (box.Items[i] is ComboBoxItem item && item.Tag is string tag
+                && string.Equals(tag, side, StringComparison.OrdinalIgnoreCase))
+            {
+                box.SelectedIndex = i;
+                return;
+            }
+        }
     }
 
     private static bool TryParsePrice(string text, out double value)

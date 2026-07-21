@@ -1,8 +1,8 @@
 # Current Development
 
 - Project: **OMNIX-Caishenfolio**
-- Status: **P4.3 delivered (v0.8.1)** — plan levels on chart + actual fills; installer deferred
-- **P4.3**: 计划买/卖价位横线（多档）+ 距现价%、真实成交台账（FIFO 盈亏），主图同步
-- **P4.2 Grid**: heuristic suggest, backtest, grid ledger
+- Status: **P4.3.1 (v0.8.2)** — chart click-to-pick plan buy/sell; installer deferred
+- **P4.3.1**: 点选买点/卖点、图上取成交价填入台账
+- **P4.3**: 计划买/卖横线 + 真实成交 FIFO
+- **P4.2**: 网格建议/回测/台账
 - GitHub: https://github.com/plnoble/OMNIX-Caishenfolio
-- Out of scope: live broker orders, auto placement, installer

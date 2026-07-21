@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private IReadOnlyList<MarketBarDto> _lastBars = Array.Empty<MarketBarDto>();
     private string _lastName = "";
     private CandleChartPainter? _chart;
+    private PricePlanWindow? _pricePlanWindow;
 
     public MainWindow()
     {
@@ -54,6 +55,7 @@ public partial class MainWindow : Window
         _pricePlan = new PricePlanStore(_pathRoots.GetRoot(PathRootKind.State));
 
         _chart = new CandleChartPainter(ChartCanvas, CrosshairLabel);
+        _chart.PricePicked += OnChartPricePicked;
 
         SymbolBox.TextChanged += (_, _) => UpdateSymbolMarketTag();
         IntervalCombo.SelectionChanged += (_, _) =>
@@ -430,6 +432,83 @@ public partial class MainWindow : Window
         CrosshairLabel.Text = "模式：水平线（点一下定位，再点一下确认）";
     }
 
+    private void ChartPickPlanBuy_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_chart is null)
+        {
+            return;
+        }
+
+        if (_lastBars.Count == 0)
+        {
+            StatusText.Text = "请先加载K线，再点选买点。";
+            return;
+        }
+
+        _chart.Mode = ChartDrawMode.PickPlanBuy;
+        StatusText.Text = "点选计划买：在K线价格区点击，立即添加绿色计划买横线（可连续点多个）。";
+    }
+
+    private void ChartPickPlanSell_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_chart is null)
+        {
+            return;
+        }
+
+        if (_lastBars.Count == 0)
+        {
+            StatusText.Text = "请先加载K线，再点选卖点。";
+            return;
+        }
+
+        _chart.Mode = ChartDrawMode.PickPlanSell;
+        StatusText.Text = "点选计划卖：在K线价格区点击，立即添加红色计划卖横线（可连续点多个）。";
+    }
+
+    private void OnChartPricePicked(double price, string kind)
+    {
+        try
+        {
+            var symbol = SymbolBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                StatusText.Text = "无标的，无法记录价位。";
+                return;
+            }
+
+            price = Math.Round(price, 4, MidpointRounding.AwayFromZero);
+            if (kind is "plan_buy" or "plan_sell")
+            {
+                var side = kind == "plan_buy" ? "buy" : "sell";
+                var note = "图上点选";
+                _pricePlan.AddLevel(symbol, side, price, note);
+                ApplyPriceMarkersToChart();
+                _pricePlanWindow?.NotifyExternalChange(lastPrice: LastCloseOrNull());
+                var zh = side == "buy" ? "买" : "卖";
+                StatusText.Text = $"已添加计划{zh}点 {price:0.####}（可继续点选；点「十字光标」结束）";
+                CrosshairLabel.Text =
+                    $"已添加计划{zh} {price:0.####} · 继续点击可再加 · 十字光标结束点选";
+                return;
+            }
+
+            if (kind is "fill_buy" or "fill_sell")
+            {
+                var side = kind == "fill_buy" ? "buy" : "sell";
+                EnsurePricePlanWindow();
+                _pricePlanWindow?.ApplyPickedFillPrice(price, side);
+                StatusText.Text = $"已从图取成交价 {price:0.####}，请在台账窗口确认数量后登记。";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"点选失败：{HumanizeUiError(ex.Message)}";
+        }
+    }
+
+    private double? LastCloseOrNull() =>
+        _lastBars.Count > 0 ? (double)_lastBars[^1].Close : null;
+
     private void ChartClearDraw_OnClick(object sender, RoutedEventArgs e)
     {
         _chart?.ClearDrawings();
@@ -440,35 +519,59 @@ public partial class MainWindow : Window
     {
         try
         {
-            var symbol = SymbolBox.Text.Trim();
-            if (string.IsNullOrWhiteSpace(symbol))
-            {
-                StatusText.Text = "请先选择标的。";
-                return;
-            }
-
-            double? last = null;
-            if (_lastBars.Count > 0)
-            {
-                last = (double)_lastBars[^1].Close;
-            }
-
-            var win = new PricePlanWindow(
-                _pricePlan,
-                symbol,
-                last,
-                onChanged: ApplyPriceMarkersToChart)
-            {
-                Owner = this,
-            };
-            win.Show();
+            EnsurePricePlanWindow();
             ApplyPriceMarkersToChart();
-            StatusText.Text = $"计划/成交台账：{symbol}（横线已同步到K线）";
+            StatusText.Text = $"计划/成交台账：{SymbolBox.Text.Trim()}（可用「点选买点/卖点」在图上取价）";
         }
         catch (Exception ex)
         {
             StatusText.Text = $"打开计划/成交失败：{HumanizeUiError(ex.Message)}";
         }
+    }
+
+    private void EnsurePricePlanWindow()
+    {
+        var symbol = SymbolBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(symbol))
+        {
+            throw new InvalidOperationException("请先选择标的。");
+        }
+
+        if (_pricePlanWindow is { IsLoaded: true })
+        {
+            _pricePlanWindow.Activate();
+            _pricePlanWindow.NotifyExternalChange(LastCloseOrNull());
+            return;
+        }
+
+        _pricePlanWindow = new PricePlanWindow(
+            _pricePlan,
+            symbol,
+            LastCloseOrNull(),
+            onChanged: ApplyPriceMarkersToChart,
+            onRequestPick: kind =>
+            {
+                if (_chart is null || _lastBars.Count == 0)
+                {
+                    StatusText.Text = "请先加载K线再点选。";
+                    return;
+                }
+
+                _chart.Mode = kind switch
+                {
+                    "plan_buy" => ChartDrawMode.PickPlanBuy,
+                    "plan_sell" => ChartDrawMode.PickPlanSell,
+                    "fill_buy" => ChartDrawMode.PickFillBuy,
+                    "fill_sell" => ChartDrawMode.PickFillSell,
+                    _ => ChartDrawMode.Crosshair,
+                };
+                StatusText.Text = "请回到主窗口K线图点选价格…";
+            })
+        {
+            Owner = this,
+        };
+        _pricePlanWindow.Closed += (_, _) => _pricePlanWindow = null;
+        _pricePlanWindow.Show();
     }
 
     private void ApplyPriceMarkersToChart()

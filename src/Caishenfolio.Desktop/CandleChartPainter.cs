@@ -15,6 +15,14 @@ public enum ChartDrawMode
     Pan,
     TrendLine,
     HorizLine,
+    /// <summary>Single-click captures Y price as a planned buy level.</summary>
+    PickPlanBuy,
+    /// <summary>Single-click captures Y price as a planned sell level.</summary>
+    PickPlanSell,
+    /// <summary>Single-click fills price into an external form (buy context).</summary>
+    PickFillBuy,
+    /// <summary>Single-click fills price into an external form (sell context).</summary>
+    PickFillSell,
 }
 
 /// <summary>
@@ -38,6 +46,12 @@ public sealed class CandleChartPainter
     private IReadOnlyList<ChartPriceMarker> _markers = Array.Empty<ChartPriceMarker>();
     private double? _refLastPrice;
     private bool _isDrawing;
+    private double? _pickHoverPrice;
+
+    /// <summary>
+    /// Fired when user clicks in a pick mode. Args: price, mode (plan_buy/plan_sell/fill_buy/fill_sell).
+    /// </summary>
+    public event Action<double, string>? PricePicked;
 
     private sealed class ChartLine
     {
@@ -94,8 +108,42 @@ public sealed class CandleChartPainter
     public ChartDrawMode Mode
     {
         get => _mode;
-        set => _mode = value;
+        set
+        {
+            _mode = value;
+            _isDrawing = false;
+            _drawAnchor = null;
+            _pickHoverPrice = null;
+            if (IsPickMode(_mode))
+            {
+                _crosshairLabel.Text = PickModeHint(_mode);
+            }
+        }
     }
+
+    public static bool IsPickMode(ChartDrawMode mode) =>
+        mode is ChartDrawMode.PickPlanBuy
+            or ChartDrawMode.PickPlanSell
+            or ChartDrawMode.PickFillBuy
+            or ChartDrawMode.PickFillSell;
+
+    private static string PickModeHint(ChartDrawMode mode) => mode switch
+    {
+        ChartDrawMode.PickPlanBuy => "点选计划买：在K线价格区点一下，生成绿色计划买横线",
+        ChartDrawMode.PickPlanSell => "点选计划卖：在K线价格区点一下，生成红色计划卖横线",
+        ChartDrawMode.PickFillBuy => "点选实买价：点一下填入成交价（再在台账确认数量）",
+        ChartDrawMode.PickFillSell => "点选实卖价：点一下填入成交价（再在台账确认数量）",
+        _ => "",
+    };
+
+    private static string PickModeKind(ChartDrawMode mode) => mode switch
+    {
+        ChartDrawMode.PickPlanBuy => "plan_buy",
+        ChartDrawMode.PickPlanSell => "plan_sell",
+        ChartDrawMode.PickFillBuy => "fill_buy",
+        ChartDrawMode.PickFillSell => "fill_sell",
+        _ => "",
+    };
 
     public void SetBars(IReadOnlyList<MarketBarDto> bars)
     {
@@ -274,6 +322,28 @@ public sealed class CandleChartPainter
 
         // planned levels + actual fills (persistent, not freehand drawings)
         DrawPriceMarkers(YPrice);
+
+        // pick-mode hover guide
+        if (IsPickMode(_mode) && _pickHoverPrice is { } php)
+        {
+            var hy = YPrice(php);
+            var pickColor = _mode is ChartDrawMode.PickPlanBuy or ChartDrawMode.PickFillBuy
+                ? Color.FromRgb(0x3D, 0xDC, 0x97)
+                : Color.FromRgb(0xFF, 0x6B, 0x7A);
+            var guide = new Line
+            {
+                X1 = _padL,
+                X2 = _padL + _plotW,
+                Y1 = hy,
+                Y2 = hy,
+                Stroke = new SolidColorBrush(pickColor),
+                StrokeThickness = 1.4,
+                StrokeDashArray = new DoubleCollection { 2, 2 },
+                Opacity = 0.85,
+            };
+            _canvas.Children.Add(guide);
+            AddText($"点选 ≈ {php:0.####}", _padL + 4, hy - 14, 11, pickColor.R, pickColor.G, pickColor.B);
+        }
 
         // user drawings
         foreach (var line in _lines)
@@ -528,6 +598,19 @@ public sealed class CandleChartPainter
             return;
         }
 
+        if (IsPickMode(_mode))
+        {
+            if (TryPriceFromY(pos.Y, out var price) && price > 0)
+            {
+                var kind = PickModeKind(_mode);
+                PricePicked?.Invoke(price, kind);
+                _crosshairLabel.Text = $"{PickModeHint(_mode)}  |  已取价 {price:0.####}（可继续点选）";
+            }
+
+            e.Handled = true;
+            return;
+        }
+
         if (_mode is ChartDrawMode.TrendLine or ChartDrawMode.HorizLine)
         {
             if (!_isDrawing)
@@ -590,14 +673,36 @@ public sealed class CandleChartPainter
         if (_isDrawing && _drawAnchor is not null)
         {
             DrawStatic(tempEnd: pos);
-            var span = _priceMax - _priceMin;
-            var price = _priceMax - (pos.Y - _padT) / Math.Max(1, _priceH) * span;
-            _crosshairLabel.Text = _mode == ChartDrawMode.HorizLine
-                ? $"画水平线中… 价格≈{price:0.####}（再点一下确认）"
-                : $"画趋势线中… 再点一下结束";
+            if (TryPriceFromY(pos.Y, out var drawPx))
+            {
+                _crosshairLabel.Text = _mode == ChartDrawMode.HorizLine
+                    ? $"画水平线中… 价格≈{drawPx:0.####}（再点一下确认）"
+                    : $"画趋势线中… 再点一下结束";
+            }
+
             return;
         }
 
+        if (IsPickMode(_mode))
+        {
+            if (TryPriceFromY(pos.Y, out var pickPx))
+            {
+                _pickHoverPrice = pickPx;
+                DrawStatic();
+                var dist = "";
+                if (_refLastPrice is > 0)
+                {
+                    var pct = (pickPx / _refLastPrice.Value - 1.0) * 100.0;
+                    dist = $"  距现价 {pct:+0.00;-0.00}%";
+                }
+
+                _crosshairLabel.Text = $"{PickModeHint(_mode)}  |  光标价≈{pickPx:0.####}{dist}";
+            }
+
+            return;
+        }
+
+        _pickHoverPrice = null;
         if (_mode != ChartDrawMode.Crosshair)
         {
             return;
@@ -605,6 +710,21 @@ public sealed class CandleChartPainter
 
         var idx = NearestIndex(pos.X);
         DrawStatic(pos, idx);
+    }
+
+    private bool TryPriceFromY(double y, out double price)
+    {
+        price = 0;
+        if (_priceH <= 1 || _allBars.Count == 0)
+        {
+            return false;
+        }
+
+        // Clamp into price pane (ignore pure volume area for cleaner picks)
+        var clampedY = Math.Clamp(y, _padT, _priceBottom);
+        var span = _priceMax - _priceMin;
+        price = _priceMax - (clampedY - _padT) / Math.Max(1, _priceH) * span;
+        return price > 0;
     }
 
     private void CommitDrawing(Point a, Point b)
