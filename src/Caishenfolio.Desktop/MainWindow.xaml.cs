@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private readonly TaskMirrorService _taskMirror;
     private readonly MarketCredentialsStore _credentials;
     private readonly WatchlistStore _watchlist;
+    private readonly PricePlanStore _pricePlan;
     private AnalyticsCoreClient? _client;
     private IReadOnlyList<MarketBarDto> _lastBars = Array.Empty<MarketBarDto>();
     private string _lastName = "";
@@ -50,6 +51,7 @@ public partial class MainWindow : Window
         _taskMirror = new TaskMirrorService(_taskStore);
         _credentials = new MarketCredentialsStore(_pathRoots.GetRoot(PathRootKind.State));
         _watchlist = new WatchlistStore(_pathRoots.GetRoot(PathRootKind.State));
+        _pricePlan = new PricePlanStore(_pathRoots.GetRoot(PathRootKind.State));
 
         _chart = new CandleChartPainter(ChartCanvas, CrosshairLabel);
 
@@ -431,7 +433,83 @@ public partial class MainWindow : Window
     private void ChartClearDraw_OnClick(object sender, RoutedEventArgs e)
     {
         _chart?.ClearDrawings();
-        CrosshairLabel.Text = "已清除画线。";
+        CrosshairLabel.Text = "已清除手动画线（不影响计划买/卖与成交线）";
+    }
+
+    private void PricePlan_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var symbol = SymbolBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                StatusText.Text = "请先选择标的。";
+                return;
+            }
+
+            double? last = null;
+            if (_lastBars.Count > 0)
+            {
+                last = (double)_lastBars[^1].Close;
+            }
+
+            var win = new PricePlanWindow(
+                _pricePlan,
+                symbol,
+                last,
+                onChanged: ApplyPriceMarkersToChart)
+            {
+                Owner = this,
+            };
+            win.Show();
+            ApplyPriceMarkersToChart();
+            StatusText.Text = $"计划/成交台账：{symbol}（横线已同步到K线）";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"打开计划/成交失败：{HumanizeUiError(ex.Message)}";
+        }
+    }
+
+    private void ApplyPriceMarkersToChart()
+    {
+        if (_chart is null)
+        {
+            return;
+        }
+
+        var symbol = SymbolBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(symbol))
+        {
+            _chart.ClearPriceMarkers();
+            return;
+        }
+
+        double? last = _lastBars.Count > 0 ? (double)_lastBars[^1].Close : null;
+        var markers = new List<ChartPriceMarker>();
+        foreach (var lvl in _pricePlan.ListLevels(symbol, activeOnly: true))
+        {
+            markers.Add(new ChartPriceMarker
+            {
+                Id = lvl.Id,
+                Kind = lvl.Side == "buy" ? "plan_buy" : "plan_sell",
+                Price = lvl.Price,
+                Label = string.IsNullOrWhiteSpace(lvl.Note) ? "" : lvl.Note,
+            });
+        }
+
+        foreach (var fill in _pricePlan.ListFills(symbol).Take(40))
+        {
+            markers.Add(new ChartPriceMarker
+            {
+                Id = fill.Id,
+                Kind = fill.Side == "buy" ? "fill_buy" : "fill_sell",
+                Price = fill.Price,
+                Label = $"{fill.Qty:0.####}",
+            });
+        }
+
+        _chart.SetPriceMarkers(markers, last);
     }
 
     private void ChartResetZoom_OnClick(object sender, RoutedEventArgs e)
@@ -703,9 +781,12 @@ public partial class MainWindow : Window
             ChartPeriodHint.Text =
                 $"当前：{label} / {AdjustmentLabel(adjustment)} {cacheHint}（{DescribeInterval(interval)}；MA5/10/20+量+十字光标）";
             RedrawChart();
+            var planN = _pricePlan.ListLevels(symbol, activeOnly: true).Count;
+            var fillN = _pricePlan.ListFills(symbol).Count;
+            var planHint = planN + fillN > 0 ? $"；计划线{planN}/成交{fillN}" : "";
             var warnings = bars.Warnings.Count == 0 ? "" : "；警告=" + string.Join("，", bars.Warnings);
             StatusText.Text =
-                $"已加载【{market}】{label} {bars.Data.Count} 根：{symbol}，数据源={bars.Provider}{cacheHint}{warnings}";
+                $"已加载【{market}】{label} {bars.Data.Count} 根：{symbol}，数据源={bars.Provider}{cacheHint}{planHint}{warnings}";
         }
         catch (Exception ex)
         {
@@ -829,6 +910,8 @@ public partial class MainWindow : Window
 
         _chart ??= new CandleChartPainter(ChartCanvas, CrosshairLabel);
         _chart.SetBars(_lastBars);
+        // SetBars redraws; re-apply markers so plan lines stay after resize/reload.
+        ApplyPriceMarkersToChart();
     }
 
     private async Task RefreshHealthAsync()

@@ -1,8 +1,8 @@
 # Current Development
 
 - Project: **OMNIX-Caishenfolio**
-- Status: **P4.2 delivered (v0.8.0)** — grid research; installer packaging still deferred
-- Delivered: multi-symbol compare, MA backtest, report export, fund catalog seeds, parquet/jsonl export
-- **P4.2 Grid**: heuristic grid suggest (percentile+ATR), long-only grid backtest, manual fill ledger (FIFO PnL + next buy/sell), Desktop「网格策略」window
+- Status: **P4.3 delivered (v0.8.1)** — plan levels on chart + actual fills; installer deferred
+- **P4.3**: 计划买/卖价位横线（多档）+ 距现价%、真实成交台账（FIFO 盈亏），主图同步
+- **P4.2 Grid**: heuristic suggest, backtest, grid ledger
 - GitHub: https://github.com/plnoble/OMNIX-Caishenfolio
-- Out of scope still: live broker orders, auto grid placement, installer
+- Out of scope: live broker orders, auto placement, installer

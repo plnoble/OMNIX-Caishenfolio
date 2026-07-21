@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using Caishenfolio.Host.MarketData;
 using Caishenfolio.Host.Python;
 
 namespace Caishenfolio.Desktop;
@@ -34,6 +35,8 @@ public sealed class CandleChartPainter
     private int _panAnchorStart;
     private Point? _drawAnchor;
     private readonly List<ChartLine> _lines = new();
+    private IReadOnlyList<ChartPriceMarker> _markers = Array.Empty<ChartPriceMarker>();
+    private double? _refLastPrice;
     private bool _isDrawing;
 
     private sealed class ChartLine
@@ -100,6 +103,18 @@ public sealed class CandleChartPainter
         _viewStart = 0;
         _viewCount = _allBars.Count;
         _lines.Clear();
+        // keep planned/fill markers across bar reloads for the same symbol session
+        DrawStatic();
+    }
+
+    /// <summary>
+    /// Planned buy/sell levels and actual fills as horizontal markers.
+    /// refLastPrice used for distance labels.
+    /// </summary>
+    public void SetPriceMarkers(IReadOnlyList<ChartPriceMarker>? markers, double? refLastPrice = null)
+    {
+        _markers = markers ?? Array.Empty<ChartPriceMarker>();
+        _refLastPrice = refLastPrice;
         DrawStatic();
     }
 
@@ -117,6 +132,13 @@ public sealed class CandleChartPainter
         _lines.Clear();
         _drawAnchor = null;
         _isDrawing = false;
+        DrawStatic();
+    }
+
+    public void ClearPriceMarkers()
+    {
+        _markers = Array.Empty<ChartPriceMarker>();
+        _refLastPrice = null;
         DrawStatic();
     }
 
@@ -162,6 +184,18 @@ public sealed class CandleChartPainter
 
         _priceMin = bars.Min(b => (double)b.Low);
         _priceMax = bars.Max(b => (double)b.High);
+        // Expand range so planned/fill lines stay on-screen.
+        foreach (var m in _markers)
+        {
+            if (m.Price <= 0)
+            {
+                continue;
+            }
+
+            _priceMin = Math.Min(_priceMin, m.Price);
+            _priceMax = Math.Max(_priceMax, m.Price);
+        }
+
         if (Math.Abs(_priceMax - _priceMin) < 1e-9)
         {
             _priceMax = _priceMin + 1;
@@ -237,6 +271,9 @@ public sealed class CandleChartPainter
         DrawMa(bars, 5, Color.FromRgb(0xF0, 0xC0, 0x40), YPrice, slot);
         DrawMa(bars, 10, Color.FromRgb(0x5B, 0x9B, 0xF5), YPrice, slot);
         DrawMa(bars, 20, Color.FromRgb(0xC0, 0x7B, 0xF0), YPrice, slot);
+
+        // planned levels + actual fills (persistent, not freehand drawings)
+        DrawPriceMarkers(YPrice);
 
         // user drawings
         foreach (var line in _lines)
@@ -325,6 +362,92 @@ public sealed class CandleChartPainter
     }
 
     private double IndexToX(int i, double slot) => _padL + slot * i + slot / 2;
+
+    private void DrawPriceMarkers(Func<double, double> yPrice)
+    {
+        if (_markers.Count == 0)
+        {
+            return;
+        }
+
+        var last = _refLastPrice;
+        var labelLane = 0;
+        foreach (var m in _markers.OrderByDescending(x => x.Price))
+        {
+            var y = yPrice(m.Price);
+            if (y < _padT - 4 || y > _priceBottom + 4)
+            {
+                continue;
+            }
+
+            var (color, dash, thickness, prefix) = m.Kind switch
+            {
+                "plan_buy" => (Color.FromRgb(0x3D, 0xDC, 0x97), new DoubleCollection { 6, 3 }, 1.8, "计划买"),
+                "plan_sell" => (Color.FromRgb(0xFF, 0x6B, 0x7A), new DoubleCollection { 6, 3 }, 1.8, "计划卖"),
+                "fill_buy" => (Color.FromRgb(0x2F, 0xB3, 0x7A), new DoubleCollection { 2, 3 }, 1.3, "实买"),
+                "fill_sell" => (Color.FromRgb(0xE0, 0x4F, 0x5F), new DoubleCollection { 2, 3 }, 1.3, "实卖"),
+                _ => (Color.FromRgb(0x9A, 0xA7, 0xB5), new DoubleCollection { 4, 2 }, 1.2, m.Kind),
+            };
+
+            var line = new Line
+            {
+                X1 = _padL,
+                X2 = _padL + _plotW,
+                Y1 = y,
+                Y2 = y,
+                Stroke = new SolidColorBrush(color),
+                StrokeThickness = thickness,
+                StrokeDashArray = dash,
+            };
+            _canvas.Children.Add(line);
+
+            // endpoint marker
+            var dot = new Ellipse
+            {
+                Width = 7,
+                Height = 7,
+                Fill = new SolidColorBrush(color),
+            };
+            Canvas.SetLeft(dot, _padL + _plotW - 10);
+            Canvas.SetTop(dot, y - 3.5);
+            _canvas.Children.Add(dot);
+
+            var dist = "";
+            if (last is > 0)
+            {
+                var pct = (m.Price / last.Value - 1.0) * 100.0;
+                var abs = Math.Abs(m.Price - last.Value);
+                dist = $"  距现价 {pct:+0.00;-0.00;0}% ({abs:0.####})";
+            }
+
+            var custom = string.IsNullOrWhiteSpace(m.Label) ? "" : " " + m.Label;
+            var text = $"{prefix} {m.Price:0.####}{custom}{dist}";
+            // stagger labels slightly so stacked levels don't fully overlap
+            var labelY = y - 14 - (labelLane % 3) * 12;
+            labelLane++;
+            AddText(text, _padL + 4, labelY, 11, color.R, color.G, color.B);
+        }
+
+        if (last is > 0)
+        {
+            var yLast = yPrice(last.Value);
+            if (yLast >= _padT && yLast <= _priceBottom)
+            {
+                var lastLine = new Line
+                {
+                    X1 = _padL,
+                    X2 = _padL + _plotW,
+                    Y1 = yLast,
+                    Y2 = yLast,
+                    Stroke = new SolidColorBrush(Color.FromArgb(140, 0xE8, 0xF0, 0xFF)),
+                    StrokeThickness = 1,
+                    StrokeDashArray = new DoubleCollection { 1, 3 },
+                };
+                _canvas.Children.Add(lastLine);
+                AddText($"现价 {last.Value:0.####}", _padL + _plotW - 90, yLast + 2, 10, 0xE8, 0xF0, 0xFF);
+            }
+        }
+    }
 
     private void DrawMa(
         IReadOnlyList<MarketBarDto> bars,

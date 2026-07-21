@@ -1,6 +1,6 @@
 """OMNIX-Caishenfolio Analytics Core."""
 
-__version__ = "0.8.0"
+__version__ = "0.8.1"
 PRODUCT_NAME = "OMNIX-Caishenfolio"
 PRODUCT_BRAND = "OMNIX"
 RESEARCH_DISCLAIMER = "研究/模拟结论，非投资建议。"
