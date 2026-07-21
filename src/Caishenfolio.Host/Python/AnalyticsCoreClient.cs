@@ -262,6 +262,152 @@ public sealed class AnalyticsCoreClient : IDisposable
             new { symbol, start, end, adjustment, interval },
             cancellationToken);
 
+    public Task<JsonElement> GridSuggestAsync(
+        string symbol,
+        string start,
+        string end,
+        string adjustment = "raw",
+        string interval = "daily",
+        int? lookback = null,
+        int? gridCount = null,
+        double orderCash = 1000,
+        CancellationToken cancellationToken = default) =>
+        PostJsonAsync(
+            "research/grid-suggest",
+            new
+            {
+                symbol,
+                start,
+                end,
+                adjustment,
+                interval,
+                lookback,
+                grid_count = gridCount,
+                order_cash = orderCash,
+            },
+            cancellationToken);
+
+    public Task<JsonElement> GridBacktestAsync(
+        string symbol,
+        string start,
+        string end,
+        double lower,
+        double upper,
+        int gridCount,
+        double orderCash = 1000,
+        double? initialCash = null,
+        string adjustment = "raw",
+        string interval = "daily",
+        object? costs = null,
+        CancellationToken cancellationToken = default) =>
+        PostJsonAsync(
+            "research/grid-backtest",
+            new
+            {
+                symbol,
+                start,
+                end,
+                lower,
+                upper,
+                grid_count = gridCount,
+                order_cash = orderCash,
+                initial_cash = initialCash,
+                adjustment,
+                interval,
+                costs,
+            },
+            cancellationToken);
+
+    public async Task<JsonElement> GridListPlansAsync(
+        bool activeOnly = true,
+        CancellationToken cancellationToken = default)
+    {
+        var path = $"research/grid/plans?active_only={(activeOnly ? "1" : "0")}";
+        using var response = await _http.GetAsync(path, cancellationToken).ConfigureAwait(false);
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var clone = doc.RootElement.Clone();
+        response.EnsureSuccessStatusCode();
+        return clone;
+    }
+
+    public Task<JsonElement> GridCreatePlanAsync(
+        string symbol,
+        double lower,
+        double upper,
+        int gridCount,
+        double orderCash = 1000,
+        string? name = null,
+        string? note = null,
+        CancellationToken cancellationToken = default) =>
+        PostJsonAsync(
+            "research/grid/plans",
+            new
+            {
+                symbol,
+                lower,
+                upper,
+                grid_count = gridCount,
+                order_cash = orderCash,
+                name,
+                note,
+            },
+            cancellationToken);
+
+    public Task<JsonElement> GridAddFillAsync(
+        string planId,
+        string side,
+        double price,
+        double qty,
+        double fee = 0,
+        double? gridLevel = null,
+        string? note = null,
+        CancellationToken cancellationToken = default) =>
+        PostJsonAsync(
+            "research/grid/fills",
+            new
+            {
+                plan_id = planId,
+                side,
+                price,
+                qty,
+                fee,
+                grid_level = gridLevel,
+                note,
+            },
+            cancellationToken);
+
+    public async Task<JsonElement> GridSnapshotAsync(
+        string planId,
+        double? lastPrice = null,
+        CancellationToken cancellationToken = default)
+    {
+        var path = $"research/grid/plans/{Uri.EscapeDataString(planId)}/snapshot";
+        if (lastPrice is not null)
+        {
+            path += $"?last_price={lastPrice.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+        }
+
+        using var response = await _http.GetAsync(path, cancellationToken).ConfigureAwait(false);
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var clone = doc.RootElement.Clone();
+        if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NotFound)
+        {
+            response.EnsureSuccessStatusCode();
+        }
+
+        return clone;
+    }
+
+    public Task<JsonElement> GridDeactivatePlanAsync(
+        string planId,
+        CancellationToken cancellationToken = default) =>
+        PostJsonAsync(
+            $"research/grid/plans/{Uri.EscapeDataString(planId)}/deactivate",
+            new { },
+            cancellationToken);
+
     public void Dispose()
     {
         if (_ownsClient)

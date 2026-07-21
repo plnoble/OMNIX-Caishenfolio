@@ -19,6 +19,8 @@ from caishenfolio_core.market.parquet_store import export_bars_parquet, parquet_
 from caishenfolio_core.market.symbol_index import fuzzy_search_a_share
 from caishenfolio_core.research.backtest import cost_model_from_dict, ma_cross_backtest
 from caishenfolio_core.research.compare import compare_normalized_closes
+from caishenfolio_core.research.grid import grid_backtest, suggest_grid_from_bars
+from caishenfolio_core.research.grid_ledger import GridLedgerStore
 from caishenfolio_core.research.report import build_markdown_report, write_report
 from caishenfolio_core.security.loopback import ensure_loopback, is_denied_wildcard
 from caishenfolio_core.tasks.models import TaskKind, TaskStatus
@@ -41,6 +43,7 @@ class AnalyticsApp:
         market: Any | None = None,
         tasks: InMemoryTaskStore | None = None,
         cache: BarsSqliteCache | None = None,
+        grid_ledger: GridLedgerStore | None = None,
     ) -> None:
         self.market = market if market is not None else create_market_provider()
         self.tasks = tasks or InMemoryTaskStore()
@@ -52,6 +55,7 @@ class AnalyticsApp:
                 self.cache = BarsSqliteCache()
             except Exception:  # noqa: BLE001
                 self.cache = None
+        self.grid_ledger = grid_ledger or GridLedgerStore()
 
     def health(self) -> dict[str, object]:
         status = provider_status(self.market)
@@ -59,9 +63,10 @@ class AnalyticsApp:
             "status": "ok",
             "product": PRODUCT_NAME,
             "version": __version__,
-            "phase": "P4.1",
+            "phase": "P4.2",
             "disclaimer": RESEARCH_DISCLAIMER,
             "live_trading_enabled": False,
+            "grid_research_enabled": True,
         }
         payload.update(status)
         if self.cache is not None:
@@ -260,6 +265,74 @@ class AnalyticsApp:
         if errors:
             cmp["fetch_errors"] = errors
         return cmp
+
+    def research_grid_suggest(
+        self,
+        symbol: str,
+        start: str,
+        end: str,
+        *,
+        adjustment: str = Adjustment.RAW.value,
+        interval: str = BarInterval.DAILY.value,
+        lookback: int | None = None,
+        grid_count: int | None = None,
+        order_cash: float = 1000.0,
+    ) -> dict[str, object]:
+        bars_payload = self.market_bars(symbol, start, end, adjustment, interval)
+        if not bars_payload.get("ok") or not bars_payload.get("data"):
+            return {
+                "ok": False,
+                "error": bars_payload.get("error") or "无法加载K线。",
+                "bars": bars_payload,
+                "disclaimer": RESEARCH_DISCLAIMER,
+            }
+        result = suggest_grid_from_bars(
+            list(bars_payload["data"]),
+            symbol=symbol,
+            lookback=lookback,
+            grid_count=grid_count,
+            order_cash=float(order_cash),
+        )
+        result["bars_provider"] = bars_payload.get("provider")
+        result["interval"] = bars_payload.get("interval")
+        return result
+
+    def research_grid_backtest(
+        self,
+        symbol: str,
+        start: str,
+        end: str,
+        *,
+        lower: float,
+        upper: float,
+        grid_count: int,
+        order_cash: float = 1000.0,
+        initial_cash: float | None = None,
+        adjustment: str = Adjustment.RAW.value,
+        interval: str = BarInterval.DAILY.value,
+        costs: dict[str, Any] | None = None,
+    ) -> dict[str, object]:
+        bars_payload = self.market_bars(symbol, start, end, adjustment, interval)
+        if not bars_payload.get("ok") or not bars_payload.get("data"):
+            return {
+                "ok": False,
+                "error": bars_payload.get("error") or "无法加载K线。",
+                "bars": bars_payload,
+                "disclaimer": RESEARCH_DISCLAIMER,
+            }
+        result = grid_backtest(
+            list(bars_payload["data"]),
+            symbol=symbol,
+            lower=float(lower),
+            upper=float(upper),
+            grid_count=int(grid_count),
+            order_cash=float(order_cash),
+            costs=costs,
+            initial_cash=initial_cash,
+        )
+        result["bars_provider"] = bars_payload.get("provider")
+        result["interval"] = bars_payload.get("interval")
+        return result
 
     def research_export_report(
         self,
@@ -550,6 +623,94 @@ def dispatch(app: AnalyticsApp, method: str, path: str, query: str = "", body: d
             filename=body.get("filename"),
         )
         return (200 if result.get("ok") else 400), result
+    if method == "POST" and normalized == "/research/grid-suggest":
+        symbol = str(body.get("symbol", "")).strip()
+        start = str(body.get("start", "")).strip()
+        end = str(body.get("end", "")).strip()
+        if not symbol or not start or not end:
+            return 400, {"error": "必须提供 symbol、start、end。"}
+        gc = body.get("grid_count")
+        lb = body.get("lookback")
+        result = app.research_grid_suggest(
+            symbol,
+            start,
+            end,
+            adjustment=str(body.get("adjustment", Adjustment.RAW.value)),
+            interval=str(body.get("interval", BarInterval.DAILY.value)),
+            lookback=int(lb) if lb is not None and str(lb).strip() != "" else None,
+            grid_count=int(gc) if gc is not None and str(gc).strip() != "" else None,
+            order_cash=float(body.get("order_cash", 1000.0)),
+        )
+        return (200 if result.get("ok") else 422), result
+    if method == "POST" and normalized == "/research/grid-backtest":
+        symbol = str(body.get("symbol", "")).strip()
+        start = str(body.get("start", "")).strip()
+        end = str(body.get("end", "")).strip()
+        if not symbol or not start or not end:
+            return 400, {"error": "必须提供 symbol、start、end。"}
+        try:
+            lower = float(body["lower"])
+            upper = float(body["upper"])
+            grid_count = int(body["grid_count"])
+        except (KeyError, TypeError, ValueError):
+            return 400, {"error": "必须提供 lower、upper、grid_count。"}
+        costs = body.get("costs") if isinstance(body.get("costs"), dict) else None
+        init_cash = body.get("initial_cash")
+        result = app.research_grid_backtest(
+            symbol,
+            start,
+            end,
+            lower=lower,
+            upper=upper,
+            grid_count=grid_count,
+            order_cash=float(body.get("order_cash", 1000.0)),
+            initial_cash=float(init_cash) if init_cash is not None and str(init_cash).strip() != "" else None,
+            adjustment=str(body.get("adjustment", Adjustment.RAW.value)),
+            interval=str(body.get("interval", BarInterval.DAILY.value)),
+            costs=costs,
+        )
+        return (200 if result.get("ok") else 422), result
+    if method == "GET" and normalized == "/research/grid/plans":
+        active_only = (params.get("active_only") or "1").strip().lower() not in {"0", "false", "no"}
+        return 200, {"ok": True, "items": app.grid_ledger.list_plans(active_only=active_only)}
+    if method == "POST" and normalized == "/research/grid/plans":
+        try:
+            plan = app.grid_ledger.create_plan(
+                symbol=str(body.get("symbol", "")).strip(),
+                lower=float(body["lower"]),
+                upper=float(body["upper"]),
+                grid_count=int(body["grid_count"]),
+                order_cash=float(body.get("order_cash", 1000.0)),
+                name=str(body.get("name") or ""),
+                note=str(body.get("note") or ""),
+            )
+            return 200, {"ok": True, "plan": plan}
+        except (KeyError, TypeError, ValueError) as exc:
+            return 400, {"ok": False, "error": str(exc)}
+    if method == "POST" and normalized == "/research/grid/fills":
+        try:
+            result = app.grid_ledger.add_fill(
+                plan_id=str(body.get("plan_id", "")).strip(),
+                side=str(body.get("side", "")),
+                price=float(body["price"]),
+                qty=float(body["qty"]),
+                fee=float(body.get("fee") or 0),
+                grid_level=float(body["grid_level"]) if body.get("grid_level") is not None else None,
+                ts=str(body["ts"]) if body.get("ts") else None,
+                note=str(body.get("note") or ""),
+            )
+            return (200 if result.get("ok") else 400), result
+        except (KeyError, TypeError, ValueError) as exc:
+            return 400, {"ok": False, "error": str(exc)}
+    if method == "GET" and normalized.startswith("/research/grid/plans/") and normalized.endswith("/snapshot"):
+        plan_id = normalized[len("/research/grid/plans/") : -len("/snapshot")]
+        last_price = params.get("last_price")
+        lp = float(last_price) if last_price not in (None, "") else None
+        result = app.grid_ledger.snapshot(plan_id, last_price=lp)
+        return (200 if result.get("ok") else 404), result
+    if method == "POST" and normalized.startswith("/research/grid/plans/") and normalized.endswith("/deactivate"):
+        plan_id = normalized[len("/research/grid/plans/") : -len("/deactivate")]
+        return 200, app.grid_ledger.deactivate_plan(plan_id)
     if method == "POST" and normalized == "/market/export-parquet":
         symbol = str(body.get("symbol", "")).strip()
         start = str(body.get("start", "")).strip()

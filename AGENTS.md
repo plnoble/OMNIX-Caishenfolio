@@ -45,10 +45,11 @@ Follow `agent-dev-protocol` under `.claude/skills/agent-dev-protocol/SKILL.md`.
 
 ## Current Phase
 
-**P4 — 研究工作流（对比/回测/报告/Parquet；不含安装包）**
+**P4.2 — 网格策略（建议/回测/人工台账；不含券商自动挂单与安装包）**
 
 Completed earlier:
 
+- **P4 / P4.1 — 对比/MA回测/报告/Parquet/权益曲线**
 - **P3.x — 行情 UI、缓存、画线、品牌 OMNIX**
 
 Completed earlier:

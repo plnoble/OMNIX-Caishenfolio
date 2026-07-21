@@ -493,6 +493,37 @@ public partial class MainWindow : Window
         }
     }
 
+    private void GridStrategy_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var client = EnsureClient();
+            var symbol = SymbolBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                StatusText.Text = "请先选择或输入标的。";
+                return;
+            }
+
+            var win = new GridWindow(
+                client,
+                symbol,
+                StartDateBox.Text.Trim(),
+                EndDateBox.Text.Trim(),
+                SelectedAdjustment(),
+                SelectedInterval())
+            {
+                Owner = this,
+            };
+            win.Show();
+            StatusText.Text = $"已打开网格策略工作台：{symbol}";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"打开网格策略失败：{HumanizeUiError(ex.Message)}";
+        }
+    }
+
     private async void MaBacktest_OnClick(object sender, RoutedEventArgs e)
     {
         try
