@@ -8,31 +8,37 @@
         MinHeight="680"
         MinWidth="1020"
         WindowStartupLocation="CenterScreen"
-        Background="#0B1015"
-        Foreground="#E7ECF1">
+        Background="{StaticResource BrushBgApp}"
+        Foreground="{StaticResource BrushFgPrimary}">
     <Window.Resources>
         <Style x:Key="BarsCellText" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#F2F5F8" />
+            <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="Margin" Value="4,0" />
         </Style>
+        <Style x:Key="NavLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" />
+            <Setter Property="TextAlignment" Value="Center" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
         <Style x:Key="NavBtn" TargetType="Button">
             <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Foreground" Value="#C5D0DB" />
+            <Setter Property="Foreground" Value="{StaticResource BrushFgSecondary}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Padding" Value="8,12" />
             <Setter Property="Margin" Value="6,2" />
-            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="bd" Property="Background" Value="#243041" />
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource BrushBgHover}" />
+                                <Setter Property="Foreground" Value="#FFFFFF" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -40,13 +46,18 @@
             </Setter>
         </Style>
         <Style x:Key="NavBtnActive" TargetType="Button" BasedOn="{StaticResource NavBtn}">
-            <Setter Property="Background" Value="#2A3F55" />
-            <Setter Property="Foreground" Value="#9FE8C2" />
+            <Setter Property="Background" Value="{StaticResource BrushBgActive}" />
+            <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
             <Setter Property="FontWeight" Value="SemiBold" />
         </Style>
         <Style x:Key="ToolBtn" TargetType="Button">
             <Setter Property="Padding" Value="8,4" />
             <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="Background" Value="#334556" />
+            <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
+        </Style>
+        <Style x:Key="MutedText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource BrushFgMuted}" />
         </Style>
     </Window.Resources>
 
@@ -57,18 +68,19 @@
         </Grid.ColumnDefinitions>
 
         <!-- Left navigation -->
-        <Border Grid.Column="0" Background="#12181F" BorderBrush="#1E2833" BorderThickness="0,0,1,0">
+        <Border Grid.Column="0" Background="{StaticResource BrushBgNav}" BorderBrush="{StaticResource BrushBorder}" BorderThickness="0,0,1,0">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Top" Margin="0,12,0,8">
                     <TextBlock x:Name="NavBrand" Text="OMNIX" FontWeight="Bold" FontSize="14"
-                               Foreground="#9FE8C2" HorizontalAlignment="Center" Margin="0,0,0,4" />
-                    <TextBlock x:Name="VersionBadge" Text="v" FontSize="10" Opacity="0.7"
+                               Foreground="{StaticResource BrushAccent}" HorizontalAlignment="Center" Margin="0,0,0,4" />
+                    <TextBlock x:Name="VersionBadge" Text="v" FontSize="11"
+                               Foreground="{StaticResource BrushFgMuted}"
                                HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="4,0" />
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,10">
                     <Button x:Name="NavSystem" Style="{StaticResource NavBtn}" Click="NavSystem_OnClick"
                             ToolTip="系统：核心 / 数据源 / 导出">
-                        <TextBlock TextAlignment="Center" FontSize="12" LineHeight="16">
+                        <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
                             <Run Text="系统" FontSize="13"/><LineBreak/><Run Text="⚙️" FontSize="14"/>
                         </TextBlock>
                     </Button>
@@ -76,31 +88,31 @@
                 <StackPanel>
                     <Button x:Name="NavMarket" Style="{StaticResource NavBtnActive}" Click="NavMarket_OnClick"
                             ToolTip="行情 K 线">
-                        <TextBlock TextAlignment="Center" FontSize="12">
+                        <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
                             <Run Text="行情" FontSize="13"/><LineBreak/><Run Text="📈" FontSize="14"/>
                         </TextBlock>
                     </Button>
                     <Button x:Name="NavPlan" Style="{StaticResource NavBtn}" Click="NavPlan_OnClick"
                             ToolTip="计划买/卖与真实成交">
-                        <TextBlock TextAlignment="Center" FontSize="12">
+                        <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
                             <Run Text="计划" FontSize="13"/><LineBreak/><Run Text="🎯" FontSize="14"/>
                         </TextBlock>
                     </Button>
                     <Button x:Name="NavGrid" Style="{StaticResource NavBtn}" Click="NavGrid_OnClick"
                             ToolTip="网格策略">
-                        <TextBlock TextAlignment="Center" FontSize="12">
+                        <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
                             <Run Text="网格" FontSize="13"/><LineBreak/><Run Text="🕸" FontSize="14"/>
                         </TextBlock>
                     </Button>
                     <Button x:Name="NavBacktest" Style="{StaticResource NavBtn}" Click="NavBacktest_OnClick"
                             ToolTip="MA 回测">
-                        <TextBlock TextAlignment="Center" FontSize="12">
+                        <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
                             <Run Text="回测" FontSize="13"/><LineBreak/><Run Text="📊" FontSize="14"/>
                         </TextBlock>
                     </Button>
                     <Button x:Name="NavCompare" Style="{StaticResource NavBtn}" Click="NavCompare_OnClick"
                             ToolTip="多股对比">
-                        <TextBlock TextAlignment="Center" FontSize="12">
+                        <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
                             <Run Text="对比" FontSize="13"/><LineBreak/><Run Text="📉" FontSize="14"/>
                         </TextBlock>
                     </Button>
@@ -117,7 +129,7 @@
             </Grid.RowDefinitions>
 
             <!-- Top context bar -->
-            <Border Grid.Row="0" Background="#151C24" BorderBrush="#1E2833" BorderThickness="0,0,0,1" Padding="12,8">
+            <Border Grid.Row="0" Background="{StaticResource BrushBgPanel}" BorderBrush="{StaticResource BrushBorder}" BorderThickness="0,0,0,1" Padding="12,8">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -125,12 +137,13 @@
                     </Grid.ColumnDefinitions>
                     <WrapPanel VerticalAlignment="Center">
                         <TextBlock x:Name="TitleText" Text="OMNIX" FontWeight="SemiBold" FontSize="15"
+                                   Foreground="{StaticResource BrushAccent}"
                                    VerticalAlignment="Center" Margin="0,0,12,4" />
-                        <TextBlock Text="标的" VerticalAlignment="Center" Margin="0,0,4,4" Opacity="0.8" />
+                        <TextBlock Text="标的" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="0,0,4,4" />
                         <TextBox x:Name="SymbolBox" Width="120" Padding="5,3" Text="SSE:600000" Margin="0,0,6,4" />
                         <TextBlock x:Name="SymbolMarketTag" VerticalAlignment="Center" Margin="0,0,10,4"
-                                   FontWeight="SemiBold" Foreground="#7DD3A7" Text="【A股】" />
-                        <TextBlock Text="周期" VerticalAlignment="Center" Margin="0,0,4,4" Opacity="0.8" />
+                                   FontWeight="SemiBold" Foreground="{StaticResource BrushAccent}" Text="【A股】" />
+                        <TextBlock Text="周期" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="0,0,4,4" />
                         <ComboBox x:Name="IntervalCombo" Width="86" Padding="3" Margin="0,0,8,4" SelectedIndex="5">
                             <ComboBoxItem Tag="1m" Content="1分钟" />
                             <ComboBoxItem Tag="5m" Content="5分钟" />
@@ -143,27 +156,28 @@
                             <ComboBoxItem Tag="quarterly" Content="季K" />
                             <ComboBoxItem Tag="yearly" Content="年K" />
                         </ComboBox>
-                        <TextBlock Text="复权" VerticalAlignment="Center" Margin="0,0,4,4" Opacity="0.8" />
+                        <TextBlock Text="复权" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="0,0,4,4" />
                         <ComboBox x:Name="AdjustmentCombo" Width="80" Padding="3" Margin="0,0,8,4" SelectedIndex="0">
                             <ComboBoxItem Tag="raw" Content="不复权" IsSelected="True" />
                             <ComboBoxItem Tag="forward" Content="前复权" />
                             <ComboBoxItem Tag="backward" Content="后复权" />
                         </ComboBox>
-                        <TextBlock Text="区间" VerticalAlignment="Center" Margin="0,0,4,4" Opacity="0.8" />
+                        <TextBlock Text="区间" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="0,0,4,4" />
                         <TextBox x:Name="StartDateBox" Width="88" Padding="5,3" Margin="0,0,4,4" />
-                        <TextBlock Text="~" VerticalAlignment="Center" Margin="0,0,4,4" />
+                        <TextBlock Text="~" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="0,0,4,4" />
                         <TextBox x:Name="EndDateBox" Width="88" Padding="5,3" Margin="0,0,8,4" />
-                        <Button Content="加载" Padding="12,4" Margin="0,0,6,4" Click="LoadBarsButton_OnClick" />
+                        <Button Content="加载" Padding="12,4" Margin="0,0,6,4" Click="LoadBarsButton_OnClick"
+                                Background="#1F6B4A" BorderBrush="#2F9A6A" />
                         <Button Content="1月" Style="{StaticResource ToolBtn}" Margin="0,0,4,4" Click="QuickRange1M_OnClick" />
                         <Button Content="3月" Style="{StaticResource ToolBtn}" Margin="0,0,4,4" Click="QuickRange3M_OnClick" />
                         <Button Content="1年" Style="{StaticResource ToolBtn}" Margin="0,0,4,4" Click="QuickRange1Y_OnClick" />
                     </WrapPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                         <Border x:Name="CoreStatusDot" Width="10" Height="10" CornerRadius="5"
-                                Background="#666" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Background="#8A93A0" Margin="0,0,8,0" VerticalAlignment="Center"
                                 ToolTip="分析核心状态" />
                         <TextBlock x:Name="CoreStatusText" Text="核心 · 未连接" VerticalAlignment="Center"
-                                   FontSize="12" Opacity="0.85" Margin="0,0,8,0" />
+                                   FontSize="12" Foreground="{StaticResource BrushFgSecondary}" Margin="0,0,8,0" />
                     </StackPanel>
                 </Grid>
             </Border>
@@ -179,7 +193,8 @@
                     </Grid.ColumnDefinitions>
 
                     <!-- Watch / search -->
-                    <Border Grid.Column="0" Background="#1A222C" CornerRadius="10" Padding="10">
+                    <Border Grid.Column="0" Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="10"
+                            BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -198,20 +213,21 @@
                                     <Button Content="−" Width="28" Padding="0,2" Margin="0,0,4,0" Click="RemoveWatchButton_OnClick" ToolTip="取消关注" />
                                     <Button Content="同步" Padding="8,2" Click="SyncWatchCacheButton_OnClick" ToolTip="同步缓存" />
                                 </StackPanel>
-                                <ListBox x:Name="WatchList" Background="#12181F" Foreground="#E7ECF1" BorderThickness="0"
+                                <ListBox x:Name="WatchList"
                                          DisplayMemberPath="Display"
                                          MouseDoubleClick="WatchList_OnMouseDoubleClick"
                                          SelectionChanged="WatchList_OnSelectionChanged" />
                             </DockPanel>
                             <DockPanel Grid.Row="3">
                                 <TextBlock DockPanel.Dock="Top" Text="搜索" FontWeight="SemiBold" Margin="0,0,0,4" />
-                                <TextBlock x:Name="MarketHintText" DockPanel.Dock="Top" Opacity="0.65" FontSize="10"
+                                <TextBlock x:Name="MarketHintText" DockPanel.Dock="Top"
+                                           Style="{StaticResource MutedText}" FontSize="11"
                                            TextWrapping="Wrap" Margin="0,0,0,4" />
                                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
                                     <TextBox x:Name="SearchBox" Width="140" Padding="4" KeyDown="SearchBox_OnKeyDown" />
                                     <Button Content="搜" Margin="6,0,0,0" Padding="8,3" Click="SearchButton_OnClick" />
                                 </StackPanel>
-                                <ListBox x:Name="SymbolList" Background="#12181F" Foreground="#E7ECF1" BorderThickness="0"
+                                <ListBox x:Name="SymbolList"
                                          DisplayMemberPath="Display"
                                          SelectionChanged="SymbolList_OnSelectionChanged" />
                             </DockPanel>
@@ -219,7 +235,8 @@
                     </Border>
 
                     <!-- Chart area -->
-                    <Border Grid.Column="2" Background="#1A222C" CornerRadius="10" Padding="10">
+                    <Border Grid.Column="2" Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="10"
+                            BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -236,7 +253,7 @@
                                     <Button Content="快照" Style="{StaticResource ToolBtn}" Click="ResearchButton_OnClick" />
                                 </StackPanel>
                                 <WrapPanel>
-                                    <TextBlock Text="工具" VerticalAlignment="Center" Opacity="0.75" Margin="0,0,6,0" />
+                                    <TextBlock Text="工具" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="0,0,6,0" />
                                     <Button Content="十字" Style="{StaticResource ToolBtn}" Click="ChartModeCrosshair_OnClick" />
                                     <Button Content="平移" Style="{StaticResource ToolBtn}" Click="ChartModePan_OnClick" />
                                     <Button Content="趋势" Style="{StaticResource ToolBtn}" Click="ChartModeTrend_OnClick" />
@@ -248,41 +265,43 @@
                                 </WrapPanel>
                             </DockPanel>
 
-                            <Border Grid.Row="1" Background="#0E141A" CornerRadius="6" BorderBrush="#2A3542" BorderThickness="1">
+                            <Border Grid.Row="1" Background="{StaticResource BrushBgInput}" CornerRadius="6"
+                                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
                                 <Grid>
-                                    <Canvas x:Name="ChartCanvas" ClipToBounds="True" Background="#0E141A"
+                                    <Canvas x:Name="ChartCanvas" ClipToBounds="True" Background="#080C12"
                                             SizeChanged="ChartCanvas_OnSizeChanged" />
                                     <TextBlock x:Name="CrosshairLabel" VerticalAlignment="Top" HorizontalAlignment="Left"
-                                               Margin="8,6,8,0" FontFamily="Consolas" FontSize="11"
-                                               Foreground="#E8F0FF" Text="" IsHitTestVisible="False" />
+                                               Margin="8,6,8,0" FontFamily="Consolas" FontSize="12"
+                                               Foreground="#FFFFFF" Text="" IsHitTestVisible="False" />
                                     <TextBlock x:Name="ChartPeriodHint" VerticalAlignment="Bottom" HorizontalAlignment="Left"
-                                               Margin="8,0,8,6" Opacity="0.7" FontSize="11"
+                                               Margin="8,0,8,6" FontSize="11" Foreground="{StaticResource BrushFgMuted}"
                                                Text="滚轮缩放 · 右键拖拽 · 点选买/卖" IsHitTestVisible="False" />
                                 </Grid>
                             </Border>
 
                             <TextBlock x:Name="ResearchStatusText" Grid.Row="2" FontFamily="Consolas" FontSize="11"
-                                       Opacity="0.8" TextWrapping="Wrap" Margin="0,6,0,0" MaxHeight="36" />
+                                       Foreground="{StaticResource BrushFgSecondary}"
+                                       TextWrapping="Wrap" Margin="0,6,0,0" MaxHeight="36" />
 
                             <DataGrid x:Name="BarsGrid" Grid.Row="3"
                                       AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
                                       CanUserResizeRows="False" HeadersVisibility="Column"
-                                      GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#2A3542"
-                                      Background="#0E141A" Foreground="#F2F5F8" BorderThickness="0"
-                                      RowBackground="#0E141A" AlternatingRowBackground="#151C24"
+                                      GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="{StaticResource BrushBorder}"
+                                      Background="{StaticResource BrushBgInput}" Foreground="{StaticResource BrushFgPrimary}" BorderThickness="0"
+                                      RowBackground="{StaticResource BrushBgInput}" AlternatingRowBackground="#121A24"
                                       RowHeight="26" ColumnHeaderHeight="28" FontSize="12" Margin="0,6,0,0">
                                 <DataGrid.Resources>
                                     <Style TargetType="DataGridColumnHeader">
-                                        <Setter Property="Background" Value="#243041" />
-                                        <Setter Property="Foreground" Value="#F7FAFC" />
+                                        <Setter Property="Background" Value="#2A3A4C" />
+                                        <Setter Property="Foreground" Value="#FFFFFF" />
                                         <Setter Property="Padding" Value="8,4" />
                                     </Style>
                                     <Style TargetType="DataGridCell">
-                                        <Setter Property="Foreground" Value="#F2F5F8" />
+                                        <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
                                         <Setter Property="BorderThickness" Value="0" />
                                         <Style.Triggers>
                                             <Trigger Property="IsSelected" Value="True">
-                                                <Setter Property="Background" Value="#2B4C6F" />
+                                                <Setter Property="Background" Value="#2B5A7A" />
                                                 <Setter Property="Foreground" Value="#FFFFFF" />
                                             </Trigger>
                                         </Style.Triggers>
@@ -302,21 +321,24 @@
                 </Grid>
 
                 <!-- ===== PLAN ===== -->
-                <Border x:Name="PagePlan" Background="#1A222C" CornerRadius="10" Visibility="Collapsed">
+                <Border x:Name="PagePlan" Background="{StaticResource BrushBgPanel}" CornerRadius="10"
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
                     <local:PricePlanView x:Name="PlanView" />
                 </Border>
 
                 <!-- ===== GRID ===== -->
-                <Border x:Name="PageGrid" Background="#1A222C" CornerRadius="10" Visibility="Collapsed">
+                <Border x:Name="PageGrid" Background="{StaticResource BrushBgPanel}" CornerRadius="10"
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
                     <local:GridView x:Name="GridViewControl" />
                 </Border>
 
                 <!-- ===== BACKTEST ===== -->
-                <Border x:Name="PageBacktest" Background="#1A222C" CornerRadius="10" Padding="16" Visibility="Collapsed">
+                <Border x:Name="PageBacktest" Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="16"
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel MaxWidth="520" HorizontalAlignment="Left">
                             <TextBlock Text="MA 交叉回测" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                            <TextBlock TextWrapping="Wrap" Opacity="0.8" FontSize="12" Margin="0,0,0,14"
+                            <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="12" Margin="0,0,0,14"
                                        Text="使用顶部标的与日期区间。成本为研究用简化模型，非券商实盘费率。" />
                             <Grid Margin="0,0,0,12">
                                 <Grid.ColumnDefinitions>
@@ -350,34 +372,39 @@
                                 <CheckBox x:Name="BtEnforceLimitCheck" Grid.Row="7" Grid.ColumnSpan="2"
                                           Content="启用涨跌停约束" IsChecked="True" Foreground="#E7ECF1" Margin="0,4,0,0" />
                             </Grid>
-                            <Button Content="运行 MA 回测" Padding="14,8" HorizontalAlignment="Left" Click="MaBacktest_OnClick" />
-                            <TextBlock x:Name="BacktestHintText" Margin="0,12,0,0" Opacity="0.8" TextWrapping="Wrap"
-                                       Text="结果将打开权益曲线窗口。" />
+                            <Button Content="运行 MA 回测" Padding="14,8" HorizontalAlignment="Left" Click="MaBacktest_OnClick"
+                                    Background="#1F6B4A" BorderBrush="#2F9A6A" />
+                            <TextBlock x:Name="BacktestHintText" Margin="0,12,0,0" Style="{StaticResource MutedText}"
+                                       TextWrapping="Wrap" Text="结果将打开权益曲线窗口。" />
                         </StackPanel>
                     </ScrollViewer>
                 </Border>
 
                 <!-- ===== COMPARE ===== -->
-                <Border x:Name="PageCompare" Background="#1A222C" CornerRadius="10" Padding="16" Visibility="Collapsed">
+                <Border x:Name="PageCompare" Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="16"
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
                     <StackPanel>
                         <TextBlock Text="多股对比" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                        <TextBlock TextWrapping="Wrap" Opacity="0.8" FontSize="12" Margin="0,0,0,12"
+                        <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="12" Margin="0,0,0,12"
                                    Text="使用关注列表前 4 只（不足时补当前标的），按顶部区间做归一化收盘价叠线对比。" />
                         <Button Content="运行对比并打开叠线图" Padding="14,8" HorizontalAlignment="Left"
-                                Click="CompareWatch_OnClick" />
-                        <TextBlock x:Name="CompareHintText" Margin="0,12,0,0" Opacity="0.8" TextWrapping="Wrap" />
+                                Click="CompareWatch_OnClick" Background="#1F6B4A" BorderBrush="#2F9A6A" />
+                        <TextBlock x:Name="CompareHintText" Margin="0,12,0,0" Style="{StaticResource MutedText}"
+                                   TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
 
                 <!-- ===== SYSTEM ===== -->
-                <Border x:Name="PageSystem" Background="#1A222C" CornerRadius="10" Padding="16" Visibility="Collapsed">
+                <Border x:Name="PageSystem" Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="16"
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel MaxWidth="640">
                             <TextBlock Text="系统" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                            <TextBlock x:Name="PhaseText" Opacity="0.8" TextWrapping="Wrap" Margin="0,0,0,12" />
+                            <TextBlock x:Name="PhaseText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12" />
                             <TextBlock Text="分析核心" FontWeight="SemiBold" Margin="0,0,0,8" />
                             <WrapPanel Margin="0,0,0,16">
-                                <Button Content="启动分析核心" Padding="12,6" Margin="0,0,8,8" Click="StartCoreButton_OnClick" />
+                                <Button Content="启动分析核心" Padding="12,6" Margin="0,0,8,8" Click="StartCoreButton_OnClick"
+                                        Background="#1F6B4A" BorderBrush="#2F9A6A" />
                                 <Button Content="健康检查" Padding="12,6" Margin="0,0,8,8" Click="HealthButton_OnClick" />
                                 <Button Content="停止核心" Padding="12,6" Margin="0,0,8,8" Click="StopCoreButton_OnClick" />
                             </WrapPanel>
@@ -388,16 +415,18 @@
                                 <Button Content="导出报告" Padding="12,6" Margin="0,0,8,8" Click="ExportReport_OnClick" />
                                 <Button Content="导出Parquet" Padding="12,6" Margin="0,0,8,8" Click="ExportParquet_OnClick" />
                             </WrapPanel>
-                            <TextBlock x:Name="DisclaimerText" TextWrapping="Wrap" Opacity="0.75" Margin="0,8,0,0" />
-                            <TextBlock x:Name="VersionText" Opacity="0.55" FontSize="12" Margin="0,12,0,0" />
+                            <TextBlock x:Name="DisclaimerText" TextWrapping="Wrap" Style="{StaticResource MutedText}" Margin="0,8,0,0" />
+                            <TextBlock x:Name="VersionText" Style="{StaticResource MutedText}" FontSize="12" Margin="0,12,0,0" />
                         </StackPanel>
                     </ScrollViewer>
                 </Border>
             </Grid>
 
             <!-- Bottom status -->
-            <Border Grid.Row="2" Background="#12181F" BorderBrush="#1E2833" BorderThickness="0,1,0,0" Padding="12,8">
-                <TextBlock x:Name="StatusText" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" Opacity="0.95" />
+            <Border Grid.Row="2" Background="{StaticResource BrushBgNav}" BorderBrush="{StaticResource BrushBorder}"
+                    BorderThickness="0,1,0,0" Padding="12,8">
+                <TextBlock x:Name="StatusText" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"
+                           Foreground="{StaticResource BrushFgPrimary}" />
             </Border>
         </Grid>
     </Grid>

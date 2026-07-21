@@ -264,7 +264,7 @@ public sealed class CandleChartPainter
             var y = _padT + _priceH * i / 4.0;
             _canvas.Children.Add(HLine(_padL, _padL + _plotW, y, Color.FromRgb(0x2A, 0x35, 0x42)));
             var price = _priceMax - span * i / 4.0;
-            AddText(price.ToString("0.####", CultureInfo.InvariantCulture), _padL - 46, y - 6, 10, 0x9A, 0xA7, 0xB5);
+            AddText(price.ToString("0.####", CultureInfo.InvariantCulture), _padL - 46, y - 6, 11, 0xD0, 0xDA, 0xE8);
         }
 
         var n = bars.Count;
@@ -420,15 +420,15 @@ public sealed class CandleChartPainter
                 $"  |  可见{_viewStart + 1}-{_viewStart + bars.Count}/{_allBars.Count}";
         }
 
-        AddText("成交量", _padL, _volTop + 2, 10, 0x9A, 0xA7, 0xB5);
+        AddText("成交量", _padL, _volTop + 2, 11, 0xD0, 0xDA, 0xE8);
         AddText(
             "滚轮缩放 · 右键拖拽平移 · 画线工具见上方",
             _padL + 60,
             2,
-            10,
-            0x9A,
-            0xA7,
-            0xB5);
+            11,
+            0xD0,
+            0xDA,
+            0xE8);
     }
 
     private double IndexToX(int i, double slot) => _padL + slot * i + slot / 2;

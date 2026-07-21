@@ -7,8 +7,8 @@
         MinHeight="480"
         MinWidth="560"
         WindowStartupLocation="CenterOwner"
-        Background="#0F1419"
-        Foreground="#E7ECF1">
+        Background="#0B1018"
+        Foreground="#F2F6FC">
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="18">
         <StackPanel>
             <TextBlock Text="行情数据源与密钥"

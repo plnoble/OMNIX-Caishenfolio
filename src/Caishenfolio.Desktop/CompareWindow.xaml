@@ -7,8 +7,8 @@
         MinHeight="420"
         MinWidth="720"
         WindowStartupLocation="CenterOwner"
-        Background="#0F1419"
-        Foreground="#E7ECF1">
+        Background="#0B1018"
+        Foreground="#F2F6FC">
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

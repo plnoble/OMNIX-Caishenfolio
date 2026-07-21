@@ -1,9 +1,173 @@
-﻿<Application x:Class="Caishenfolio.Desktop.App"
+<Application x:Class="Caishenfolio.Desktop.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:Caishenfolio.Desktop"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
-         
+        <!--
+          High-contrast dark theme
+          Primary text #F2F6FC on surfaces #0B1018 / #161D28
+        -->
+        <Color x:Key="ColorBgApp">#0B1018</Color>
+        <Color x:Key="ColorBgNav">#0E1520</Color>
+        <Color x:Key="ColorBgPanel">#161D28</Color>
+        <Color x:Key="ColorBgInput">#0A0F16</Color>
+        <Color x:Key="ColorBgHover">#243041</Color>
+        <Color x:Key="ColorBgActive">#2B4A63</Color>
+        <Color x:Key="ColorBorder">#3D4F63</Color>
+        <Color x:Key="ColorFgPrimary">#F2F6FC</Color>
+        <Color x:Key="ColorFgSecondary">#D5DEEA</Color>
+        <Color x:Key="ColorFgMuted">#B4C0D0</Color>
+        <Color x:Key="ColorAccent">#5EE4A8</Color>
+        <Color x:Key="ColorAccentDim">#3DB87E</Color>
+        <Color x:Key="ColorDanger">#FF7A88</Color>
+
+        <SolidColorBrush x:Key="BrushBgApp" Color="{StaticResource ColorBgApp}" />
+        <SolidColorBrush x:Key="BrushBgNav" Color="{StaticResource ColorBgNav}" />
+        <SolidColorBrush x:Key="BrushBgPanel" Color="{StaticResource ColorBgPanel}" />
+        <SolidColorBrush x:Key="BrushBgInput" Color="{StaticResource ColorBgInput}" />
+        <SolidColorBrush x:Key="BrushBgHover" Color="{StaticResource ColorBgHover}" />
+        <SolidColorBrush x:Key="BrushBgActive" Color="{StaticResource ColorBgActive}" />
+        <SolidColorBrush x:Key="BrushBorder" Color="{StaticResource ColorBorder}" />
+        <SolidColorBrush x:Key="BrushFgPrimary" Color="{StaticResource ColorFgPrimary}" />
+        <SolidColorBrush x:Key="BrushFgSecondary" Color="{StaticResource ColorFgSecondary}" />
+        <SolidColorBrush x:Key="BrushFgMuted" Color="{StaticResource ColorFgMuted}" />
+        <SolidColorBrush x:Key="BrushAccent" Color="{StaticResource ColorAccent}" />
+        <SolidColorBrush x:Key="BrushDanger" Color="{StaticResource ColorDanger}" />
+
+        <!-- Default text -->
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
+        </Style>
+
+        <Style TargetType="Label">
+            <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
+        </Style>
+
+        <!-- Text boxes -->
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{StaticResource BrushBgInput}" />
+            <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
+            <Setter Property="CaretBrush" Value="{StaticResource BrushFgPrimary}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="6,4" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Foreground" Value="{StaticResource BrushFgMuted}" />
+                    <Setter Property="Background" Value="#121820" />
+                </Trigger>
+                <Trigger Property="IsReadOnly" Value="True">
+                    <Setter Property="Background" Value="#101820" />
+                    <Setter Property="Foreground" Value="{StaticResource BrushFgSecondary}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Combo boxes -->
+        <Style TargetType="ComboBox">
+            <Setter Property="Background" Value="{StaticResource BrushBgInput}" />
+            <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="6,4" />
+        </Style>
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="{StaticResource BrushBgPanel}" />
+            <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
+            <Setter Property="Padding" Value="8,4" />
+            <Style.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter Property="Background" Value="{StaticResource BrushBgActive}" />
+                    <Setter Property="Foreground" Value="#FFFFFF" />
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{StaticResource BrushBgActive}" />
+                    <Setter Property="Foreground" Value="#FFFFFF" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- List boxes -->
+        <Style TargetType="ListBox">
+            <Setter Property="Background" Value="{StaticResource BrushBgInput}" />
+            <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{StaticResource BrushBgHover}" />
+                    <Setter Property="Foreground" Value="#FFFFFF" />
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{StaticResource BrushBgActive}" />
+                    <Setter Property="Foreground" Value="#FFFFFF" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Buttons -->
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#2C3A4C" />
+            <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#3A4F66" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#1F6B4A" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
+        </Style>
+
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="{StaticResource BrushBgApp}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
+            <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
+        </Style>
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="{StaticResource BrushFgSecondary}" />
+            <Setter Property="Padding" Value="12,6" />
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Scroll bars remain system; panels use theme -->
+        <Style TargetType="ScrollViewer">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
     </Application.Resources>
 </Application>

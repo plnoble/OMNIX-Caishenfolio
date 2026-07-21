@@ -5,8 +5,8 @@
         Height="480"
         Width="460"
         WindowStartupLocation="CenterOwner"
-        Background="#0F1419"
-        Foreground="#E7ECF1"
+        Background="#0B1018"
+        Foreground="#F2F6FC"
         ResizeMode="NoResize">
     <Grid Margin="18">
         <Grid.RowDefinitions>

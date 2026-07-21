@@ -1,8 +1,8 @@
 <UserControl x:Class="Caishenfolio.Desktop.PricePlanView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Background="#0F1419"
-             Foreground="#E7ECF1">
+             Background="{StaticResource BrushBgPanel}"
+             Foreground="{StaticResource BrushFgPrimary}">
     <Grid Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -14,7 +14,7 @@
         <StackPanel Grid.Row="0" Margin="0,0,0,10">
             <TextBlock Text="计划买/卖点 · 真实成交" FontSize="18" FontWeight="SemiBold" />
             <TextBlock x:Name="ContextText" Margin="0,4,0,0" FontFamily="Consolas" FontSize="12" Opacity="0.9" />
-            <TextBlock TextWrapping="Wrap" Opacity="0.75" FontSize="12" Margin="0,4,0,0"
+            <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12" Margin="0,4,0,0"
                        Text="计划价位在「行情」页 K 线上画横线并显示距现价距离。真实成交用于盈亏估算。不连接券商。" />
         </StackPanel>
 
@@ -25,7 +25,8 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Background="#1A222C" CornerRadius="8" Padding="12">
+            <Border Grid.Column="0" Background="{StaticResource BrushBgInput}" CornerRadius="8" Padding="12"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                         <TextBlock Text="计划价位（可多个）" FontWeight="SemiBold" Margin="0,0,0,8" />
@@ -41,7 +42,8 @@
                                 <ComboBoxItem Content="卖" Tag="sell" />
                             </ComboBox>
                             <TextBox x:Name="PlanPriceBox" Grid.Column="1" Padding="4" Margin="0,0,6,0" />
-                            <TextBlock Grid.Column="2" Text="备注" VerticalAlignment="Center" Margin="0,0,4,0" Opacity="0.8" />
+                            <TextBlock Grid.Column="2" Text="备注" VerticalAlignment="Center" Margin="0,0,4,0"
+                                       Foreground="{StaticResource BrushFgMuted}" />
                             <TextBox x:Name="PlanNoteBox" Grid.Column="3" Padding="4" />
                         </Grid>
                         <WrapPanel>
@@ -52,12 +54,12 @@
                             <Button Content="停用选中" Padding="10,5" Margin="0,0,0,6" Click="DeactivatePlan_OnClick" />
                         </WrapPanel>
                     </StackPanel>
-                    <ListBox x:Name="PlanList" Background="#12181F" Foreground="#E7ECF1" BorderThickness="0"
-                             DisplayMemberPath="Display" />
+                    <ListBox x:Name="PlanList" DisplayMemberPath="Display" />
                 </DockPanel>
             </Border>
 
-            <Border Grid.Column="2" Background="#1A222C" CornerRadius="8" Padding="12">
+            <Border Grid.Column="2" Background="{StaticResource BrushBgInput}" CornerRadius="8" Padding="12"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                         <TextBlock Text="真实成交记录" FontWeight="SemiBold" Margin="0,0,0,8" />
@@ -85,19 +87,21 @@
                             <Button Content="删除选中" Padding="10,5" Margin="0,0,0,6" Click="RemoveFill_OnClick" />
                         </WrapPanel>
                     </StackPanel>
-                    <ListBox x:Name="FillList" Background="#12181F" Foreground="#E7ECF1" BorderThickness="0"
-                             DisplayMemberPath="Display" />
+                    <ListBox x:Name="FillList" DisplayMemberPath="Display" />
                 </DockPanel>
             </Border>
         </Grid>
 
-        <Border Grid.Row="2" Background="#1A222C" CornerRadius="8" Padding="12" Margin="0,12,0,0">
-            <TextBlock x:Name="SummaryText" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" />
+        <Border Grid.Row="2" Background="{StaticResource BrushBgInput}" CornerRadius="8" Padding="12" Margin="0,12,0,0"
+                BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+            <TextBlock x:Name="SummaryText" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
+                       Foreground="{StaticResource BrushFgSecondary}" />
         </Border>
 
         <DockPanel Grid.Row="3" Margin="0,10,0,0">
             <Button DockPanel.Dock="Right" Content="刷新并同步到K线" Padding="12,6" Click="Refresh_OnClick" />
-            <TextBlock x:Name="StatusText" VerticalAlignment="Center" Opacity="0.85" TextWrapping="Wrap" />
+            <TextBlock x:Name="StatusText" VerticalAlignment="Center" TextWrapping="Wrap"
+                       Foreground="{StaticResource BrushFgSecondary}" />
         </DockPanel>
     </Grid>
 </UserControl>
