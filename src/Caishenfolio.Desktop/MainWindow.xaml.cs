@@ -25,20 +25,23 @@ public partial class MainWindow : Window
     private IReadOnlyList<MarketBarDto> _lastBars = Array.Empty<MarketBarDto>();
     private string _lastName = "";
     private CandleChartPainter? _chart;
-    private PricePlanWindow? _pricePlanWindow;
+    private bool _watchCollapsed;
+    private bool _barsExpanded;
+    private string _currentPage = "market";
 
     public MainWindow()
     {
         InitializeComponent();
         Title = $"{ProductInfo.Name}  v{ProductInfo.Version}";
-        TitleText.Text = ProductInfo.Name;
-        VersionBadge.Text = $"v{ProductInfo.Version} · {ProductInfo.Phase}";
+        TitleText.Text = ProductInfo.Brand;
+        VersionBadge.Text = $"v{ProductInfo.Version}\n{ProductInfo.Phase}";
         PhaseText.Text = $"{ProductInfo.Brand} · {ProductInfo.Phase} · {ProductInfo.ScopeSummary}";
         DisclaimerText.Text = ProductInfo.ResearchDisclaimer;
         VersionText.Text = $"{ProductInfo.Name}  版本 v{ProductInfo.Version}  阶段 {ProductInfo.Phase}";
         StatusText.Text = "分析核心未启动。正在自动准备依赖与核心…";
-        ResearchStatusText.Text = "双击关注 = 最新区间秒开；搜索支持「浦发」等模糊名称。";
+        ResearchStatusText.Text = "双击关注 = 最新区间秒开；搜索支持模糊名称。";
         MarketHintText.Text = MarketLabels.FormatHint();
+        SetCoreStatus(false);
 
         var localApp = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -67,6 +70,7 @@ public partial class MainWindow : Window
         ApplyDefaultDateRange("daily");
         UpdateChartPeriodHint();
         RefreshWatchListUi();
+        ShowPage("market");
 
         Loaded += async (_, _) =>
         {
@@ -80,6 +84,126 @@ public partial class MainWindow : Window
             _broker.Dispose();
             _taskStore.Dispose();
         };
+    }
+
+    private void NavMarket_OnClick(object sender, RoutedEventArgs e) => ShowPage("market");
+    private void NavPlan_OnClick(object sender, RoutedEventArgs e) => ShowPage("plan");
+    private void NavGrid_OnClick(object sender, RoutedEventArgs e) => ShowPage("grid");
+    private void NavBacktest_OnClick(object sender, RoutedEventArgs e) => ShowPage("backtest");
+    private void NavCompare_OnClick(object sender, RoutedEventArgs e) => ShowPage("compare");
+    private void NavSystem_OnClick(object sender, RoutedEventArgs e) => ShowPage("system");
+
+    private void ShowPage(string page)
+    {
+        _currentPage = page;
+        PageMarket.Visibility = page == "market" ? Visibility.Visible : Visibility.Collapsed;
+        PagePlan.Visibility = page == "plan" ? Visibility.Visible : Visibility.Collapsed;
+        PageGrid.Visibility = page == "grid" ? Visibility.Visible : Visibility.Collapsed;
+        PageBacktest.Visibility = page == "backtest" ? Visibility.Visible : Visibility.Collapsed;
+        PageCompare.Visibility = page == "compare" ? Visibility.Visible : Visibility.Collapsed;
+        PageSystem.Visibility = page == "system" ? Visibility.Visible : Visibility.Collapsed;
+
+        SetNavStyle(NavMarket, page == "market");
+        SetNavStyle(NavPlan, page == "plan");
+        SetNavStyle(NavGrid, page == "grid");
+        SetNavStyle(NavBacktest, page == "backtest");
+        SetNavStyle(NavCompare, page == "compare");
+        SetNavStyle(NavSystem, page == "system");
+
+        if (page == "plan")
+        {
+            BindPlanView();
+        }
+        else if (page == "grid")
+        {
+            BindGridView();
+        }
+        else if (page == "market")
+        {
+            // chart may need redraw after page shown
+            Dispatcher.BeginInvoke(new Action(RedrawChart), System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+        else if (page == "compare")
+        {
+            var n = _watchlist.Load().Count;
+            CompareHintText.Text = $"当前关注 {n} 只；对比至少需要 2 只。";
+        }
+    }
+
+    private static void SetNavStyle(Button btn, bool active)
+    {
+        btn.Style = (Style)btn.FindResource(active ? "NavBtnActive" : "NavBtn");
+    }
+
+    private void BindPlanView()
+    {
+        PlanView.Bind(
+            _pricePlan,
+            SymbolBox.Text.Trim(),
+            LastCloseOrNull(),
+            onChanged: ApplyPriceMarkersToChart,
+            onRequestPick: kind =>
+            {
+                ShowPage("market");
+                if (_chart is null || _lastBars.Count == 0)
+                {
+                    StatusText.Text = "请先加载K线再点选。";
+                    return;
+                }
+
+                _chart.Mode = kind switch
+                {
+                    "plan_buy" => ChartDrawMode.PickPlanBuy,
+                    "plan_sell" => ChartDrawMode.PickPlanSell,
+                    "fill_buy" => ChartDrawMode.PickFillBuy,
+                    "fill_sell" => ChartDrawMode.PickFillSell,
+                    _ => ChartDrawMode.Crosshair,
+                };
+                StatusText.Text = "已切到行情页，请在K线上点选价格…";
+            });
+    }
+
+    private void BindGridView()
+    {
+        try
+        {
+            var client = EnsureClient();
+            GridViewControl.Bind(
+                client,
+                SymbolBox.Text.Trim(),
+                StartDateBox.Text.Trim(),
+                EndDateBox.Text.Trim(),
+                SelectedAdjustment(),
+                SelectedInterval());
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"网格页绑定失败：{HumanizeUiError(ex.Message)}";
+        }
+    }
+
+    private void ToggleWatch_OnClick(object sender, RoutedEventArgs e)
+    {
+        _watchCollapsed = !_watchCollapsed;
+        WatchColumn.Width = _watchCollapsed ? new GridLength(0) : new GridLength(240);
+        StatusText.Text = _watchCollapsed ? "关注栏已折叠。" : "关注栏已展开。";
+    }
+
+    private void ToggleBars_OnClick(object sender, RoutedEventArgs e)
+    {
+        _barsExpanded = !_barsExpanded;
+        BarsRow.Height = _barsExpanded ? new GridLength(160) : new GridLength(0);
+        StatusText.Text = _barsExpanded ? "K线明细已展开。" : "K线明细已收起（主图更大）。";
+        RedrawChart();
+    }
+
+    private void SetCoreStatus(bool running)
+    {
+        CoreStatusDot.Background = new System.Windows.Media.SolidColorBrush(
+            running
+                ? System.Windows.Media.Color.FromRgb(0x3D, 0xDC, 0x97)
+                : System.Windows.Media.Color.FromRgb(0x88, 0x88, 0x88));
+        CoreStatusText.Text = running ? "核心 · 运行中" : "核心 · 未连接";
     }
 
     private async void StartCoreButton_OnClick(object sender, RoutedEventArgs e) =>
@@ -116,16 +240,18 @@ public partial class MainWindow : Window
             _broker.Start("python", repoRoot, _credentials);
             _client?.Dispose();
             _client = new AnalyticsCoreClient(_broker.BaseAddress);
+            SetCoreStatus(true);
             await RefreshHealthAsync().ConfigureAwait(true);
             if (auto)
             {
-                StatusText.Text += "（已自动启动分析核心；无需每次手动点「启动」）";
+                StatusText.Text += "（已自动启动分析核心）";
             }
         }
         catch (Exception ex)
         {
+            SetCoreStatus(false);
             StatusText.Text = $"启动失败：{HumanizeUiError(ex.Message)}" +
-                              (auto ? " 可稍后手动点「启动分析核心」。" : "");
+                              (auto ? " 可到「系统」页手动启动核心。" : "");
         }
     }
 
@@ -146,6 +272,7 @@ public partial class MainWindow : Window
         _broker.Stop();
         _client?.Dispose();
         _client = null;
+        SetCoreStatus(false);
         StatusText.Text = "分析核心已停止。";
     }
 
@@ -484,9 +611,9 @@ public partial class MainWindow : Window
                 var note = "图上点选";
                 _pricePlan.AddLevel(symbol, side, price, note);
                 ApplyPriceMarkersToChart();
-                _pricePlanWindow?.NotifyExternalChange(lastPrice: LastCloseOrNull());
+                PlanView.NotifyExternalChange(lastPrice: LastCloseOrNull());
                 var zh = side == "buy" ? "买" : "卖";
-                StatusText.Text = $"已添加计划{zh}点 {price:0.####}（可继续点选；点「十字光标」结束）";
+                StatusText.Text = $"已添加计划{zh}点 {price:0.####}（可继续点选；十字结束）";
                 CrosshairLabel.Text =
                     $"已添加计划{zh} {price:0.####} · 继续点击可再加 · 十字光标结束点选";
                 return;
@@ -495,9 +622,9 @@ public partial class MainWindow : Window
             if (kind is "fill_buy" or "fill_sell")
             {
                 var side = kind == "fill_buy" ? "buy" : "sell";
-                EnsurePricePlanWindow();
-                _pricePlanWindow?.ApplyPickedFillPrice(price, side);
-                StatusText.Text = $"已从图取成交价 {price:0.####}，请在台账窗口确认数量后登记。";
+                ShowPage("plan");
+                PlanView.ApplyPickedFillPrice(price, side);
+                StatusText.Text = $"已从图取成交价 {price:0.####}，请在计划页确认数量后登记。";
             }
         }
         catch (Exception ex)
@@ -513,65 +640,6 @@ public partial class MainWindow : Window
     {
         _chart?.ClearDrawings();
         CrosshairLabel.Text = "已清除手动画线（不影响计划买/卖与成交线）";
-    }
-
-    private void PricePlan_OnClick(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            EnsurePricePlanWindow();
-            ApplyPriceMarkersToChart();
-            StatusText.Text = $"计划/成交台账：{SymbolBox.Text.Trim()}（可用「点选买点/卖点」在图上取价）";
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = $"打开计划/成交失败：{HumanizeUiError(ex.Message)}";
-        }
-    }
-
-    private void EnsurePricePlanWindow()
-    {
-        var symbol = SymbolBox.Text.Trim();
-        if (string.IsNullOrWhiteSpace(symbol))
-        {
-            throw new InvalidOperationException("请先选择标的。");
-        }
-
-        if (_pricePlanWindow is { IsLoaded: true })
-        {
-            _pricePlanWindow.Activate();
-            _pricePlanWindow.NotifyExternalChange(LastCloseOrNull());
-            return;
-        }
-
-        _pricePlanWindow = new PricePlanWindow(
-            _pricePlan,
-            symbol,
-            LastCloseOrNull(),
-            onChanged: ApplyPriceMarkersToChart,
-            onRequestPick: kind =>
-            {
-                if (_chart is null || _lastBars.Count == 0)
-                {
-                    StatusText.Text = "请先加载K线再点选。";
-                    return;
-                }
-
-                _chart.Mode = kind switch
-                {
-                    "plan_buy" => ChartDrawMode.PickPlanBuy,
-                    "plan_sell" => ChartDrawMode.PickPlanSell,
-                    "fill_buy" => ChartDrawMode.PickFillBuy,
-                    "fill_sell" => ChartDrawMode.PickFillSell,
-                    _ => ChartDrawMode.Crosshair,
-                };
-                StatusText.Text = "请回到主窗口K线图点选价格…";
-            })
-        {
-            Owner = this,
-        };
-        _pricePlanWindow.Closed += (_, _) => _pricePlanWindow = null;
-        _pricePlanWindow.Show();
     }
 
     private void ApplyPriceMarkersToChart()
@@ -674,64 +742,59 @@ public partial class MainWindow : Window
         }
     }
 
-    private void GridStrategy_OnClick(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var client = EnsureClient();
-            var symbol = SymbolBox.Text.Trim();
-            if (string.IsNullOrWhiteSpace(symbol))
-            {
-                StatusText.Text = "请先选择或输入标的。";
-                return;
-            }
-
-            var win = new GridWindow(
-                client,
-                symbol,
-                StartDateBox.Text.Trim(),
-                EndDateBox.Text.Trim(),
-                SelectedAdjustment(),
-                SelectedInterval())
-            {
-                Owner = this,
-            };
-            win.Show();
-            StatusText.Text = $"已打开网格策略工作台：{symbol}";
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = $"打开网格策略失败：{HumanizeUiError(ex.Message)}";
-        }
-    }
-
     private async void MaBacktest_OnClick(object sender, RoutedEventArgs e)
     {
         try
         {
-            var settings = new BacktestSettingsWindow { Owner = this };
-            if (settings.ShowDialog() != true || !settings.Confirmed)
+            if (!int.TryParse(BtFastBox.Text.Trim(), out var fast) || fast < 1)
             {
-                StatusText.Text = "已取消回测。";
+                StatusText.Text = "快线 MA 请填正整数。";
                 return;
             }
+
+            if (!int.TryParse(BtSlowBox.Text.Trim(), out var slow) || slow <= fast)
+            {
+                StatusText.Text = "慢线 MA 必须大于快线。";
+                return;
+            }
+
+            if (!TryParseRate(BtCommissionBox.Text, out var commission)
+                || !TryParseRate(BtStampBox.Text, out var stamp)
+                || !TryParseRate(BtSlippageBox.Text, out var slip)
+                || !TryParseRate(BtLimitUpBox.Text, out var up)
+                || !TryParseRate(BtLimitDownBox.Text, out var down))
+            {
+                StatusText.Text = "费率/幅度请填数字，例如 0.0003 或 0.10。";
+                return;
+            }
+
+            var costs = new
+            {
+                commission_rate = commission,
+                commission_min = 0.0,
+                stamp_duty_rate = stamp,
+                slippage_rate = slip,
+                limit_up_pct = up,
+                limit_down_pct = down,
+                enforce_limit = BtEnforceLimitCheck.IsChecked == true,
+            };
 
             var client = EnsureClient();
             var symbol = SymbolBox.Text.Trim();
             var start = StartDateBox.Text.Trim();
             var end = EndDateBox.Text.Trim();
-            StatusText.Text =
-                $"正在回测 MA{settings.Fast}/MA{settings.Slow}（自定义成本与涨跌停）：{symbol} …";
+            StatusText.Text = $"正在回测 MA{fast}/MA{slow}：{symbol} …";
+            BacktestHintText.Text = "回测运行中…";
             var result = await client
                 .RunMaBacktestAsync(
                     symbol,
                     start,
                     end,
-                    fast: settings.Fast,
-                    slow: settings.Slow,
+                    fast: fast,
+                    slow: slow,
                     adjustment: SelectedAdjustment(),
                     interval: SelectedInterval(),
-                    costs: settings.Costs)
+                    costs: costs)
                 .ConfigureAwait(true);
             ResearchStatusText.Text = result.ToString();
             if (result.TryGetProperty("ok", out var ok) && ok.GetBoolean())
@@ -742,7 +805,8 @@ public partial class MainWindow : Window
                 var dd = result.TryGetProperty("max_drawdown", out var md) ? md.GetDouble() : 0;
                 var skipped = result.TryGetProperty("skipped_signals", out var sk) ? sk.GetInt32() : 0;
                 StatusText.Text =
-                    $"回测完成 {symbol}：策略={total:P2}，买入持有={bh:P2}，成交={trades}，跳过={skipped}，最大回撤={dd:P2}（见权益曲线窗口）";
+                    $"回测完成 {symbol}：策略={total:P2}，买入持有={bh:P2}，成交={trades}，跳过={skipped}，最大回撤={dd:P2}";
+                BacktestHintText.Text = StatusText.Text;
 
                 var resultWin = new BacktestResultWindow(
                     client,
@@ -760,13 +824,21 @@ public partial class MainWindow : Window
             {
                 StatusText.Text =
                     $"回测失败：{(result.TryGetProperty("error", out var err) ? err.GetString() : "未知")}";
+                BacktestHintText.Text = StatusText.Text;
             }
         }
         catch (Exception ex)
         {
             StatusText.Text = $"回测失败：{HumanizeUiError(ex.Message)}";
+            BacktestHintText.Text = StatusText.Text;
         }
     }
+
+    private static bool TryParseRate(string text, out double value) =>
+        double.TryParse(text.Trim(), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out value)
+        || double.TryParse(text.Trim(), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.CurrentCulture, out value);
 
     private async void ExportReport_OnClick(object sender, RoutedEventArgs e)
     {
@@ -1028,6 +1100,7 @@ public partial class MainWindow : Window
                 var provider = string.IsNullOrWhiteSpace(health.MarketProvider) ? "未知" : health.MarketProvider;
                 var providerOk = health.MarketProviderReady ? "可用" : "不可用";
                 var synthetic = health.MarketDataSynthetic ? "是（演示）" : "否（真实）";
+                SetCoreStatus(true);
                 StatusText.Text =
                     $"状态={health.Status}；阶段={health.Phase}；行情源={provider}（{providerOk}）；" +
                     $"合成数据={synthetic}；声明={health.Disclaimer}";
@@ -1043,7 +1116,8 @@ public partial class MainWindow : Window
             }
         }
 
-        StatusText.Text = "健康检查失败：核心未响应。请先启动分析核心。";
+        SetCoreStatus(false);
+        StatusText.Text = "健康检查失败：核心未响应。请到「系统」页启动分析核心。";
     }
 
     private AnalyticsCoreClient EnsureClient()
@@ -1065,7 +1139,7 @@ public partial class MainWindow : Window
             || message.Contains("refused", StringComparison.OrdinalIgnoreCase)
             || message.Contains("10061", StringComparison.Ordinal))
         {
-            return "无法连接分析核心（127.0.0.1:8765）。请先点击「启动分析核心」。";
+            return "无法连接分析核心（127.0.0.1:8765）。请到左侧「系统」页启动分析核心。";
         }
 
         if (message.Contains("Proxy", StringComparison.OrdinalIgnoreCase)

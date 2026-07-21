@@ -45,10 +45,11 @@ Follow `agent-dev-protocol` under `.claude/skills/agent-dev-protocol/SKILL.md`.
 
 ## Current Phase
 
-**P4.3 — 计划买/卖横线 + 真实成交台账（不含券商自动挂单与安装包）**
+**P5 — 侧栏导航工作台（行情/计划/网格/回测/对比/系统；不含券商自动挂单与安装包）**
 
 Completed earlier:
 
+- **P4.3.x — 计划买/卖横线、图上点选、真实成交台账**
 - **P4.2 — 网格策略（建议/回测/人工台账）**
 - **P4 / P4.1 — 对比/MA回测/报告/Parquet/权益曲线**
 - **P3.x — 行情 UI、缓存、画线、品牌 OMNIX**

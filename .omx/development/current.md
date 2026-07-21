@@ -1,8 +1,7 @@
 # Current Development
 
 - Project: **OMNIX-Caishenfolio**
-- Status: **P4.3.1 (v0.8.2)** — chart click-to-pick plan buy/sell; installer deferred
-- **P4.3.1**: 点选买点/卖点、图上取成交价填入台账
-- **P4.3**: 计划买/卖横线 + 真实成交 FIFO
-- **P4.2**: 网格建议/回测/台账
+- Status: **P5 shell (v0.9.0)** — left-nav workspace; installer deferred
+- **P5**: 左侧导航（行情/计划/网格/回测/对比/系统）；顶栏极简上下文；主图自适应放大；明细/关注可折叠
+- Prior: plan levels, chart pick, grid research, compare, MA backtest
 - GitHub: https://github.com/plnoble/OMNIX-Caishenfolio

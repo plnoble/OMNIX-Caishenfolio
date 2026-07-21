@@ -1,13 +1,14 @@
 <Window x:Class="Caishenfolio.Desktop.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Caishenfolio.Desktop"
         Title="OMNIX-Caishenfolio"
-        Height="820"
-        Width="1180"
-        MinHeight="640"
-        MinWidth="980"
+        Height="860"
+        Width="1280"
+        MinHeight="680"
+        MinWidth="1020"
         WindowStartupLocation="CenterScreen"
-        Background="#0F1419"
+        Background="#0B1015"
         Foreground="#E7ECF1">
     <Window.Resources>
         <Style x:Key="BarsCellText" TargetType="TextBlock">
@@ -15,131 +16,122 @@
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="Margin" Value="4,0" />
         </Style>
+        <Style x:Key="NavBtn" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#C5D0DB" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="8,12" />
+            <Setter Property="Margin" Value="6,2" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#243041" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="NavBtnActive" TargetType="Button" BasedOn="{StaticResource NavBtn}">
+            <Setter Property="Background" Value="#2A3F55" />
+            <Setter Property="Foreground" Value="#9FE8C2" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style x:Key="ToolBtn" TargetType="Button">
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+        </Style>
     </Window.Resources>
-    <Grid Margin="16">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" Margin="0,0,0,4">
-            <Border DockPanel.Dock="Right"
-                    Background="#243041"
-                    CornerRadius="8"
-                    Padding="12,6"
-                    VerticalAlignment="Center">
-                <TextBlock x:Name="VersionBadge"
-                           FontSize="13"
-                           FontWeight="SemiBold"
-                           Foreground="#9FE8C2" />
-            </Border>
-            <TextBlock x:Name="TitleText" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Center" />
-        </DockPanel>
-        <TextBlock x:Name="PhaseText" Grid.Row="1" FontSize="13" Opacity="0.8" Margin="0,0,0,10" TextWrapping="Wrap" />
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="NavColumn" Width="88" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,10">
-            <Button Content="启动分析核心" Padding="12,6" Margin="0,0,8,0" Click="StartCoreButton_OnClick" />
-            <Button Content="健康检查" Padding="12,6" Margin="0,0,8,0" Click="HealthButton_OnClick" />
-            <Button Content="停止核心" Padding="12,6" Margin="0,0,8,0" Click="StopCoreButton_OnClick" />
-            <Button Content="数据源与密钥" Padding="12,6" Margin="0,0,8,0" Click="DataSourceButton_OnClick" />
-            <Button Content="多股对比" Padding="12,6" Margin="0,0,8,0" Click="CompareWatch_OnClick" />
-            <Button Content="MA回测" Padding="12,6" Margin="0,0,8,0" Click="MaBacktest_OnClick" />
-            <Button Content="网格策略" Padding="12,6" Margin="0,0,8,0" Click="GridStrategy_OnClick" />
-            <Button Content="导出报告" Padding="12,6" Margin="0,0,8,0" Click="ExportReport_OnClick" />
-            <Button Content="导出Parquet" Padding="12,6" Click="ExportParquet_OnClick" />
-        </StackPanel>
+        <!-- Left navigation -->
+        <Border Grid.Column="0" Background="#12181F" BorderBrush="#1E2833" BorderThickness="0,0,1,0">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top" Margin="0,12,0,8">
+                    <TextBlock x:Name="NavBrand" Text="OMNIX" FontWeight="Bold" FontSize="14"
+                               Foreground="#9FE8C2" HorizontalAlignment="Center" Margin="0,0,0,4" />
+                    <TextBlock x:Name="VersionBadge" Text="v" FontSize="10" Opacity="0.7"
+                               HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="4,0" />
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,10">
+                    <Button x:Name="NavSystem" Style="{StaticResource NavBtn}" Click="NavSystem_OnClick"
+                            ToolTip="系统：核心 / 数据源 / 导出">
+                        <TextBlock TextAlignment="Center" FontSize="12" LineHeight="16">
+                            <Run Text="系统" FontSize="13"/><LineBreak/><Run Text="⚙️" FontSize="14"/>
+                        </TextBlock>
+                    </Button>
+                </StackPanel>
+                <StackPanel>
+                    <Button x:Name="NavMarket" Style="{StaticResource NavBtnActive}" Click="NavMarket_OnClick"
+                            ToolTip="行情 K 线">
+                        <TextBlock TextAlignment="Center" FontSize="12">
+                            <Run Text="行情" FontSize="13"/><LineBreak/><Run Text="📈" FontSize="14"/>
+                        </TextBlock>
+                    </Button>
+                    <Button x:Name="NavPlan" Style="{StaticResource NavBtn}" Click="NavPlan_OnClick"
+                            ToolTip="计划买/卖与真实成交">
+                        <TextBlock TextAlignment="Center" FontSize="12">
+                            <Run Text="计划" FontSize="13"/><LineBreak/><Run Text="🎯" FontSize="14"/>
+                        </TextBlock>
+                    </Button>
+                    <Button x:Name="NavGrid" Style="{StaticResource NavBtn}" Click="NavGrid_OnClick"
+                            ToolTip="网格策略">
+                        <TextBlock TextAlignment="Center" FontSize="12">
+                            <Run Text="网格" FontSize="13"/><LineBreak/><Run Text="🕸" FontSize="14"/>
+                        </TextBlock>
+                    </Button>
+                    <Button x:Name="NavBacktest" Style="{StaticResource NavBtn}" Click="NavBacktest_OnClick"
+                            ToolTip="MA 回测">
+                        <TextBlock TextAlignment="Center" FontSize="12">
+                            <Run Text="回测" FontSize="13"/><LineBreak/><Run Text="📊" FontSize="14"/>
+                        </TextBlock>
+                    </Button>
+                    <Button x:Name="NavCompare" Style="{StaticResource NavBtn}" Click="NavCompare_OnClick"
+                            ToolTip="多股对比">
+                        <TextBlock TextAlignment="Center" FontSize="12">
+                            <Run Text="对比" FontSize="13"/><LineBreak/><Run Text="📉" FontSize="14"/>
+                        </TextBlock>
+                    </Button>
+                </StackPanel>
+            </DockPanel>
+        </Border>
 
-        <Grid Grid.Row="3">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="320" />
-                <ColumnDefinition Width="12" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+        <!-- Main column -->
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
-            <!-- Left: watchlist + search -->
-            <Grid Grid.Column="0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="*" MinHeight="160" />
-                    <RowDefinition Height="10" />
-                    <RowDefinition Height="*" MinHeight="160" />
-                </Grid.RowDefinitions>
-
-                <Border Grid.Row="0" Background="#1A222C" CornerRadius="10" Padding="12">
-                    <DockPanel LastChildFill="True">
-                        <TextBlock DockPanel.Dock="Top" Text="我的关注" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,6" />
-                        <TextBlock DockPanel.Dock="Top"
-                                   Text="收藏标的，单击即可填入并加载。无需每次手输。"
-                                   TextWrapping="Wrap" Opacity="0.7" FontSize="11" Margin="0,0,0,8" />
-                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
-                            <Button Content="加入关注" Padding="10,4" Margin="0,0,8,0" Click="AddWatchButton_OnClick" />
-                            <Button Content="取消关注" Padding="10,4" Margin="0,0,8,0" Click="RemoveWatchButton_OnClick" />
-                            <Button Content="同步缓存" Padding="10,4" Click="SyncWatchCacheButton_OnClick" />
-                        </StackPanel>
-                        <ListBox x:Name="WatchList"
-                                 Background="#12181F"
-                                 Foreground="#E7ECF1"
-                                 BorderThickness="0"
-                                 DisplayMemberPath="Display"
-                                 MouseDoubleClick="WatchList_OnMouseDoubleClick"
-                                 SelectionChanged="WatchList_OnSelectionChanged" />
-                    </DockPanel>
-                </Border>
-
-                <Border Grid.Row="2" Background="#1A222C" CornerRadius="10" Padding="12">
-                    <DockPanel LastChildFill="True">
-                        <TextBlock DockPanel.Dock="Top" Text="添加标的（搜索）" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,6" />
-                        <TextBlock DockPanel.Dock="Top"
-                                   Text="不知道代码时用：搜名称/代码 → 选中 → 加入关注。日常看盘请用上方「我的关注」。"
-                                   TextWrapping="Wrap"
-                                   Opacity="0.8"
-                                   FontSize="11"
-                                   Margin="0,0,0,6" />
-                        <TextBlock DockPanel.Dock="Top"
-                                   x:Name="MarketHintText"
-                                   TextWrapping="Wrap"
-                                   Opacity="0.7"
-                                   FontSize="11"
-                                   Margin="0,0,0,8" />
-                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
-                            <TextBox x:Name="SearchBox" Width="170" Padding="6,4" KeyDown="SearchBox_OnKeyDown" />
-                            <Button Content="搜索" Margin="8,0,0,0" Padding="10,4" Click="SearchButton_OnClick" />
-                        </StackPanel>
-                        <ListBox x:Name="SymbolList"
-                                 Background="#12181F"
-                                 Foreground="#E7ECF1"
-                                 BorderThickness="0"
-                                 DisplayMemberPath="Display"
-                                 SelectionChanged="SymbolList_OnSelectionChanged" />
-                    </DockPanel>
-                </Border>
-            </Grid>
-
-            <!-- Right: chart + bars -->
-            <Border Grid.Column="2" Background="#1A222C" CornerRadius="10" Padding="12">
+            <!-- Top context bar -->
+            <Border Grid.Row="0" Background="#151C24" BorderBrush="#1E2833" BorderThickness="0,0,0,1" Padding="12,8">
                 <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="220" />
-                        <RowDefinition Height="8" />
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-
-                    <TextBlock Grid.Row="0" Text="行情 · K线 · 研究" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8" />
-
-                    <WrapPanel Grid.Row="1" Margin="0,0,0,6">
-                        <TextBlock Text="标的" VerticalAlignment="Center" Margin="0,0,6,0" />
-                        <TextBox x:Name="SymbolBox" Width="130" Padding="6,4" Text="SSE:600000" Margin="0,0,8,4" />
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <WrapPanel VerticalAlignment="Center">
+                        <TextBlock x:Name="TitleText" Text="OMNIX" FontWeight="SemiBold" FontSize="15"
+                                   VerticalAlignment="Center" Margin="0,0,12,4" />
+                        <TextBlock Text="标的" VerticalAlignment="Center" Margin="0,0,4,4" Opacity="0.8" />
+                        <TextBox x:Name="SymbolBox" Width="120" Padding="5,3" Text="SSE:600000" Margin="0,0,6,4" />
                         <TextBlock x:Name="SymbolMarketTag" VerticalAlignment="Center" Margin="0,0,10,4"
                                    FontWeight="SemiBold" Foreground="#7DD3A7" Text="【A股】" />
-                        <TextBlock Text="周期" VerticalAlignment="Center" Margin="0,0,6,4" />
-                        <ComboBox x:Name="IntervalCombo" Width="92" Padding="4" Margin="0,0,10,4" SelectedIndex="5">
+                        <TextBlock Text="周期" VerticalAlignment="Center" Margin="0,0,4,4" Opacity="0.8" />
+                        <ComboBox x:Name="IntervalCombo" Width="86" Padding="3" Margin="0,0,8,4" SelectedIndex="5">
                             <ComboBoxItem Tag="1m" Content="1分钟" />
                             <ComboBoxItem Tag="5m" Content="5分钟" />
                             <ComboBoxItem Tag="15m" Content="15分钟" />
@@ -151,125 +143,262 @@
                             <ComboBoxItem Tag="quarterly" Content="季K" />
                             <ComboBoxItem Tag="yearly" Content="年K" />
                         </ComboBox>
-                        <TextBlock Text="复权" VerticalAlignment="Center" Margin="0,0,6,4" />
-                        <ComboBox x:Name="AdjustmentCombo" Width="88" Padding="4" Margin="0,0,10,4" SelectedIndex="0">
+                        <TextBlock Text="复权" VerticalAlignment="Center" Margin="0,0,4,4" Opacity="0.8" />
+                        <ComboBox x:Name="AdjustmentCombo" Width="80" Padding="3" Margin="0,0,8,4" SelectedIndex="0">
                             <ComboBoxItem Tag="raw" Content="不复权" IsSelected="True" />
                             <ComboBoxItem Tag="forward" Content="前复权" />
                             <ComboBoxItem Tag="backward" Content="后复权" />
                         </ComboBox>
-                        <TextBlock Text="开始" VerticalAlignment="Center" Margin="0,0,6,4" />
-                        <TextBox x:Name="StartDateBox" Width="92" Padding="6,4" Margin="0,0,8,4" />
-                        <TextBlock Text="结束" VerticalAlignment="Center" Margin="0,0,6,4" />
-                        <TextBox x:Name="EndDateBox" Width="92" Padding="6,4" Margin="0,0,4,4" />
+                        <TextBlock Text="区间" VerticalAlignment="Center" Margin="0,0,4,4" Opacity="0.8" />
+                        <TextBox x:Name="StartDateBox" Width="88" Padding="5,3" Margin="0,0,4,4" />
+                        <TextBlock Text="~" VerticalAlignment="Center" Margin="0,0,4,4" />
+                        <TextBox x:Name="EndDateBox" Width="88" Padding="5,3" Margin="0,0,8,4" />
+                        <Button Content="加载" Padding="12,4" Margin="0,0,6,4" Click="LoadBarsButton_OnClick" />
+                        <Button Content="1月" Style="{StaticResource ToolBtn}" Margin="0,0,4,4" Click="QuickRange1M_OnClick" />
+                        <Button Content="3月" Style="{StaticResource ToolBtn}" Margin="0,0,4,4" Click="QuickRange3M_OnClick" />
+                        <Button Content="1年" Style="{StaticResource ToolBtn}" Margin="0,0,4,4" Click="QuickRange1Y_OnClick" />
                     </WrapPanel>
-
-                    <StackPanel Grid.Row="2" Margin="0,0,0,6">
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                            <Button Content="加载行情" Padding="10,5" Margin="0,0,6,0" Click="LoadBarsButton_OnClick" />
-                            <Button Content="近1月" Padding="10,5" Margin="0,0,6,0" Click="QuickRange1M_OnClick" />
-                            <Button Content="近3月" Padding="10,5" Margin="0,0,6,0" Click="QuickRange3M_OnClick" />
-                            <Button Content="近1年" Padding="10,5" Margin="0,0,6,0" Click="QuickRange1Y_OnClick" />
-                            <Button Content="重置最新" Padding="10,5" Margin="0,0,6,0" Click="ResetLatestRangeButton_OnClick" />
-                            <Button Content="加入关注" Padding="10,5" Margin="0,0,6,0" Click="AddWatchButton_OnClick" />
-                            <Button Content="研究快照" Padding="10,5" Margin="0,0,6,0" Click="ResearchButton_OnClick" />
-                            <Button Content="清理缓存" Padding="10,5" Click="ClearCacheButton_OnClick" />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                            <TextBlock Text="图工具" VerticalAlignment="Center" Margin="0,0,8,0" Opacity="0.85" />
-                            <Button Content="十字光标" Padding="8,4" Margin="0,0,6,0" Click="ChartModeCrosshair_OnClick" />
-                            <Button Content="平移" Padding="8,4" Margin="0,0,6,0" Click="ChartModePan_OnClick" />
-                            <Button Content="趋势线" Padding="8,4" Margin="0,0,6,0" Click="ChartModeTrend_OnClick" />
-                            <Button Content="水平线" Padding="8,4" Margin="0,0,6,0" Click="ChartModeHoriz_OnClick" />
-                            <Button Content="点选买点" Padding="8,4" Margin="0,0,6,0" Click="ChartPickPlanBuy_OnClick"
-                                    ToolTip="在K线上点一下 = 添加计划买横线" />
-                            <Button Content="点选卖点" Padding="8,4" Margin="0,0,6,0" Click="ChartPickPlanSell_OnClick"
-                                    ToolTip="在K线上点一下 = 添加计划卖横线" />
-                            <Button Content="计划/成交" Padding="8,4" Margin="0,0,6,0" Click="PricePlan_OnClick"
-                                    ToolTip="记录计划买/卖点（K线横线）与真实成交；可从图点选填价" />
-                            <Button Content="清除画线" Padding="8,4" Margin="0,0,6,0" Click="ChartClearDraw_OnClick" />
-                            <Button Content="重置缩放" Padding="8,4" Click="ChartResetZoom_OnClick" />
-                        </StackPanel>
-                        <TextBlock x:Name="ChartPeriodHint" Opacity="0.85" FontSize="12"
-                                   Text="滚轮缩放 · 右键拖拽 · 点选买/卖点 · 计划横线 · 趋势/水平线" />
-                        <TextBlock x:Name="CrosshairLabel" Margin="0,4,0,0" FontFamily="Consolas" FontSize="12"
-                                   Foreground="#E8F0FF" Text="" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Border x:Name="CoreStatusDot" Width="10" Height="10" CornerRadius="5"
+                                Background="#666" Margin="0,0,8,0" VerticalAlignment="Center"
+                                ToolTip="分析核心状态" />
+                        <TextBlock x:Name="CoreStatusText" Text="核心 · 未连接" VerticalAlignment="Center"
+                                   FontSize="12" Opacity="0.85" Margin="0,0,8,0" />
                     </StackPanel>
-
-                    <Border Grid.Row="3" Background="#0E141A" CornerRadius="6" BorderBrush="#2A3542" BorderThickness="1" Height="260">
-                        <Canvas x:Name="ChartCanvas"
-                                ClipToBounds="True"
-                                Background="#0E141A"
-                                SizeChanged="ChartCanvas_OnSizeChanged" />
-                    </Border>
-
-                    <DataGrid x:Name="BarsGrid"
-                              Grid.Row="5"
-                              AutoGenerateColumns="False"
-                              IsReadOnly="True"
-                              CanUserAddRows="False"
-                              CanUserResizeRows="False"
-                              HeadersVisibility="Column"
-                              GridLinesVisibility="Horizontal"
-                              HorizontalGridLinesBrush="#2A3542"
-                              Background="#0E141A"
-                              Foreground="#F2F5F8"
-                              BorderThickness="0"
-                              RowBackground="#0E141A"
-                              AlternatingRowBackground="#151C24"
-                              RowHeight="28"
-                              ColumnHeaderHeight="32"
-                              FontSize="13">
-                        <DataGrid.Resources>
-                            <Style TargetType="DataGridColumnHeader">
-                                <Setter Property="Background" Value="#243041" />
-                                <Setter Property="Foreground" Value="#F7FAFC" />
-                                <Setter Property="FontWeight" Value="SemiBold" />
-                                <Setter Property="BorderBrush" Value="#2A3542" />
-                                <Setter Property="BorderThickness" Value="0,0,1,1" />
-                                <Setter Property="Padding" Value="10,6" />
-                            </Style>
-                            <Style TargetType="DataGridCell">
-                                <Setter Property="Background" Value="Transparent" />
-                                <Setter Property="Foreground" Value="#F2F5F8" />
-                                <Setter Property="BorderThickness" Value="0" />
-                                <Setter Property="Padding" Value="8,4" />
-                                <Style.Triggers>
-                                    <Trigger Property="IsSelected" Value="True">
-                                        <Setter Property="Background" Value="#2B4C6F" />
-                                        <Setter Property="Foreground" Value="#FFFFFF" />
-                                    </Trigger>
-                                </Style.Triggers>
-                            </Style>
-                        </DataGrid.Resources>
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="日期" Binding="{Binding DateText}" Width="100" ElementStyle="{StaticResource BarsCellText}" />
-                            <DataGridTextColumn Header="开" Binding="{Binding Open, StringFormat={}{0:0.####}}" Width="70" ElementStyle="{StaticResource BarsCellText}" />
-                            <DataGridTextColumn Header="高" Binding="{Binding High, StringFormat={}{0:0.####}}" Width="70" ElementStyle="{StaticResource BarsCellText}" />
-                            <DataGridTextColumn Header="低" Binding="{Binding Low, StringFormat={}{0:0.####}}" Width="70" ElementStyle="{StaticResource BarsCellText}" />
-                            <DataGridTextColumn Header="收" Binding="{Binding Close, StringFormat={}{0:0.####}}" Width="70" ElementStyle="{StaticResource BarsCellText}" />
-                            <DataGridTextColumn Header="成交量" Binding="{Binding Volume, StringFormat={}{0:N0}}" Width="100" ElementStyle="{StaticResource BarsCellText}" />
-                        </DataGrid.Columns>
-                    </DataGrid>
-
-                    <TextBlock x:Name="ResearchStatusText"
-                               Grid.Row="6"
-                               TextWrapping="Wrap"
-                               Opacity="0.9"
-                               Margin="0,8,0,0"
-                               FontFamily="Consolas"
-                               FontSize="12" />
                 </Grid>
             </Border>
+
+            <!-- Pages host -->
+            <Grid Grid.Row="1" Margin="10">
+                <!-- ===== MARKET ===== -->
+                <Grid x:Name="PageMarket">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition x:Name="WatchColumn" Width="240" />
+                        <ColumnDefinition Width="8" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Watch / search -->
+                    <Border Grid.Column="0" Background="#1A222C" CornerRadius="10" Padding="10">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" MinHeight="120" />
+                                <RowDefinition Height="8" />
+                                <RowDefinition Height="*" MinHeight="100" />
+                            </Grid.RowDefinitions>
+                            <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                                <Button DockPanel.Dock="Right" Content="◁" Width="28" Padding="0,2"
+                                        ToolTip="折叠关注栏" Click="ToggleWatch_OnClick" />
+                                <TextBlock Text="关注" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <DockPanel Grid.Row="1">
+                                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+                                    <Button Content="+" Width="28" Padding="0,2" Margin="0,0,4,0" Click="AddWatchButton_OnClick" ToolTip="加入关注" />
+                                    <Button Content="−" Width="28" Padding="0,2" Margin="0,0,4,0" Click="RemoveWatchButton_OnClick" ToolTip="取消关注" />
+                                    <Button Content="同步" Padding="8,2" Click="SyncWatchCacheButton_OnClick" ToolTip="同步缓存" />
+                                </StackPanel>
+                                <ListBox x:Name="WatchList" Background="#12181F" Foreground="#E7ECF1" BorderThickness="0"
+                                         DisplayMemberPath="Display"
+                                         MouseDoubleClick="WatchList_OnMouseDoubleClick"
+                                         SelectionChanged="WatchList_OnSelectionChanged" />
+                            </DockPanel>
+                            <DockPanel Grid.Row="3">
+                                <TextBlock DockPanel.Dock="Top" Text="搜索" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                <TextBlock x:Name="MarketHintText" DockPanel.Dock="Top" Opacity="0.65" FontSize="10"
+                                           TextWrapping="Wrap" Margin="0,0,0,4" />
+                                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+                                    <TextBox x:Name="SearchBox" Width="140" Padding="4" KeyDown="SearchBox_OnKeyDown" />
+                                    <Button Content="搜" Margin="6,0,0,0" Padding="8,3" Click="SearchButton_OnClick" />
+                                </StackPanel>
+                                <ListBox x:Name="SymbolList" Background="#12181F" Foreground="#E7ECF1" BorderThickness="0"
+                                         DisplayMemberPath="Display"
+                                         SelectionChanged="SymbolList_OnSelectionChanged" />
+                            </DockPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Chart area -->
+                    <Border Grid.Column="2" Background="#1A222C" CornerRadius="10" Padding="10">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" MinHeight="360" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition x:Name="BarsRow" Height="0" />
+                            </Grid.RowDefinitions>
+
+                            <!-- Single-row tools -->
+                            <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button Content="明细" Style="{StaticResource ToolBtn}" Click="ToggleBars_OnClick" ToolTip="展开/收起K线表" />
+                                    <Button Content="关注+" Style="{StaticResource ToolBtn}" Click="AddWatchButton_OnClick" />
+                                    <Button Content="快照" Style="{StaticResource ToolBtn}" Click="ResearchButton_OnClick" />
+                                </StackPanel>
+                                <WrapPanel>
+                                    <TextBlock Text="工具" VerticalAlignment="Center" Opacity="0.75" Margin="0,0,6,0" />
+                                    <Button Content="十字" Style="{StaticResource ToolBtn}" Click="ChartModeCrosshair_OnClick" />
+                                    <Button Content="平移" Style="{StaticResource ToolBtn}" Click="ChartModePan_OnClick" />
+                                    <Button Content="趋势" Style="{StaticResource ToolBtn}" Click="ChartModeTrend_OnClick" />
+                                    <Button Content="水平" Style="{StaticResource ToolBtn}" Click="ChartModeHoriz_OnClick" />
+                                    <Button Content="点选买" Style="{StaticResource ToolBtn}" Click="ChartPickPlanBuy_OnClick" />
+                                    <Button Content="点选卖" Style="{StaticResource ToolBtn}" Click="ChartPickPlanSell_OnClick" />
+                                    <Button Content="清线" Style="{StaticResource ToolBtn}" Click="ChartClearDraw_OnClick" />
+                                    <Button Content="重置" Style="{StaticResource ToolBtn}" Click="ChartResetZoom_OnClick" />
+                                </WrapPanel>
+                            </DockPanel>
+
+                            <Border Grid.Row="1" Background="#0E141A" CornerRadius="6" BorderBrush="#2A3542" BorderThickness="1">
+                                <Grid>
+                                    <Canvas x:Name="ChartCanvas" ClipToBounds="True" Background="#0E141A"
+                                            SizeChanged="ChartCanvas_OnSizeChanged" />
+                                    <TextBlock x:Name="CrosshairLabel" VerticalAlignment="Top" HorizontalAlignment="Left"
+                                               Margin="8,6,8,0" FontFamily="Consolas" FontSize="11"
+                                               Foreground="#E8F0FF" Text="" IsHitTestVisible="False" />
+                                    <TextBlock x:Name="ChartPeriodHint" VerticalAlignment="Bottom" HorizontalAlignment="Left"
+                                               Margin="8,0,8,6" Opacity="0.7" FontSize="11"
+                                               Text="滚轮缩放 · 右键拖拽 · 点选买/卖" IsHitTestVisible="False" />
+                                </Grid>
+                            </Border>
+
+                            <TextBlock x:Name="ResearchStatusText" Grid.Row="2" FontFamily="Consolas" FontSize="11"
+                                       Opacity="0.8" TextWrapping="Wrap" Margin="0,6,0,0" MaxHeight="36" />
+
+                            <DataGrid x:Name="BarsGrid" Grid.Row="3"
+                                      AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                                      CanUserResizeRows="False" HeadersVisibility="Column"
+                                      GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#2A3542"
+                                      Background="#0E141A" Foreground="#F2F5F8" BorderThickness="0"
+                                      RowBackground="#0E141A" AlternatingRowBackground="#151C24"
+                                      RowHeight="26" ColumnHeaderHeight="28" FontSize="12" Margin="0,6,0,0">
+                                <DataGrid.Resources>
+                                    <Style TargetType="DataGridColumnHeader">
+                                        <Setter Property="Background" Value="#243041" />
+                                        <Setter Property="Foreground" Value="#F7FAFC" />
+                                        <Setter Property="Padding" Value="8,4" />
+                                    </Style>
+                                    <Style TargetType="DataGridCell">
+                                        <Setter Property="Foreground" Value="#F2F5F8" />
+                                        <Setter Property="BorderThickness" Value="0" />
+                                        <Style.Triggers>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter Property="Background" Value="#2B4C6F" />
+                                                <Setter Property="Foreground" Value="#FFFFFF" />
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.Resources>
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="日期" Binding="{Binding DateText}" Width="100" ElementStyle="{StaticResource BarsCellText}" />
+                                    <DataGridTextColumn Header="开" Binding="{Binding Open, StringFormat={}{0:0.####}}" Width="70" ElementStyle="{StaticResource BarsCellText}" />
+                                    <DataGridTextColumn Header="高" Binding="{Binding High, StringFormat={}{0:0.####}}" Width="70" ElementStyle="{StaticResource BarsCellText}" />
+                                    <DataGridTextColumn Header="低" Binding="{Binding Low, StringFormat={}{0:0.####}}" Width="70" ElementStyle="{StaticResource BarsCellText}" />
+                                    <DataGridTextColumn Header="收" Binding="{Binding Close, StringFormat={}{0:0.####}}" Width="70" ElementStyle="{StaticResource BarsCellText}" />
+                                    <DataGridTextColumn Header="量" Binding="{Binding Volume, StringFormat={}{0:N0}}" Width="90" ElementStyle="{StaticResource BarsCellText}" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <!-- ===== PLAN ===== -->
+                <Border x:Name="PagePlan" Background="#1A222C" CornerRadius="10" Visibility="Collapsed">
+                    <local:PricePlanView x:Name="PlanView" />
+                </Border>
+
+                <!-- ===== GRID ===== -->
+                <Border x:Name="PageGrid" Background="#1A222C" CornerRadius="10" Visibility="Collapsed">
+                    <local:GridView x:Name="GridViewControl" />
+                </Border>
+
+                <!-- ===== BACKTEST ===== -->
+                <Border x:Name="PageBacktest" Background="#1A222C" CornerRadius="10" Padding="16" Visibility="Collapsed">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel MaxWidth="520" HorizontalAlignment="Left">
+                            <TextBlock Text="MA 交叉回测" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <TextBlock TextWrapping="Wrap" Opacity="0.8" FontSize="12" Margin="0,0,0,14"
+                                       Text="使用顶部标的与日期区间。成本为研究用简化模型，非券商实盘费率。" />
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="200" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Text="快线 MA" VerticalAlignment="Center" Margin="0,0,0,8" />
+                                <TextBox x:Name="BtFastBox" Grid.Row="0" Grid.Column="1" Padding="6" Text="5" Margin="0,0,0,8" />
+                                <TextBlock Grid.Row="1" Text="慢线 MA" VerticalAlignment="Center" Margin="0,0,0,8" />
+                                <TextBox x:Name="BtSlowBox" Grid.Row="1" Grid.Column="1" Padding="6" Text="20" Margin="0,0,0,8" />
+                                <TextBlock Grid.Row="2" Text="佣金比例" VerticalAlignment="Center" Margin="0,0,0,8" />
+                                <TextBox x:Name="BtCommissionBox" Grid.Row="2" Grid.Column="1" Padding="6" Text="0.0003" Margin="0,0,0,8" />
+                                <TextBlock Grid.Row="3" Text="印花税(卖)" VerticalAlignment="Center" Margin="0,0,0,8" />
+                                <TextBox x:Name="BtStampBox" Grid.Row="3" Grid.Column="1" Padding="6" Text="0.0005" Margin="0,0,0,8" />
+                                <TextBlock Grid.Row="4" Text="滑点" VerticalAlignment="Center" Margin="0,0,0,8" />
+                                <TextBox x:Name="BtSlippageBox" Grid.Row="4" Grid.Column="1" Padding="6" Text="0.0005" Margin="0,0,0,8" />
+                                <TextBlock Grid.Row="5" Text="涨停幅度" VerticalAlignment="Center" Margin="0,0,0,8" />
+                                <TextBox x:Name="BtLimitUpBox" Grid.Row="5" Grid.Column="1" Padding="6" Text="0.10" Margin="0,0,0,8" />
+                                <TextBlock Grid.Row="6" Text="跌停幅度" VerticalAlignment="Center" Margin="0,0,0,8" />
+                                <TextBox x:Name="BtLimitDownBox" Grid.Row="6" Grid.Column="1" Padding="6" Text="0.10" Margin="0,0,0,8" />
+                                <CheckBox x:Name="BtEnforceLimitCheck" Grid.Row="7" Grid.ColumnSpan="2"
+                                          Content="启用涨跌停约束" IsChecked="True" Foreground="#E7ECF1" Margin="0,4,0,0" />
+                            </Grid>
+                            <Button Content="运行 MA 回测" Padding="14,8" HorizontalAlignment="Left" Click="MaBacktest_OnClick" />
+                            <TextBlock x:Name="BacktestHintText" Margin="0,12,0,0" Opacity="0.8" TextWrapping="Wrap"
+                                       Text="结果将打开权益曲线窗口。" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+
+                <!-- ===== COMPARE ===== -->
+                <Border x:Name="PageCompare" Background="#1A222C" CornerRadius="10" Padding="16" Visibility="Collapsed">
+                    <StackPanel>
+                        <TextBlock Text="多股对比" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                        <TextBlock TextWrapping="Wrap" Opacity="0.8" FontSize="12" Margin="0,0,0,12"
+                                   Text="使用关注列表前 4 只（不足时补当前标的），按顶部区间做归一化收盘价叠线对比。" />
+                        <Button Content="运行对比并打开叠线图" Padding="14,8" HorizontalAlignment="Left"
+                                Click="CompareWatch_OnClick" />
+                        <TextBlock x:Name="CompareHintText" Margin="0,12,0,0" Opacity="0.8" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== SYSTEM ===== -->
+                <Border x:Name="PageSystem" Background="#1A222C" CornerRadius="10" Padding="16" Visibility="Collapsed">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel MaxWidth="640">
+                            <TextBlock Text="系统" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <TextBlock x:Name="PhaseText" Opacity="0.8" TextWrapping="Wrap" Margin="0,0,0,12" />
+                            <TextBlock Text="分析核心" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <WrapPanel Margin="0,0,0,16">
+                                <Button Content="启动分析核心" Padding="12,6" Margin="0,0,8,8" Click="StartCoreButton_OnClick" />
+                                <Button Content="健康检查" Padding="12,6" Margin="0,0,8,8" Click="HealthButton_OnClick" />
+                                <Button Content="停止核心" Padding="12,6" Margin="0,0,8,8" Click="StopCoreButton_OnClick" />
+                            </WrapPanel>
+                            <TextBlock Text="数据与导出" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <WrapPanel Margin="0,0,0,16">
+                                <Button Content="数据源与密钥" Padding="12,6" Margin="0,0,8,8" Click="DataSourceButton_OnClick" />
+                                <Button Content="清理K线缓存" Padding="12,6" Margin="0,0,8,8" Click="ClearCacheButton_OnClick" />
+                                <Button Content="导出报告" Padding="12,6" Margin="0,0,8,8" Click="ExportReport_OnClick" />
+                                <Button Content="导出Parquet" Padding="12,6" Margin="0,0,8,8" Click="ExportParquet_OnClick" />
+                            </WrapPanel>
+                            <TextBlock x:Name="DisclaimerText" TextWrapping="Wrap" Opacity="0.75" Margin="0,8,0,0" />
+                            <TextBlock x:Name="VersionText" Opacity="0.55" FontSize="12" Margin="0,12,0,0" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+
+            <!-- Bottom status -->
+            <Border Grid.Row="2" Background="#12181F" BorderBrush="#1E2833" BorderThickness="0,1,0,0" Padding="12,8">
+                <TextBlock x:Name="StatusText" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" Opacity="0.95" />
+            </Border>
         </Grid>
-
-        <Border Grid.Row="4" Background="#1A222C" CornerRadius="10" Padding="12" Margin="0,10,0,0">
-            <StackPanel>
-                <TextBlock Text="运行状态" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,6" />
-                <TextBlock x:Name="StatusText" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" />
-                <TextBlock x:Name="DisclaimerText" TextWrapping="Wrap" Opacity="0.75" Margin="0,8,0,0" />
-            </StackPanel>
-        </Border>
-
-        <TextBlock x:Name="VersionText" Grid.Row="5" Margin="0,8,0,0" Opacity="0.55" FontSize="12" />
     </Grid>
 </Window>

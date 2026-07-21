@@ -63,7 +63,7 @@ class AnalyticsApp:
             "status": "ok",
             "product": PRODUCT_NAME,
             "version": __version__,
-            "phase": "P4.3.1",
+            "phase": "P5",
             "disclaimer": RESEARCH_DISCLAIMER,
             "live_trading_enabled": False,
             "grid_research_enabled": True,
