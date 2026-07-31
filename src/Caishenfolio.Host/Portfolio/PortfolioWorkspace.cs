@@ -27,29 +27,48 @@ public sealed record WorkspaceSnapshot
 /// Lives in the Host rather than the desktop layer so the wealth workflow is unit-testable
 /// without a window, and so the authority boundary keeps state on the Host side.
 /// </summary>
-public sealed class PortfolioWorkspace(
-    PortfolioStore store,
-    IMarketPricingSource? pricingSource = null,
-    string baseCurrency = Currencies.Cny)
+public sealed class PortfolioWorkspace
 {
-    public string BaseCurrency { get; } = Currencies.Normalize(baseCurrency);
+    private readonly PortfolioStore _store;
 
-    public PortfolioStore Store => store;
+    public PortfolioWorkspace(
+        PortfolioStore store,
+        IMarketPricingSource? pricingSource = null,
+        string? baseCurrency = null)
+    {
+        _store = store ?? throw new ArgumentNullException(nameof(store));
+        PricingSource = pricingSource;
+
+        // Stored preferences win; an explicit currency argument is an override for tests and tools.
+        Settings = _store.LoadSettings();
+        if (!string.IsNullOrWhiteSpace(baseCurrency))
+        {
+            Settings = Settings with { BaseCurrency = Currencies.Normalize(baseCurrency!) };
+        }
+    }
+
+    /// <summary>User preferences: base currency, concentration ceilings, target allocation.</summary>
+    public PortfolioSettings Settings { get; private set; }
+
+    public string BaseCurrency => Settings.BaseCurrency;
+
+    public PortfolioStore Store => _store;
 
     /// <summary>
     /// Where prices come from. Settable because the desktop opens the ledger before the
     /// Analytics Core is up — until then the ledger still works, holdings just stay unpriced.
     /// </summary>
-    public IMarketPricingSource? PricingSource { get; set; } = pricingSource;
-
-    /// <summary>Concentration ceilings the user considers worth flagging.</summary>
-    public RiskThresholds Thresholds { get; set; } = RiskThresholds.Default;
-
-    /// <summary>Optional target weights per asset class; drift from them is reported as arithmetic.</summary>
-    public IReadOnlyDictionary<string, decimal>? TargetAssetAllocation { get; set; }
+    public IMarketPricingSource? PricingSource { get; set; }
 
     /// <summary>Planned buy/sell levels from the research side, used to raise price alerts.</summary>
     public MarketData.PricePlanStore? PlanStore { get; set; }
+
+    /// <summary>Validates, persists, and adopts new preferences. Throws rather than storing junk.</summary>
+    public PortfolioSettings ApplySettings(PortfolioSettings settings)
+    {
+        Settings = _store.SaveSettings(settings);
+        return Settings;
+    }
 
     /// <summary>Values the ledger as of <paramref name="asOf"/>, fetching prices when a source exists.</summary>
     public async Task<WorkspaceSnapshot> RefreshAsync(
@@ -57,10 +76,10 @@ public sealed class PortfolioWorkspace(
         CancellationToken cancellationToken = default)
     {
         var date = asOf ?? DateOnly.FromDateTime(DateTime.Today);
-        var transactions = store.ListTransactions();
+        var transactions = _store.ListTransactions();
         var state = PositionCalculator.Replay(transactions);
-        var accounts = store.ListAccounts(includeArchived: true);
-        var instruments = store.ListInstruments();
+        var accounts = _store.ListAccounts(includeArchived: true);
+        var instruments = _store.ListInstruments();
 
         var warnings = new List<string>();
         IReadOnlyDictionary<string, PriceQuote> quotes;
@@ -71,11 +90,11 @@ public sealed class PortfolioWorkspace(
         {
             // Offline: value with whatever rates were snapshotted; every holding stays unpriced.
             quotes = new Dictionary<string, PriceQuote>(StringComparer.Ordinal);
-            fx = store.CreateFxConverter(date);
+            fx = _store.CreateFxConverter(date);
         }
         else
         {
-            var pricing = await new PortfolioPricingService(source, store)
+            var pricing = await new PortfolioPricingService(source, _store)
                 .FetchAsync(state, BaseCurrency, date, cancellationToken)
                 .ConfigureAwait(false);
             quotes = pricing.Quotes;
@@ -95,14 +114,14 @@ public sealed class PortfolioWorkspace(
         // Record the point before analysing, so today's value is part of the curve it reads.
         if (transactions.Count > 0)
         {
-            store.SaveValuationSnapshot(valuation);
+            _store.SaveValuationSnapshot(valuation);
         }
 
         var risk = PortfolioRiskAnalyzer.Analyze(
             valuation,
-            Thresholds,
-            store.ListValuationHistory(BaseCurrency),
-            TargetAssetAllocation);
+            Settings.Thresholds,
+            _store.ListValuationHistory(BaseCurrency),
+            Settings.TargetAssetAllocation);
 
         var alerts = PortfolioAlertEvaluator.Evaluate(valuation, PlannedLevels(), risk, asOf: date);
 
@@ -123,7 +142,7 @@ public sealed class PortfolioWorkspace(
     }
 
     public Account AddAccount(string name, AccountKind kind, string mainCurrency, string broker = "") =>
-        store.SaveAccount(Account.Create(name, kind, mainCurrency, broker));
+        _store.SaveAccount(Account.Create(name, kind, mainCurrency, broker));
 
     /// <summary>
     /// Records a transaction and remembers the instrument, so allocation grouping has metadata
@@ -132,7 +151,7 @@ public sealed class PortfolioWorkspace(
     public LedgerTransaction Record(LedgerTransaction transaction, string? instrumentName = null)
     {
         ArgumentNullException.ThrowIfNull(transaction);
-        store.AddTransaction(transaction);
+        _store.AddTransaction(transaction);
         EnsureInstrument(transaction.Symbol, instrumentName, transaction.Currency);
         return transaction;
     }
@@ -141,13 +160,13 @@ public sealed class PortfolioWorkspace(
         TransactionCsvImporter.Preview(
             csvText,
             defaultAccountId,
-            store,
+            _store,
             BaseCurrency,
-            store.ListAccounts(includeArchived: true).ToDictionary(a => a.Name, a => a.Id, StringComparer.Ordinal));
+            _store.ListAccounts(includeArchived: true).ToDictionary(a => a.Name, a => a.Id, StringComparer.Ordinal));
 
     public int CommitImport(CsvImportPreview preview, bool skipInvalidRows = false)
     {
-        var written = TransactionCsvImporter.Commit(preview, store, skipInvalidRows);
+        var written = TransactionCsvImporter.Commit(preview, _store, skipInvalidRows);
         foreach (var symbol in preview.Transactions
                      .Where(t => !string.IsNullOrEmpty(t.Symbol))
                      .Select(t => (t.Symbol, t.Currency))
@@ -176,11 +195,11 @@ public sealed class PortfolioWorkspace(
 
     /// <summary>Pulls the pre-ledger fill journal in; safe to call repeatedly.</summary>
     public LegacyImportResult ImportLegacyFills(MarketData.PricePlanStore plans, string accountId) =>
-        LegacyFillImporter.Import(plans, store, accountId, BaseCurrency);
+        LegacyFillImporter.Import(plans, _store, accountId, BaseCurrency);
 
     private void EnsureInstrument(string symbol, string? name, string currency)
     {
-        if (string.IsNullOrEmpty(symbol) || store.GetInstrument(symbol) is not null)
+        if (string.IsNullOrEmpty(symbol) || _store.GetInstrument(symbol) is not null)
         {
             return;
         }
@@ -195,7 +214,7 @@ public sealed class PortfolioWorkspace(
             ? venue.DefaultAssetClass
             : AssetClass.Equity;
 
-        store.SaveInstrument(Instrument.FromSymbol(
+        _store.SaveInstrument(Instrument.FromSymbol(
             parsed.Value,
             string.IsNullOrWhiteSpace(name) ? parsed.Code : name!,
             assetClass,

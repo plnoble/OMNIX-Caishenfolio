@@ -11,7 +11,7 @@ namespace Caishenfolio.Host.Portfolio;
 public sealed class PortfolioStore : IDisposable
 {
     /// <summary>Bump when the schema changes and add the matching step in <see cref="Migrate"/>.</summary>
-    public const int SchemaVersion = 3;
+    public const int SchemaVersion = 4;
 
     private readonly string _connectionString;
     private readonly object _gate = new();
@@ -417,6 +417,68 @@ public sealed class PortfolioStore : IDisposable
     public FxConverter CreateFxConverter(DateOnly? asOf = null, string pivot = Currencies.Usd) =>
         new(ListFxRates(asOf), pivot);
 
+    // --- settings ------------------------------------------------------------------
+
+    /// <summary>Stored preferences, falling back to defaults for anything never set.</summary>
+    public PortfolioSettings LoadSettings()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT key, value FROM settings;";
+            using var reader = command.ExecuteReader();
+            var values = new Dictionary<string, string>(StringComparer.Ordinal);
+            while (reader.Read())
+            {
+                values[reader.GetString(0)] = reader.GetString(1);
+            }
+
+            return PortfolioSettings.FromKeyValues(values);
+        }
+    }
+
+    /// <summary>
+    /// Validates and stores preferences. Target rows are replaced wholesale, so removing an
+    /// asset class from the target mix actually removes it instead of leaving a stale weight.
+    /// </summary>
+    public PortfolioSettings SaveSettings(PortfolioSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var validated = settings.Validated();
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+
+            using (var clear = connection.CreateCommand())
+            {
+                clear.Transaction = tx;
+                clear.CommandText = "DELETE FROM settings WHERE key LIKE $prefix;";
+                clear.Parameters.AddWithValue("$prefix", PortfolioSettings.TargetPrefix + "%");
+                clear.ExecuteNonQuery();
+            }
+
+            foreach (var (key, value) in validated.ToKeyValues())
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = tx;
+                command.CommandText = """
+                    INSERT INTO settings (key, value) VALUES ($key, $value)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+                    """;
+                command.Parameters.AddWithValue("$key", key);
+                command.Parameters.AddWithValue("$value", value);
+                command.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
+
+        return validated;
+    }
+
     // --- valuation history ---------------------------------------------------------
 
     /// <summary>
@@ -595,6 +657,18 @@ public sealed class PortfolioStore : IDisposable
                     cost_basis TEXT NOT NULL DEFAULT '0',
                     complete INTEGER NOT NULL DEFAULT 1,
                     PRIMARY KEY (as_of, base_currency)
+                );
+                """);
+        }
+
+        if (current < 4)
+        {
+            // Key/value rather than columns: preferences grow (new thresholds, new asset classes
+            // in the target mix) and a schema migration per preference is not worth it.
+            Execute(connection, tx, """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
                 );
                 """);
         }

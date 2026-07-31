@@ -57,6 +57,66 @@ function Add-Step([string]$name, [string]$status, [string]$detail = "") {
     Write-Host ("  [{0,-7}] {1} {2}" -f $status, $name, $detail) -ForegroundColor $colour
 }
 
+function Invoke-DialogCheck {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][string]$ButtonName,
+        [Parameter(Mandatory = $true)][string]$ExpectedTitle
+    )
+
+    try {
+        Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes -ErrorAction Stop
+    }
+    catch {
+        Add-Step "open dialog: $ExpectedTitle" "skipped" "UIAutomation 不可用"
+        return
+    }
+
+    $automation = [System.Windows.Automation.AutomationElement]
+    $root = $automation::RootElement
+    $byPid = New-Object System.Windows.Automation.PropertyCondition(
+        $automation::ProcessIdProperty, $ProcessId)
+    $main = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $byPid)
+    if (-not $main) {
+        Add-Step "open dialog: $ExpectedTitle" "skipped" "未找到主窗口自动化节点"
+        return
+    }
+
+    $byName = New-Object System.Windows.Automation.PropertyCondition(
+        $automation::NameProperty, $ButtonName)
+    $button = $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $byName)
+    if (-not $button) {
+        throw "界面上找不到「$ButtonName」按钮。"
+    }
+
+    $invoke = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+    $invoke.Invoke()
+
+    $deadline = (Get-Date).AddSeconds(20)
+    $dialog = $null
+    while ((Get-Date) -lt $deadline) {
+        $byTitle = New-Object System.Windows.Automation.PropertyCondition(
+            $automation::NameProperty, $ExpectedTitle)
+        $dialog = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $byTitle)
+        if ($dialog) { break }
+        Start-Sleep -Milliseconds 400
+    }
+
+    if (-not $dialog) {
+        throw "点击「$ButtonName」后没有出现「$ExpectedTitle」窗口（XAML 可能加载失败）。"
+    }
+    Add-Step "open dialog: $ExpectedTitle" "passed" "已加载并关闭"
+
+    # Close it again so the rest of the run sees a normal main window.
+    $closeCondition = New-Object System.Windows.Automation.PropertyCondition(
+        $automation::NameProperty, "取消")
+    $cancel = $dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $closeCondition)
+    if ($cancel) {
+        $cancel.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    }
+    Start-Sleep -Milliseconds 600
+}
+
 $reportFull = Resolve-InWorkspace $ReportPath
 $reportDir = Split-Path -Parent $reportFull
 if (-not (Test-Path $reportDir)) { New-Item -ItemType Directory -Path $reportDir -Force | Out-Null }
@@ -137,6 +197,15 @@ try {
         throw "窗口出现后应用退出。日志：$stderrLog"
     }
     Add-Step "still running" "passed" "pid=$($appProcess.Id)"
+
+    # A dialog's BAML is only parsed when it is shown, so opening it is the only way to catch a
+    # XAML break in a window the main view never loads.
+    Invoke-DialogCheck -ProcessId $appProcess.Id -ButtonName "设置" -ExpectedTitle "理财偏好设置"
+
+    $appProcess.Refresh()
+    if ($appProcess.HasExited) {
+        throw "打开设置窗口后应用退出。日志：$stderrLog"
+    }
 }
 catch {
     $failure = $_.Exception.Message

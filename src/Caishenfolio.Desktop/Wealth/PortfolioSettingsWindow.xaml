@@ -1,0 +1,122 @@
+<Window x:Class="Caishenfolio.Desktop.Wealth.PortfolioSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="理财偏好设置"
+        Height="640" Width="560"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        Background="{StaticResource BrushBgApp}"
+        Foreground="{StaticResource BrushFgPrimary}">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <!-- Base currency -->
+                <TextBlock Text="本位币" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="所有账户的资产会折算成这个货币汇总。改变它会新开一条估值曲线（历史按货币分开保存）。"
+                           TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12" Margin="0,0,0,6" />
+                <ComboBox x:Name="BaseCurrencyCombo" Width="120" HorizontalAlignment="Left" Margin="0,0,0,18">
+                    <ComboBoxItem Content="CNY" />
+                    <ComboBoxItem Content="HKD" />
+                    <ComboBoxItem Content="USD" />
+                    <ComboBoxItem Content="JPY" />
+                </ComboBox>
+
+                <!-- Thresholds -->
+                <TextBlock Text="集中度上限" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="超过这些比例时会在总览页提醒。这些是你自己的偏好，不是投资建议。"
+                           TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12" Margin="0,0,0,8" />
+                <Grid Margin="0,0,0,18">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="130" />
+                        <ColumnDefinition Width="90" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="单一持仓" VerticalAlignment="Center" Margin="0,4" />
+                    <TextBox Grid.Row="0" Grid.Column="1" x:Name="SinglePositionBox" Margin="0,4" />
+                    <TextBlock Grid.Row="0" Grid.Column="2" Text="%  单个标的占总资产" VerticalAlignment="Center"
+                               Foreground="{StaticResource BrushFgMuted}" Margin="6,4" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="单一品种" VerticalAlignment="Center" Margin="0,4" />
+                    <TextBox Grid.Row="1" Grid.Column="1" x:Name="AssetClassBox" Margin="0,4" />
+                    <TextBlock Grid.Row="1" Grid.Column="2" Text="%  股票 / ETF / 债券 等" VerticalAlignment="Center"
+                               Foreground="{StaticResource BrushFgMuted}" Margin="6,4" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="单一市场" VerticalAlignment="Center" Margin="0,4" />
+                    <TextBox Grid.Row="2" Grid.Column="1" x:Name="RegionBox" Margin="0,4" />
+                    <TextBlock Grid.Row="2" Grid.Column="2" Text="%  A股 / 港股 / 美股 / 日股" VerticalAlignment="Center"
+                               Foreground="{StaticResource BrushFgMuted}" Margin="6,4" />
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="单一货币" VerticalAlignment="Center" Margin="0,4" />
+                    <TextBox Grid.Row="3" Grid.Column="1" x:Name="CurrencyBox" Margin="0,4" />
+                    <TextBlock Grid.Row="3" Grid.Column="2" Text="%  含该货币的现金与持仓" VerticalAlignment="Center"
+                               Foreground="{StaticResource BrushFgMuted}" Margin="6,4" />
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" Text="现金" VerticalAlignment="Center" Margin="0,4" />
+                    <TextBox Grid.Row="4" Grid.Column="1" x:Name="CashBox" Margin="0,4" />
+                    <TextBlock Grid.Row="4" Grid.Column="2" Text="%  闲置现金占比" VerticalAlignment="Center"
+                               Foreground="{StaticResource BrushFgMuted}" Margin="6,4" />
+                </Grid>
+
+                <!-- Target allocation -->
+                <TextBlock Text="目标配置" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="填写你自己的目标比例，总览页会算出与当前配置的差额金额。要么全部留空，要么合计正好 100%。"
+                           TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12" Margin="0,0,0,8" />
+                <ItemsControl x:Name="TargetList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,3">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="130" />
+                                    <ColumnDefinition Width="90" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{Binding Label}" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" Text="{Binding Percent, UpdateSourceTrigger=PropertyChanged}"
+                                         TextChanged="TargetBox_OnTextChanged" />
+                                <TextBlock Grid.Column="2" Text="%" VerticalAlignment="Center"
+                                           Foreground="{StaticResource BrushFgMuted}" Margin="6,0" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock x:Name="TargetTotalText" Margin="0,8,0,18" FontWeight="SemiBold" Text="合计 0%" />
+
+                <!-- Legacy import -->
+                <TextBlock Text="导入旧版成交台账" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="把 P4.3 时期记在「计划」页的真实成交搬进账本。可重复点击，已导入的不会重复。"
+                           TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12" Margin="0,0,0,8" />
+                <StackPanel Orientation="Horizontal">
+                    <ComboBox x:Name="LegacyAccountCombo" Width="180" Margin="0,0,8,0"
+                              DisplayMemberPath="Name" SelectedValuePath="Id" />
+                    <Button Content="导入到该账户" Padding="12,4" Click="ImportLegacyButton_OnClick" />
+                </StackPanel>
+                <TextBlock x:Name="LegacyStatusText" TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}"
+                           FontSize="12" Margin="0,8,0,0" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Footer -->
+        <DockPanel Grid.Row="1" Margin="0,14,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Content="取消" Padding="16,6" Margin="0,0,8,0" Click="CancelButton_OnClick" />
+                <Button Content="保存" Padding="16,6" Click="SaveButton_OnClick"
+                        Background="#1F6B4A" BorderBrush="#2F9A6A" />
+            </StackPanel>
+            <TextBlock x:Name="ErrorText" TextWrapping="Wrap" VerticalAlignment="Center"
+                       Foreground="{StaticResource BrushDanger}" />
+        </DockPanel>
+    </Grid>
+</Window>

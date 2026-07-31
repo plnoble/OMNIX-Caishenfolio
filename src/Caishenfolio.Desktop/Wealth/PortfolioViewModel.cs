@@ -46,6 +46,10 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
     /// <summary>Attaches (or clears) the price feed once the Analytics Core comes up.</summary>
     public void UsePricingSource(IMarketPricingSource? source) => _workspace.PricingSource = source;
 
+    /// <summary>Preference dialog, bound to the same workspace so a save takes effect immediately.</summary>
+    public PortfolioSettingsWindow CreateSettingsWindow() =>
+        new(_workspace, _workspace.PlanStore);
+
     public string StatusText { get => _statusText; private set => Set(ref _statusText, value); }
     public string TotalValueText { get => _totalValueText; private set => Set(ref _totalValueText, value); }
     public string TotalPnlText { get => _totalPnlText; private set => Set(ref _totalPnlText, value); }

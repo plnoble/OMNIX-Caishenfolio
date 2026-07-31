@@ -12,8 +12,11 @@
 
         <!-- Header -->
         <DockPanel Grid.Row="0" Margin="0,0,0,12">
-            <Button DockPanel.Dock="Right" x:Name="RefreshButton" Content="刷新估值" Padding="14,6"
-                    Click="RefreshButton_OnClick" />
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="SettingsButton" Content="设置" Padding="14,6" Margin="0,0,8,0"
+                        Click="SettingsButton_OnClick" ToolTip="本位币 / 集中度上限 / 目标配置 / 导入旧台账" />
+                <Button x:Name="RefreshButton" Content="刷新估值" Padding="14,6" Click="RefreshButton_OnClick" />
+            </StackPanel>
             <StackPanel>
                 <TextBlock Text="资产总览" FontSize="18" FontWeight="SemiBold"
                            Foreground="{StaticResource BrushAccent}" />

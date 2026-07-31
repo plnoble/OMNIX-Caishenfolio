@@ -11,14 +11,15 @@
   应用内更新检查（GitHub Releases）、CI / Release 工作流
 - **A1~A4**（移植自归档 FinWorkbench）：Python 运行时自动供给（uv/venv + 依赖哈希）、
   UI 启动冒烟脚本、组合风险指标（集中度/回撤/配置偏离）、价格提醒
+- **S1~S2**：偏好设置持久化（schema v4 `settings`）与设置窗口（本位币/阈值/目标配置/导入旧台账）
 
 ## 验证
 
 ```powershell
-dotnet build Caishenfolio.slnx; if ($?) { dotnet test Caishenfolio.slnx }   # 236 通过
+dotnet build Caishenfolio.slnx; if ($?) { dotnet test Caishenfolio.slnx }   # 249 通过
 $env:PYTHONPATH="$PWD\python"; $env:CAISHENFOLIO_MARKET_PROVIDER="fixture"
 python -m unittest discover -s tests/python -p "test_*.py"                  # 82 通过
-scripts\ui_smoke.ps1                                                        # XAML 改动必跑
+scripts\ui_smoke.ps1                             # XAML 改动必跑；含设置窗口加载检查
 dotnet build packaging\windows\Omnix.Installer.wixproj -c Release           # 出 MSI
 ```
 
@@ -27,6 +28,6 @@ dotnet build packaging\windows\Omnix.Installer.wixproj -c Release           # �
 - 旧研究页（1225 行 code-behind）未 MVVM 化
 - akshare 债券 / 汇率接口未联网验证
 - `release_bundle.ps1`（manifest + checksums + 分步报告）未移植，当前由 release.yml 简化承担
-- 目标配置（再平衡基准）目前只能由代码传入，尚无界面设置入口
+- 净值曲线尚无图表展示（数据已存在 `valuation_snapshots`，只用于算回撤）
 
 - GitHub: https://github.com/plnoble/OMNIX-Caishenfolio

@@ -75,7 +75,9 @@ public class PortfolioRiskAnalyzerTests
 
         var report = PortfolioRiskAnalyzer.Analyze(valuation);
 
-        var cash = report.Findings.First(f => f.Label == "现金");
+        // Reported once, under 品种 — not again under 市场 for the same balance.
+        var cash = Assert.Single(report.Findings, f => f.Label == "现金");
+        Assert.Equal("品种", cash.Dimension);
         Assert.Equal(0.9m, cash.Weight);
         Assert.Equal(0.40m, cash.Threshold);
         Assert.Contains("现金占", cash.Message);

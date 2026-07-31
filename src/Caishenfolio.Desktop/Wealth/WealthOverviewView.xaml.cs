@@ -62,4 +62,22 @@ public partial class WealthOverviewView : UserControl
             await _model.RefreshAsync().ConfigureAwait(true);
         }
     }
+
+    private async void SettingsButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_model is null)
+        {
+            return;
+        }
+
+        var dialog = _model.CreateSettingsWindow();
+        dialog.Owner = Window.GetWindow(this);
+        dialog.ShowDialog();
+
+        // Base currency, thresholds and targets all change what a valuation says, so re-run it.
+        if (dialog.Saved)
+        {
+            await _model.RefreshAsync().ConfigureAwait(true);
+        }
+    }
 }

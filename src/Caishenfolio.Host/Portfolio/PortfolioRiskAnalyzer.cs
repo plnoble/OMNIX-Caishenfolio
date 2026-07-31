@@ -107,8 +107,10 @@ public static class PortfolioRiskAnalyzer
             });
         }
 
+        // Cash is evaluated once, under 品种. It also appears in the region slices, and reporting
+        // the same idle balance under two headings is noise rather than information.
         AddSliceFindings(findings, "品种", valuation.ByAssetClass, limits.AssetClass, limits.Cash);
-        AddSliceFindings(findings, "市场", valuation.ByRegion, limits.Region, null);
+        AddSliceFindings(findings, "市场", valuation.ByRegion, limits.Region, null, skipCash: true);
         AddSliceFindings(findings, "货币", valuation.ByCurrency, limits.Currency, null);
 
         var drawdown = MaxDrawdown(equityCurve);
@@ -174,11 +176,17 @@ public static class PortfolioRiskAnalyzer
         string dimension,
         IReadOnlyList<AllocationSlice> slices,
         decimal threshold,
-        decimal? cashThreshold)
+        decimal? cashThreshold,
+        bool skipCash = false)
     {
         foreach (var slice in slices)
         {
             var isCash = slice.Key == "cash";
+            if (isCash && skipCash)
+            {
+                continue;
+            }
+
             var limit = isCash && cashThreshold is not null ? cashThreshold.Value : threshold;
             if (slice.Weight <= limit)
             {
