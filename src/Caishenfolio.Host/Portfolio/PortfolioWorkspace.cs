@@ -14,6 +14,8 @@ public sealed record WorkspaceSnapshot
     public required IReadOnlyList<CashBalance> CashBalances { get; init; }
     /// <summary>Money-weighted return, or null when the flows cannot support one.</summary>
     public double? Xirr { get; init; }
+    public required PortfolioRiskReport Risk { get; init; }
+    public required IReadOnlyList<PortfolioAlert> Alerts { get; init; }
     public required IReadOnlyList<string> Warnings { get; init; }
 
     public bool IsEmpty => Transactions.Count == 0;
@@ -39,6 +41,15 @@ public sealed class PortfolioWorkspace(
     /// Analytics Core is up — until then the ledger still works, holdings just stay unpriced.
     /// </summary>
     public IMarketPricingSource? PricingSource { get; set; } = pricingSource;
+
+    /// <summary>Concentration ceilings the user considers worth flagging.</summary>
+    public RiskThresholds Thresholds { get; set; } = RiskThresholds.Default;
+
+    /// <summary>Optional target weights per asset class; drift from them is reported as arithmetic.</summary>
+    public IReadOnlyDictionary<string, decimal>? TargetAssetAllocation { get; set; }
+
+    /// <summary>Planned buy/sell levels from the research side, used to raise price alerts.</summary>
+    public MarketData.PricePlanStore? PlanStore { get; set; }
 
     /// <summary>Values the ledger as of <paramref name="asOf"/>, fetching prices when a source exists.</summary>
     public async Task<WorkspaceSnapshot> RefreshAsync(
@@ -81,6 +92,20 @@ public sealed class PortfolioWorkspace(
             instruments.ToDictionary(i => i.Symbol, StringComparer.Ordinal),
             accounts.ToDictionary(a => a.Id, StringComparer.Ordinal));
 
+        // Record the point before analysing, so today's value is part of the curve it reads.
+        if (transactions.Count > 0)
+        {
+            store.SaveValuationSnapshot(valuation);
+        }
+
+        var risk = PortfolioRiskAnalyzer.Analyze(
+            valuation,
+            Thresholds,
+            store.ListValuationHistory(BaseCurrency),
+            TargetAssetAllocation);
+
+        var alerts = PortfolioAlertEvaluator.Evaluate(valuation, PlannedLevels(), risk, asOf: date);
+
         return new WorkspaceSnapshot
         {
             AsOf = date,
@@ -91,6 +116,8 @@ public sealed class PortfolioWorkspace(
             Transactions = transactions,
             CashBalances = state.CashBalances,
             Xirr = TryXirr(state, valuation, date),
+            Risk = risk,
+            Alerts = alerts,
             Warnings = warnings.Concat(valuation.Warnings).Distinct(StringComparer.Ordinal).ToArray(),
         };
     }
@@ -173,6 +200,24 @@ public sealed class PortfolioWorkspace(
             string.IsNullOrWhiteSpace(name) ? parsed.Code : name!,
             assetClass,
             currency));
+    }
+
+    private IReadOnlyList<MarketData.PlannedPriceLevel> PlannedLevels()
+    {
+        if (PlanStore is null)
+        {
+            return [];
+        }
+
+        try
+        {
+            return PlanStore.Load().Levels.Where(level => level.Active).ToArray();
+        }
+        catch (IOException)
+        {
+            // A missing or unreadable plan file must not block a valuation.
+            return [];
+        }
     }
 
     private double? TryXirr(LedgerState state, PortfolioValuation valuation, DateOnly asOf)

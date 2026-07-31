@@ -149,3 +149,21 @@
   `release.yml`（打 tag：先校验 tag 与 VERSION 一致，再测试、构建 MSI、算 SHA256、建**草稿** Release）。
 - 新增 `docs/RELEASE.md`。
 - 验证：C# 183 → 206 全过；Python 82 全过；MSI 构建成功并核对包内版本号。
+
+## 2026-07-31 - A1~A4 归档资产移植
+
+- **A1 Python 运行时自动供给**：`PythonRuntimeProvisioner`（移植自归档 FinWorkbench）。
+  用 uv 在 State root 下建独立 venv，按 `pyproject.toml` 哈希打标记判断依赖是否过期——
+  依赖只在清单变化时重装，不是每次启动都装。**安装失败不写标记**，半成品环境下次会被识别为过期而不是就绪。
+  无 uv 时降级到系统 Python，两者都没有时明确报错而不是抛异常。修掉了原先「往 PATH 上随便哪个 python 装包」的问题。
+- **A2 UI 启动冒烟**：`scripts/ui_smoke.ps1`。启动应用、等窗口标题、检查 stderr 有无未处理异常、
+  校验标题里的版本与 VERSION 一致、再等 5 秒确认没有延迟崩溃，写 JSON 报告后关闭。
+  把上次踩的 XAML 坑变成可执行门禁（BAML 运行时才加载，构建期看不出）。
+- **A3 组合风险指标**：`PortfolioRiskAnalyzer`。按 Money/decimal 重写，不抄旧代码（旧版用 float 存钱）。
+  单一持仓/品种/市场/货币/现金五类集中度上限（阈值可配）、历史最大回撤（含峰谷日期）、
+  相对用户自设目标配置的偏离金额。**只陈述「你设的阈值被突破了多少」，不含任何买卖建议**，有测试守住这条线。
+  新增 schema v3 `valuation_snapshots`：每次刷新记一个点（按日期 upsert），没有这条曲线就算不出回撤。
+- **A4 价格提醒**：`PortfolioAlertEvaluator`。复用研究侧已有的计划买/卖价位——图上画的线，
+  在持有该标的时会在理财侧变成提醒。另含价格过旧、未定价持仓、集中度提醒。警告排在提示前面。
+- 总览页新增「历史最大回撤」KPI 与右侧提醒栏。
+- 验证：C# 213 → 236 全过；`dotnet build` 成功；**UI 冒烟通过**（覆盖新增的提醒面板 XAML）。

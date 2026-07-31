@@ -1,14 +1,32 @@
 # Current Development
 
 - Project: **OMNIX-Caishenfolio**
-- Status: **R0~R5 完成 (v0.10.0)** — 已重构为个人多市场多资产理财软件，账本与研究双主线
+- Status: **R0~R5 + V1~V4 + A1~A4 完成 (v0.10.0 / R5)** — 个人多市场多资产理财软件，已产品化
 - 覆盖: A股 / 港股 / 美股 / 日股；股票 / ETF / 场外基金 / 债券 / 可转债 / 外汇 / 现金
-- **R0** 数据语义：`MarketRegion` 与 `AssetClass` 分离、`Money`(decimal)、交易所注册表、CN 代码分类
-- **R1** 账本内核：账户/标的/13 种流水/移动加权平均成本、SQLite 版本化迁移、旧成交台账迁入
-- **R2** 估值与收益：多币种折算（三角换算）、未定价 fail-closed、XIRR/Modified Dietz/TWR、资产配置
-- **R3** 行情通道：quote / nav / fx 三通道，日股 TSE、场外基金净值、可转债与债券、汇率
-- **R4** 桌面双主线：左栏「我的资产（总览/持仓/账本）」+「研究（行情/计划/网格/回测/对比）」+ 系统
-- **R5** CSV 导入导出：预览校验后提交、按内容哈希幂等、报表导出
-- 验证: `dotnet build` 0 错 0 警；C# 183 测试全过；Python 82 测试全过；桌面启动冒烟通过
-- 未做: 旧研究页 code-behind 未 MVVM 化；akshare 债券/汇率接口未联网验证；安装包仍推迟
+
+## 已交付
+
+- **R0~R5**：数据语义 → 账本内核 → 估值与收益 → 行情通道 → 桌面双主线 → CSV 导入导出
+- **V1~V4**：版本号单一来源（`VERSION` / `PHASE` + 漂移守护测试）、WiX MSI 打包、
+  应用内更新检查（GitHub Releases）、CI / Release 工作流
+- **A1~A4**（移植自归档 FinWorkbench）：Python 运行时自动供给（uv/venv + 依赖哈希）、
+  UI 启动冒烟脚本、组合风险指标（集中度/回撤/配置偏离）、价格提醒
+
+## 验证
+
+```powershell
+dotnet build Caishenfolio.slnx; if ($?) { dotnet test Caishenfolio.slnx }   # 236 通过
+$env:PYTHONPATH="$PWD\python"; $env:CAISHENFOLIO_MARKET_PROVIDER="fixture"
+python -m unittest discover -s tests/python -p "test_*.py"                  # 82 通过
+scripts\ui_smoke.ps1                                                        # XAML 改动必跑
+dotnet build packaging\windows\Omnix.Installer.wixproj -c Release           # 出 MSI
+```
+
+## 未做
+
+- 旧研究页（1225 行 code-behind）未 MVVM 化
+- akshare 债券 / 汇率接口未联网验证
+- `release_bundle.ps1`（manifest + checksums + 分步报告）未移植，当前由 release.yml 简化承担
+- 目标配置（再平衡基准）目前只能由代码传入，尚无界面设置入口
+
 - GitHub: https://github.com/plnoble/OMNIX-Caishenfolio

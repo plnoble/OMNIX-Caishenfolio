@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private readonly PricePlanStore _pricePlan;
     private readonly PortfolioStore _portfolio;
     private readonly PortfolioViewModel _portfolioModel;
+    private readonly PythonRuntimeProvisioner _pythonRuntime;
     private AnalyticsCoreClient? _client;
     private IReadOnlyList<MarketBarDto> _lastBars = Array.Empty<MarketBarDto>();
     private string _lastName = "";
@@ -63,10 +64,17 @@ public partial class MainWindow : Window
         _watchlist = new WatchlistStore(_pathRoots.GetRoot(PathRootKind.State));
         _pricePlan = new PricePlanStore(_pathRoots.GetRoot(PathRootKind.State));
         _portfolio = PortfolioStore.UnderStateRoot(_pathRoots.GetRoot(PathRootKind.State));
+        _pythonRuntime = new PythonRuntimeProvisioner(new PythonRuntimeOptions
+        {
+            StateRoot = _pathRoots.GetRoot(PathRootKind.State),
+            PythonProjectDirectory = Path.Combine(FindRepoRoot(), "python"),
+        });
 
         // The pricing source is attached once the Analytics Core is up; until then the ledger
         // still opens and values cash, with holdings shown as "缺价格" rather than as zero.
-        _portfolioModel = new PortfolioViewModel(new PortfolioWorkspace(_portfolio));
+        // The research side's planned buy/sell levels feed the wealth side's price alerts.
+        var workspace = new PortfolioWorkspace(_portfolio) { PlanStore = _pricePlan };
+        _portfolioModel = new PortfolioViewModel(workspace);
         var artifactRoot = _pathRoots.GetRoot(PathRootKind.Artifact);
         OverviewView.Bind(_portfolioModel);
         HoldingsPage.Bind(_portfolioModel);
@@ -298,20 +306,37 @@ public partial class MainWindow : Window
             }
 
             var prefix = auto ? "启动时自动" : "";
-            StatusText.Text = $"{prefix}准备中：检测/安装 Python 行情依赖…";
             var progress = new Progress(msg => StatusText.Text = msg);
-            var bootstrap = await PythonDependencyBootstrap
-                .EnsureMarketDependenciesAsync("python", progress)
-                .ConfigureAwait(true);
-            if (!bootstrap.Ok)
+            var repoRoot = FindRepoRoot();
+
+            // Prefer a private uv-managed venv under the State root. A machine without uv keeps
+            // working on system Python; only then do we fall back to installing into it.
+            StatusText.Text = $"{prefix}准备中：检查 Python 运行时…";
+            var runtime = await _pythonRuntime.ProvisionAsync(progress).ConfigureAwait(true);
+            PythonRuntimeText.Text = $"Python 运行时：{runtime.Summary}";
+
+            if (!runtime.CanRun)
             {
-                StatusText.Text = $"依赖未就绪：{bootstrap.Message}";
+                StatusText.Text = $"无法启动分析核心：{runtime.Summary}";
                 return;
             }
 
-            var repoRoot = FindRepoRoot();
+            var interpreter = runtime.Interpreter!;
+            if (!runtime.IsManagedAndCurrent)
+            {
+                StatusText.Text = $"{prefix}准备中：检测/安装 Python 行情依赖…";
+                var bootstrap = await PythonDependencyBootstrap
+                    .EnsureMarketDependenciesAsync(interpreter, progress)
+                    .ConfigureAwait(true);
+                if (!bootstrap.Ok)
+                {
+                    StatusText.Text = $"依赖未就绪：{bootstrap.Message}";
+                    return;
+                }
+            }
+
             StatusText.Text = $"{prefix}启动分析核心…";
-            _broker.Start("python", repoRoot, _credentials);
+            _broker.Start(interpreter, repoRoot, _credentials);
             _client?.Dispose();
             _client = new AnalyticsCoreClient(_broker.BaseAddress);
             SetCoreStatus(true);

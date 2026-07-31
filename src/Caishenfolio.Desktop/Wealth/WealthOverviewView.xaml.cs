@@ -29,6 +29,7 @@ public partial class WealthOverviewView : UserControl
         _model.PropertyChanged += OnModelChanged;
         AllocationGrid.ItemsSource = model.Allocation;
         WarningList.ItemsSource = model.Warnings;
+        AlertList.ItemsSource = model.Alerts;
         Render();
     }
 
@@ -47,6 +48,8 @@ public partial class WealthOverviewView : UserControl
         CostText.Text = _model.CostText;
         CashText.Text = _model.CashText;
         XirrText.Text = _model.XirrText;
+        DrawdownText.Text = _model.DrawdownText;
+        RiskSummaryText.Text = _model.RiskSummaryText;
         AsOfText.Text = $"估值日 {_model.AsOfText}  ·  本位币 {_model.BaseCurrency}";
         RefreshButton.IsEnabled = !_model.IsBusy;
         WarningBanner.Visibility = _model.Warnings.Count > 0 ? Visibility.Visible : Visibility.Collapsed;

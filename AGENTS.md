@@ -68,7 +68,16 @@ Follow `agent-dev-protocol` under `.claude/skills/agent-dev-protocol/SKILL.md`.
 
 ## UI Verification Rule
 
-XAML / 资源字典改动后，`dotnet build` 与单测通过**不足以**声明完成：必须启动一次应用确认 BAML 能加载。
+XAML / 资源字典改动后，`dotnet build` 与单测通过**不足以**声明完成：BAML 在运行时加载，必须启动一次应用。
+
+```powershell
+scripts\ui_smoke.ps1
+```
+
+## Version Rule
+
+版本号与阶段只写在根目录 `VERSION` / `PHASE`，用 `scripts\version.ps1` 修改，**不要在代码里写版本字面量**。
+`ProductVersionTests` 会断言 C#、Python、pyproject 四处一致。
 
 Completed earlier:
 

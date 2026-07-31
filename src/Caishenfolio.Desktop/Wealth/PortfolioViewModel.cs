@@ -21,6 +21,8 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
     private string _cashText = "—";
     private string _xirrText = "—";
     private string _asOfText = "—";
+    private string _drawdownText = "—";
+    private string _riskSummaryText = "";
     private bool _isComplete = true;
     private bool _isBusy;
 
@@ -36,6 +38,7 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
     public ObservableCollection<TransactionRow> Transactions { get; } = [];
     public ObservableCollection<AccountRow> Accounts { get; } = [];
     public ObservableCollection<string> Warnings { get; } = [];
+    public ObservableCollection<AlertRow> Alerts { get; } = [];
 
     public string BaseCurrency => _workspace.BaseCurrency;
     public WorkspaceSnapshot? Snapshot { get; private set; }
@@ -50,6 +53,8 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
     public string CashText { get => _cashText; private set => Set(ref _cashText, value); }
     public string XirrText { get => _xirrText; private set => Set(ref _xirrText, value); }
     public string AsOfText { get => _asOfText; private set => Set(ref _asOfText, value); }
+    public string DrawdownText { get => _drawdownText; private set => Set(ref _drawdownText, value); }
+    public string RiskSummaryText { get => _riskSummaryText; private set => Set(ref _riskSummaryText, value); }
     public bool IsComplete { get => _isComplete; private set => Set(ref _isComplete, value); }
     public bool IsBusy { get => _isBusy; private set => Set(ref _isBusy, value); }
 
@@ -148,6 +153,24 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
         {
             Warnings.Add(warning);
         }
+
+        Alerts.Clear();
+        foreach (var alert in snapshot.Alerts)
+        {
+            Alerts.Add(new AlertRow(
+                alert.Title,
+                alert.Message,
+                alert.Severity == AlertSeverity.Warning));
+        }
+        foreach (var drift in snapshot.Risk.Drift)
+        {
+            Alerts.Add(new AlertRow($"配置偏离：{drift.Label}", drift.Message, false));
+        }
+
+        DrawdownText = snapshot.Risk.MaxDrawdown is { } drawdown
+            ? (drawdown * 100m).ToString("0.0", CultureInfo.InvariantCulture) + "%"
+            : "—";
+        RiskSummaryText = snapshot.Risk.Summary;
 
         var ccy = snapshot.BaseCurrency;
         TotalValueText = $"{Format(valuation.TotalValue.Amount)} {ccy}";
@@ -256,6 +279,8 @@ public sealed record PositionRow(
 
 public sealed record AllocationRow(
     string Dimension, string Label, string Value, string Weight, double WeightFraction);
+
+public sealed record AlertRow(string Title, string Message, bool IsWarning);
 
 public sealed record TransactionRow(
     string Id,

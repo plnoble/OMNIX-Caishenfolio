@@ -11,7 +11,7 @@ namespace Caishenfolio.Host.Portfolio;
 public sealed class PortfolioStore : IDisposable
 {
     /// <summary>Bump when the schema changes and add the matching step in <see cref="Migrate"/>.</summary>
-    public const int SchemaVersion = 2;
+    public const int SchemaVersion = 3;
 
     private readonly string _connectionString;
     private readonly object _gate = new();
@@ -417,6 +417,72 @@ public sealed class PortfolioStore : IDisposable
     public FxConverter CreateFxConverter(DateOnly? asOf = null, string pivot = Currencies.Usd) =>
         new(ListFxRates(asOf), pivot);
 
+    // --- valuation history ---------------------------------------------------------
+
+    /// <summary>
+    /// Records the portfolio value for a date. One row per date: refreshing repeatedly on the
+    /// same day corrects that day rather than piling up duplicate points on the equity curve.
+    /// An incomplete valuation is still stored but flagged, so drawdown can ignore it.
+    /// </summary>
+    public void SaveValuationSnapshot(PortfolioValuation valuation)
+    {
+        ArgumentNullException.ThrowIfNull(valuation);
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO valuation_snapshots
+                    (as_of, base_currency, total_value, holdings_value, cash_value, cost_basis, complete)
+                VALUES ($asOf, $currency, $total, $holdings, $cash, $cost, $complete)
+                ON CONFLICT(as_of, base_currency) DO UPDATE SET
+                    total_value = excluded.total_value,
+                    holdings_value = excluded.holdings_value,
+                    cash_value = excluded.cash_value,
+                    cost_basis = excluded.cost_basis,
+                    complete = excluded.complete;
+                """;
+            command.Parameters.AddWithValue("$asOf", valuation.AsOf.ToString("yyyy-MM-dd"));
+            command.Parameters.AddWithValue("$currency", valuation.BaseCurrency);
+            command.Parameters.AddWithValue("$total", valuation.TotalValue.Amount);
+            command.Parameters.AddWithValue("$holdings", valuation.HoldingsValue.Amount);
+            command.Parameters.AddWithValue("$cash", valuation.CashValue.Amount);
+            command.Parameters.AddWithValue("$cost", valuation.CostBasis.Amount);
+            command.Parameters.AddWithValue("$complete", valuation.IsComplete ? 1 : 0);
+            command.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Equity curve in <paramref name="baseCurrency"/>, oldest first.</summary>
+    public IReadOnlyList<ValuationPoint> ListValuationHistory(
+        string baseCurrency, bool completeOnly = true)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT as_of, total_value
+                FROM valuation_snapshots
+                WHERE base_currency = $currency AND ($all = 1 OR complete = 1)
+                ORDER BY as_of;
+                """;
+            command.Parameters.AddWithValue("$currency", Currencies.Normalize(baseCurrency));
+            command.Parameters.AddWithValue("$all", completeOnly ? 0 : 1);
+
+            using var reader = command.ExecuteReader();
+            var results = new List<ValuationPoint>();
+            while (reader.Read())
+            {
+                results.Add(new ValuationPoint(
+                    DateOnly.ParseExact(reader.GetString(0), "yyyy-MM-dd"),
+                    reader.GetDecimal(1)));
+            }
+
+            return results;
+        }
+    }
+
     /// <summary>Replays the stored ledger into positions, cash, and external flows.</summary>
     public LedgerState LoadState(string? accountId = null) =>
         PositionCalculator.Replay(ListTransactions(accountId));
@@ -512,6 +578,24 @@ public sealed class PortfolioStore : IDisposable
                 );
 
                 CREATE INDEX IF NOT EXISTS ix_fx_rates_as_of ON fx_rates(as_of);
+                """);
+        }
+
+        if (current < 3)
+        {
+            // One row per valuation date. Without a history there is no equity curve, and
+            // without an equity curve drawdown cannot be computed at all.
+            Execute(connection, tx, """
+                CREATE TABLE IF NOT EXISTS valuation_snapshots (
+                    as_of TEXT NOT NULL,
+                    base_currency TEXT NOT NULL,
+                    total_value TEXT NOT NULL,
+                    holdings_value TEXT NOT NULL DEFAULT '0',
+                    cash_value TEXT NOT NULL DEFAULT '0',
+                    cost_basis TEXT NOT NULL DEFAULT '0',
+                    complete INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY (as_of, base_currency)
+                );
                 """);
         }
 

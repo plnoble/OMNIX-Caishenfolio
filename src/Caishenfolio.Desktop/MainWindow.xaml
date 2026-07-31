@@ -452,6 +452,8 @@
                                 <Button Content="健康检查" Padding="12,6" Margin="0,0,8,8" Click="HealthButton_OnClick" />
                                 <Button Content="停止核心" Padding="12,6" Margin="0,0,8,8" Click="StopCoreButton_OnClick" />
                             </WrapPanel>
+                            <TextBlock x:Name="PythonRuntimeText" TextWrapping="Wrap" Style="{StaticResource MutedText}"
+                                       Margin="0,-8,0,16" Text="Python 运行时：尚未检查。" />
                             <TextBlock Text="数据与导出" FontWeight="SemiBold" Margin="0,0,0,8" />
                             <WrapPanel Margin="0,0,0,16">
                                 <Button Content="数据源与密钥" Padding="12,6" Margin="0,0,8,8" Click="DataSourceButton_OnClick" />

@@ -23,7 +23,7 @@
         </DockPanel>
 
         <!-- KPI tiles -->
-        <UniformGrid Grid.Row="1" Columns="5" Margin="0,0,0,12">
+        <UniformGrid Grid.Row="1" Columns="6" Margin="0,0,0,12">
             <Border Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="14,12" Margin="0,0,8,0"
                     BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
                 <StackPanel>
@@ -52,11 +52,18 @@
                     <TextBlock x:Name="CashText" Text="—" Style="{StaticResource KpiValue}" />
                 </StackPanel>
             </Border>
-            <Border Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="14,12"
+            <Border Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="14,12" Margin="0,0,8,0"
                     BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
                 <StackPanel>
                     <TextBlock Text="资金年化收益 XIRR" Style="{StaticResource KpiCaption}" TextWrapping="Wrap" />
                     <TextBlock x:Name="XirrText" Text="—" Style="{StaticResource KpiValue}" />
+                </StackPanel>
+            </Border>
+            <Border Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="14,12"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="历史最大回撤" Style="{StaticResource KpiCaption}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="DrawdownText" Text="—" Style="{StaticResource KpiValue}" />
                 </StackPanel>
             </Border>
         </UniformGrid>
@@ -79,8 +86,55 @@
             </StackPanel>
         </Border>
 
-        <!-- Allocation -->
-        <Border Grid.Row="3" Background="{StaticResource BrushBgPanel}" CornerRadius="10"
+        <!-- Allocation + alerts -->
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="340" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="1" Background="{StaticResource BrushBgPanel}" CornerRadius="10" Margin="10,0,0,0"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="14">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="提醒" Style="{StaticResource SectionTitle}" />
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="AlertList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border CornerRadius="6" Padding="10,8" Margin="0,0,0,6"
+                                            Background="#121A24" BorderThickness="0,0,0,0">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsWarning}" Value="True">
+                                                                <Setter Property="Foreground" Value="{StaticResource BrushDanger}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="12"
+                                                       Foreground="{StaticResource BrushFgSecondary}" Margin="0,3,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <TextBlock Grid.Row="2" x:Name="RiskSummaryText" TextWrapping="Wrap" FontSize="11"
+                               Foreground="{StaticResource BrushFgMuted}" Margin="0,8,0,0" />
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="0" Background="{StaticResource BrushBgPanel}" CornerRadius="10"
                 BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="14">
             <Grid>
                 <Grid.RowDefinitions>
@@ -115,6 +169,7 @@
                     </DataGrid.Columns>
                 </DataGrid>
             </Grid>
-        </Border>
+            </Border>
+        </Grid>
     </Grid>
 </UserControl>
