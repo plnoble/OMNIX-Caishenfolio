@@ -114,6 +114,26 @@
                         </TextBlock>
                     </Button>
 
+                    <TextBlock Style="{StaticResource NavGroup}" Text="看清楚" />
+                    <Button x:Name="NavValuation" Style="{StaticResource NavBtn}" Click="NavValuation_OnClick"
+                            ToolTip="估值分位：现在贵不贵，历史上这个位置之后发生过什么">
+                        <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
+                            <Run Text="估值" FontSize="13"/><LineBreak/><Run Text="⚖️" FontSize="14"/>
+                        </TextBlock>
+                    </Button>
+                    <Button x:Name="NavIpo" Style="{StaticResource NavBtn}" Click="NavIpo_OnClick"
+                            ToolTip="打新记录：申购 / 中签 / 缴款 / 卖出与真实收益">
+                        <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
+                            <Run Text="打新" FontSize="13"/><LineBreak/><Run Text="🎟" FontSize="14"/>
+                        </TextBlock>
+                    </Button>
+                    <Button x:Name="NavFx" Style="{StaticResource NavBtn}" Click="NavFx_OnClick"
+                            ToolTip="汇率利差：换汇的成本与收益从哪来">
+                        <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
+                            <Run Text="汇率" FontSize="13"/><LineBreak/><Run Text="💱" FontSize="14"/>
+                        </TextBlock>
+                    </Button>
+
                     <TextBlock Style="{StaticResource NavGroup}" Text="研究" />
                     <Button x:Name="NavMarket" Style="{StaticResource NavBtn}" Click="NavMarket_OnClick"
                             ToolTip="行情 K 线">
@@ -243,6 +263,18 @@
                 <Border x:Name="PageLedger" Background="{StaticResource BrushBgApp}" CornerRadius="10"
                         BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
                     <wealth:LedgerView x:Name="LedgerPage" />
+                </Border>
+                <Border x:Name="PageValuation" Background="{StaticResource BrushBgApp}" CornerRadius="10"
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
+                    <wealth:ValuationView x:Name="ValuationPage" />
+                </Border>
+                <Border x:Name="PageIpo" Background="{StaticResource BrushBgApp}" CornerRadius="10"
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
+                    <wealth:IpoView x:Name="IpoPage" />
+                </Border>
+                <Border x:Name="PageFx" Background="{StaticResource BrushBgApp}" CornerRadius="10"
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
+                    <wealth:FxCarryView x:Name="FxPage" />
                 </Border>
 
                 <!-- ===== MARKET ===== -->

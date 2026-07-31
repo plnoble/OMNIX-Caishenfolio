@@ -1,0 +1,96 @@
+<UserControl x:Class="Caishenfolio.Desktop.Wealth.FxCarryView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="Transparent">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" Margin="0,0,0,10">
+            <Button DockPanel.Dock="Right" x:Name="LoadButton" Content="刷新" Padding="14,6"
+                    Click="LoadButton_OnClick" />
+            <StackPanel>
+                <TextBlock Text="汇率与利差" FontSize="18" FontWeight="SemiBold"
+                           Foreground="{StaticResource BrushAccent}" />
+                <TextBlock x:Name="StatusText" Margin="0,4,0,0" TextWrapping="Wrap"
+                           Foreground="{StaticResource BrushFgMuted}"
+                           Text="点「刷新」查看各货币相对本位币的利差与当前汇率所处的历史位置。" />
+            </StackPanel>
+        </DockPanel>
+
+        <Border Grid.Row="1" Background="#16202B" CornerRadius="8" Padding="12,10" Margin="0,0,0,12"
+                BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+            <StackPanel>
+                <TextBlock Text="换汇到底赚在哪、亏在哪" FontWeight="SemiBold"
+                           Foreground="{StaticResource BrushAccent}" Margin="0,0,0,4" />
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushFgSecondary}" FontSize="12">
+                    换汇的盈亏由两部分组成：<Run FontWeight="SemiBold">利差</Run>和<Run FontWeight="SemiBold">汇率变动</Run>。<LineBreak />
+                    <Run FontWeight="SemiBold">利差</Run>是确定的、慢的。持有高息货币每年多拿这个百分比。
+                    利差 +4% 意味着 100 万等值资产一年约多 4 万——前提是汇率一动不动。<LineBreak />
+                    <Run FontWeight="SemiBold">汇率变动</Run>是不确定的、快的。主要货币一天波动 1% 很常见，
+                    <Run FontWeight="SemiBold" Foreground="{StaticResource BrushDanger}">四天就能吃掉一年的利差</Run>。<LineBreak />
+                    「历史分位」告诉你现在这个汇率在过去一年里算高还是低——它描述位置，不预测方向。
+                    2022 至 2024 年美日利差处在几十年极值，日元照样单边贬值三成，随后套息平仓时三天回吐一年利差。<LineBreak />
+                    <Run Foreground="{StaticResource BrushDanger}">所以：利差说明长期倾向，不说明什么时候该换。这一页不给换汇时点判断。</Run>
+                </TextBlock>
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="2" Background="{StaticResource BrushBgPanel}" CornerRadius="10"
+                BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="12">
+            <DataGrid x:Name="LegGrid" Style="{StaticResource WealthGrid}">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="货币对" Binding="{Binding Pair}" Width="110"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="当前汇率" Binding="{Binding RateText}" Width="110"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="持有方利率" Binding="{Binding BaseRateText}" Width="100"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="计价方利率" Binding="{Binding QuoteRateText}" Width="100"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTemplateColumn Header="年化利差" Width="110">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding CarryText}" VerticalAlignment="Center" Margin="6,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{StaticResource BrushDanger}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding CarryIsPositive}" Value="True">
+                                                    <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="每 100 万一年利差" Binding="{Binding CarryOnMillionText}" Width="150"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="汇率历史分位" Binding="{Binding PercentileText}" Width="120"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="一年区间" Binding="{Binding RangeText}" Width="*"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+
+        <StackPanel Grid.Row="3" Margin="0,10,0,0">
+            <ItemsControl x:Name="NoteList">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="11"
+                                   Foreground="{StaticResource BrushFgMuted}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock x:Name="DisclaimerText" TextWrapping="Wrap" FontSize="11" Margin="0,6,0,0"
+                       Foreground="{StaticResource BrushFgMuted}" />
+        </StackPanel>
+    </Grid>
+</UserControl>

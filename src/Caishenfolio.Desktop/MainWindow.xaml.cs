@@ -89,6 +89,13 @@ public partial class MainWindow : Window
         HoldingsPage.Exported += message => StatusText.Text = message;
         LedgerPage.Notified += message => StatusText.Text = message;
 
+        // The analysis pages read through the core, which is not up yet — hand them an accessor
+        // rather than a client, so they pick it up whenever it becomes available.
+        ValuationPage.Bind(() => _client);
+        FxPage.Bind(() => _client, () => workspace.BaseCurrency);
+        IpoPage.Bind(workspace);
+        IpoPage.Notified += message => StatusText.Text = message;
+
         _chart = new CandleChartPainter(ChartCanvas, CrosshairLabel);
         _chart.PricePicked += OnChartPricePicked;
 
@@ -225,6 +232,9 @@ public partial class MainWindow : Window
     private void AttachPortfolioPricing() =>
         _portfolioModel.UsePricingSource(_client is null ? null : new AnalyticsCorePricingSource(_client));
 
+    private void NavValuation_OnClick(object sender, RoutedEventArgs e) => ShowPage("valuation");
+    private void NavIpo_OnClick(object sender, RoutedEventArgs e) => ShowPage("ipo");
+    private void NavFx_OnClick(object sender, RoutedEventArgs e) => ShowPage("fx");
     private void NavOverview_OnClick(object sender, RoutedEventArgs e) => ShowPage("overview");
     private void NavHoldings_OnClick(object sender, RoutedEventArgs e) => ShowPage("holdings");
     private void NavLedger_OnClick(object sender, RoutedEventArgs e) => ShowPage("ledger");
@@ -241,6 +251,9 @@ public partial class MainWindow : Window
         PageOverview.Visibility = page == "overview" ? Visibility.Visible : Visibility.Collapsed;
         PageHoldings.Visibility = page == "holdings" ? Visibility.Visible : Visibility.Collapsed;
         PageLedger.Visibility = page == "ledger" ? Visibility.Visible : Visibility.Collapsed;
+        PageValuation.Visibility = page == "valuation" ? Visibility.Visible : Visibility.Collapsed;
+        PageIpo.Visibility = page == "ipo" ? Visibility.Visible : Visibility.Collapsed;
+        PageFx.Visibility = page == "fx" ? Visibility.Visible : Visibility.Collapsed;
         PageMarket.Visibility = page == "market" ? Visibility.Visible : Visibility.Collapsed;
         PagePlan.Visibility = page == "plan" ? Visibility.Visible : Visibility.Collapsed;
         PageGrid.Visibility = page == "grid" ? Visibility.Visible : Visibility.Collapsed;
@@ -251,6 +264,15 @@ public partial class MainWindow : Window
         SetNavStyle(NavOverview, page == "overview");
         SetNavStyle(NavHoldings, page == "holdings");
         SetNavStyle(NavLedger, page == "ledger");
+        SetNavStyle(NavValuation, page == "valuation");
+        SetNavStyle(NavIpo, page == "ipo");
+        SetNavStyle(NavFx, page == "fx");
+
+        if (page == "ipo")
+        {
+            // Accounts and records can change on other pages, so refresh on entry.
+            IpoPage.Reload();
+        }
         SetNavStyle(NavMarket, page == "market");
         SetNavStyle(NavPlan, page == "plan");
         SetNavStyle(NavGrid, page == "grid");

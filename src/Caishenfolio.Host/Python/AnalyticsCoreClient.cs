@@ -159,6 +159,39 @@ public sealed class AnalyticsCoreClient : IDisposable
         return payload ?? new MarketFxResponse { Ok = false, Error = "Empty FX payload." };
     }
 
+    /// <summary>Valuation multiples with their percentile, band, explanation and history.</summary>
+    public async Task<ValuationResponse> GetValuationAsync(
+        string symbol,
+        int years = 10,
+        CancellationToken cancellationToken = default)
+    {
+        var path = $"market/valuation?symbol={Uri.EscapeDataString(symbol)}&years={years}";
+        using var response = await _http.GetAsync(path, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        var payload = await response.Content
+            .ReadFromJsonAsync<ValuationResponse>(JsonOptions, cancellationToken)
+            .ConfigureAwait(false);
+        return payload ?? new ValuationResponse { Ok = false, Error = "Empty valuation payload." };
+    }
+
+    /// <summary>Interest-rate differentials and where each pair sits in its own range.</summary>
+    public async Task<FxCarryResponse> GetFxCarryAsync(
+        string baseCurrency,
+        IEnumerable<string> currencies,
+        int days = 365,
+        CancellationToken cancellationToken = default)
+    {
+        var path =
+            $"market/fx/carry?base={Uri.EscapeDataString(baseCurrency)}" +
+            $"&currencies={Uri.EscapeDataString(string.Join(",", currencies))}&days={days}";
+        using var response = await _http.GetAsync(path, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        var payload = await response.Content
+            .ReadFromJsonAsync<FxCarryResponse>(JsonOptions, cancellationToken)
+            .ConfigureAwait(false);
+        return payload ?? new FxCarryResponse { Ok = false };
+    }
+
     public async Task<JsonElement> SyncWatchlistCacheAsync(
         IEnumerable<string> symbols,
         int years = 10,
@@ -556,6 +589,99 @@ public sealed class SymbolSearchItem
 
     [JsonPropertyName("provider")]
     public string Provider { get; set; } = "";
+}
+
+public sealed class ValuationResponse
+{
+    [JsonPropertyName("ok")]
+    public bool Ok { get; set; }
+
+    [JsonPropertyName("provider")]
+    public string Provider { get; set; } = "";
+
+    [JsonPropertyName("readings")]
+    public List<MetricReadingDto> Readings { get; set; } = new();
+
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
+}
+
+public sealed class MetricReadingDto
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("current")]
+    public decimal? Current { get; set; }
+
+    [JsonPropertyName("percentile")]
+    public decimal? Percentile { get; set; }
+
+    [JsonPropertyName("band")]
+    public BandDto? Band { get; set; }
+
+    [JsonPropertyName("explanation")]
+    public Dictionary<string, string> Explanation { get; set; } = new();
+
+    [JsonPropertyName("outcome_summaries")]
+    public List<string> OutcomeSummaries { get; set; } = new();
+
+    [JsonPropertyName("notes")]
+    public List<string> Notes { get; set; } = new();
+}
+
+public sealed class BandDto
+{
+    [JsonPropertyName("label")]
+    public string Label { get; set; } = "";
+
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = "";
+}
+
+public sealed class FxCarryResponse
+{
+    [JsonPropertyName("ok")]
+    public bool Ok { get; set; }
+
+    [JsonPropertyName("base_currency")]
+    public string BaseCurrency { get; set; } = "";
+
+    [JsonPropertyName("legs")]
+    public List<CarryLegDto> Legs { get; set; } = new();
+
+    [JsonPropertyName("notes")]
+    public List<string> Notes { get; set; } = new();
+
+    [JsonPropertyName("disclaimer")]
+    public string Disclaimer { get; set; } = "";
+}
+
+public sealed class CarryLegDto
+{
+    [JsonPropertyName("pair")]
+    public string Pair { get; set; } = "";
+
+    [JsonPropertyName("base_rate")]
+    public decimal? BaseRate { get; set; }
+
+    [JsonPropertyName("quote_rate")]
+    public decimal? QuoteRate { get; set; }
+
+    [JsonPropertyName("carry")]
+    public decimal? Carry { get; set; }
+
+    [JsonPropertyName("rate")]
+    public decimal? Rate { get; set; }
+
+    [JsonPropertyName("percentile")]
+    public decimal? Percentile { get; set; }
+
+    [JsonPropertyName("low")]
+    public decimal? Low { get; set; }
+
+    [JsonPropertyName("high")]
+    public decimal? High { get; set; }
 }
 
 public sealed class MarketQuoteResponse

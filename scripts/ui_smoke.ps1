@@ -57,6 +57,53 @@ function Add-Step([string]$name, [string]$status, [string]$detail = "") {
     Write-Host ("  [{0,-7}] {1} {2}" -f $status, $name, $detail) -ForegroundColor $colour
 }
 
+function Invoke-NavigationWalk {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][string[]]$Buttons
+    )
+
+    try {
+        Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes -ErrorAction Stop
+    }
+    catch {
+        Add-Step "navigate pages" "skipped" "UIAutomation 不可用"
+        return
+    }
+
+    $automation = [System.Windows.Automation.AutomationElement]
+    $byPid = New-Object System.Windows.Automation.PropertyCondition(
+        $automation::ProcessIdProperty, $ProcessId)
+    $main = $automation::RootElement.FindFirst(
+        [System.Windows.Automation.TreeScope]::Children, $byPid)
+    if (-not $main) {
+        Add-Step "navigate pages" "skipped" "未找到主窗口自动化节点"
+        return
+    }
+
+    # Nav buttons wrap an icon with their label, so the automation name is not the bare text.
+    $buttonCond = New-Object System.Windows.Automation.PropertyCondition(
+        $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+    $all = @($main.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCond))
+
+    $visited = @()
+    foreach ($name in $Buttons) {
+        $button = $null
+        foreach ($candidate in $all) {
+            if ($candidate.Current.Name -like "*$name*") { $button = $candidate; break }
+        }
+        if (-not $button) {
+            $seen = ($all | ForEach-Object { $_.Current.Name }) -join " | "
+            throw "左栏找不到「$name」按钮。现有按钮：$seen"
+        }
+        $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Start-Sleep -Milliseconds 700
+        $visited += $name
+    }
+
+    Add-Step "navigate pages" "passed" ($visited -join " / ")
+}
+
 function Invoke-DialogCheck {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
@@ -197,6 +244,14 @@ try {
         throw "窗口出现后应用退出。日志：$stderrLog"
     }
     Add-Step "still running" "passed" "pid=$($appProcess.Id)"
+
+    # Switching pages runs each one's reload path, which loading the window alone never touches.
+    Invoke-NavigationWalk -ProcessId $appProcess.Id -Buttons @("持仓", "账本", "估值", "打新", "汇率", "总览")
+
+    $appProcess.Refresh()
+    if ($appProcess.HasExited) {
+        throw "切换页面后应用退出。日志：$stderrLog"
+    }
 
     # A dialog's BAML is only parsed when it is shown, so opening it is the only way to catch a
     # XAML break in a window the main view never loads.
