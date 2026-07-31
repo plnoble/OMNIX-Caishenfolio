@@ -11,7 +11,7 @@ namespace Caishenfolio.Host.Portfolio;
 public sealed class PortfolioStore : IDisposable
 {
     /// <summary>Bump when the schema changes and add the matching step in <see cref="Migrate"/>.</summary>
-    public const int SchemaVersion = 1;
+    public const int SchemaVersion = 2;
 
     private readonly string _connectionString;
     private readonly object _gate = new();
@@ -335,6 +335,88 @@ public sealed class PortfolioStore : IDisposable
         }
     }
 
+    // --- fx rates ------------------------------------------------------------------
+
+    public int SaveFxRates(IReadOnlyCollection<FxRate> rates)
+    {
+        ArgumentNullException.ThrowIfNull(rates);
+        if (rates.Count == 0)
+        {
+            return 0;
+        }
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            var affected = 0;
+            foreach (var rate in rates)
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = tx;
+                command.CommandText = """
+                    INSERT INTO fx_rates (base_currency, quote_currency, as_of, rate, provider)
+                    VALUES ($base, $quote, $asOf, $rate, $provider)
+                    ON CONFLICT(base_currency, quote_currency, as_of) DO UPDATE SET
+                        rate = excluded.rate,
+                        provider = excluded.provider;
+                    """;
+                command.Parameters.AddWithValue("$base", rate.BaseCurrency);
+                command.Parameters.AddWithValue("$quote", rate.QuoteCurrency);
+                command.Parameters.AddWithValue("$asOf", rate.AsOf.ToString("yyyy-MM-dd"));
+                command.Parameters.AddWithValue("$rate", rate.Rate);
+                command.Parameters.AddWithValue("$provider", rate.Provider);
+                affected += command.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+            return affected;
+        }
+    }
+
+    public FxRate SaveFxRate(FxRate rate)
+    {
+        SaveFxRates([rate]);
+        return rate;
+    }
+
+    /// <summary>Rates observed on or before <paramref name="asOf"/>, oldest first.</summary>
+    public IReadOnlyList<FxRate> ListFxRates(DateOnly? asOf = null)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT base_currency, quote_currency, as_of, rate, provider
+                FROM fx_rates
+                WHERE ($asOf IS NULL OR as_of <= $asOf)
+                ORDER BY as_of, base_currency, quote_currency;
+                """;
+            command.Parameters.AddWithValue("$asOf", (object?)asOf?.ToString("yyyy-MM-dd") ?? DBNull.Value);
+
+            using var reader = command.ExecuteReader();
+            var results = new List<FxRate>();
+            while (reader.Read())
+            {
+                results.Add(new FxRate
+                {
+                    BaseCurrency = reader.GetString(0),
+                    QuoteCurrency = reader.GetString(1),
+                    AsOf = DateOnly.ParseExact(reader.GetString(2), "yyyy-MM-dd"),
+                    Rate = reader.GetDecimal(3),
+                    Provider = reader.GetString(4),
+                });
+            }
+
+            return results;
+        }
+    }
+
+    /// <summary>Converter built from the freshest rate per pair at <paramref name="asOf"/>.</summary>
+    public FxConverter CreateFxConverter(DateOnly? asOf = null, string pivot = Currencies.Usd) =>
+        new(ListFxRates(asOf), pivot);
+
     /// <summary>Replays the stored ledger into positions, cash, and external flows.</summary>
     public LedgerState LoadState(string? accountId = null) =>
         PositionCalculator.Replay(ListTransactions(accountId));
@@ -413,6 +495,23 @@ public sealed class PortfolioStore : IDisposable
                     ON transactions(account_id, trade_date);
                 CREATE INDEX IF NOT EXISTS ix_transactions_symbol ON transactions(symbol);
                 CREATE INDEX IF NOT EXISTS ix_transactions_batch ON transactions(import_batch_id);
+                """);
+        }
+
+        if (current < 2)
+        {
+            // Rates are snapshotted so a portfolio can still be valued when the provider is down.
+            Execute(connection, tx, """
+                CREATE TABLE IF NOT EXISTS fx_rates (
+                    base_currency TEXT NOT NULL,
+                    quote_currency TEXT NOT NULL,
+                    as_of TEXT NOT NULL,
+                    rate TEXT NOT NULL,
+                    provider TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (base_currency, quote_currency, as_of)
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_fx_rates_as_of ON fx_rates(as_of);
                 """);
         }
 

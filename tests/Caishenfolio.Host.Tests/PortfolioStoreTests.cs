@@ -196,6 +196,43 @@ public class PortfolioStoreTests : IDisposable
         Assert.Empty(store.ListTransactions());
     }
 
+    [Fact]
+    public void StoresFxRateSnapshotsAndBuildsAConverter()
+    {
+        using var store = NewStore();
+        store.SaveFxRates([
+            FxRate.Of("USD", "CNY", 7.0m, new DateOnly(2026, 6, 30), "akshare"),
+            FxRate.Of("USD", "CNY", 7.2m, new DateOnly(2026, 7, 31), "akshare"),
+            FxRate.Of("USD", "JPY", 150m, new DateOnly(2026, 7, 31), "akshare"),
+        ]);
+
+        Assert.Equal(3, store.ListFxRates().Count);
+        Assert.Single(store.ListFxRates(new DateOnly(2026, 6, 30)));
+
+        var latest = store.CreateFxConverter();
+        Assert.True(latest.TryGetRate("USD", "CNY", out var rate));
+        Assert.Equal(7.2m, rate);
+
+        // Valuing an older date must not reach forward to a rate that did not exist yet.
+        var historical = store.CreateFxConverter(new DateOnly(2026, 6, 30));
+        Assert.True(historical.TryGetRate("USD", "CNY", out var oldRate));
+        Assert.Equal(7.0m, oldRate);
+        Assert.False(historical.TryGetRate("USD", "JPY", out _));
+    }
+
+    [Fact]
+    public void ReSavingARateForTheSameDayOverwritesIt()
+    {
+        using var store = NewStore();
+        var day = new DateOnly(2026, 7, 31);
+        store.SaveFxRate(FxRate.Of("USD", "CNY", 7.1m, day));
+        store.SaveFxRate(FxRate.Of("USD", "CNY", 7.25m, day, "corrected"));
+
+        var stored = Assert.Single(store.ListFxRates());
+        Assert.Equal(7.25m, stored.Rate);
+        Assert.Equal("corrected", stored.Provider);
+    }
+
     private static int ReadUserVersion(string databasePath)
     {
         using var connection = new SqliteConnection(
