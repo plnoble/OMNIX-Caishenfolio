@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    # WPF needs Windows, so the whole gate runs there.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build
+        run: dotnet build Caishenfolio.slnx --configuration Release
+
+      - name: C# tests
+        # Also enforces version/phase agreement across VERSION, PHASE, C# and Python.
+        run: dotnet test Caishenfolio.slnx --configuration Release --no-build --verbosity normal
+
+      - name: Python tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}\python
+          # Offline fixtures only: CI must never depend on a live market provider.
+          CAISHENFOLIO_MARKET_PROVIDER: fixture
+          CAISHENFOLIO_SKIP_SYMBOL_INDEX_NETWORK: '1'
+        run: python -m unittest discover -s tests/python -p "test_*.py" -v
+
+      - name: Build MSI
+        run: dotnet build packaging\windows\Omnix.Installer.wixproj --configuration Release
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: OMNIX-Caishenfolio-msi
+          path: packaging/windows/bin/x64/Release/*.msi
+          if-no-files-found: error

@@ -1,16 +1,37 @@
 <Project>
+  <!--
+    Single source of truth for release metadata.
+
+    `VERSION` and `PHASE` at the repo root are plain one-line text files so that MSBuild, C#,
+    Python and PowerShell can all read the same value. Before this, the version lived in four
+    places and had already drifted to four different numbers.
+
+    Use `scripts/version.ps1` to bump; never edit the numbers in code.
+  -->
   <PropertyGroup>
-    <CaishenfolioVersion>0.2.0</CaishenfolioVersion>
-    <Version>$(CaishenfolioVersion)</Version>
-    <AssemblyVersion>0.2.0.0</AssemblyVersion>
-    <FileVersion>0.2.0.0</FileVersion>
-    <Company>Caishenfolio</Company>
-    <Product>Caishenfolio</Product>
-    <Authors>Caishenfolio</Authors>
-    <Description>Windows local financial research and simulation workbench. Research/simulation only; no live trading.</Description>
+    <OmnixVersion>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION').Trim())</OmnixVersion>
+    <OmnixPhase>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)PHASE').Trim())</OmnixPhase>
+
+    <Version>$(OmnixVersion)</Version>
+    <AssemblyVersion>$(OmnixVersion).0</AssemblyVersion>
+    <FileVersion>$(OmnixVersion).0</FileVersion>
+    <InformationalVersion>$(OmnixVersion)</InformationalVersion>
+
+    <Company>OMNIX</Company>
+    <Product>OMNIX-Caishenfolio</Product>
+    <Authors>OMNIX</Authors>
+    <Description>Windows local personal multi-market multi-asset wealth workbench. Research and simulation only; no live trading.</Description>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
   </PropertyGroup>
+
+  <!-- Phase travels with the assembly so the running app never needs the repo files. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>OmnixPhase</_Parameter1>
+      <_Parameter2>$(OmnixPhase)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>

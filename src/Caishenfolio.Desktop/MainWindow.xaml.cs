@@ -8,6 +8,7 @@ using Caishenfolio.Desktop.Wealth;
 using Caishenfolio.Host.MarketData;
 using Caishenfolio.Host.Portfolio;
 using Caishenfolio.Host.Python;
+using Caishenfolio.Host.Release;
 using Caishenfolio.Host.Security;
 using Caishenfolio.Host.Tasks;
 using Progress = System.Progress<string>;
@@ -32,6 +33,7 @@ public partial class MainWindow : Window
     private bool _watchCollapsed;
     private bool _barsExpanded;
     private string _currentPage = "market";
+    private string? _latestReleaseUrl;
 
     public MainWindow()
     {
@@ -105,6 +107,44 @@ public partial class MainWindow : Window
             _taskStore.Dispose();
             _portfolio.Dispose();
         };
+    }
+
+    private async void CheckUpdateButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        CheckUpdateButton.IsEnabled = false;
+        UpdateStatusText.Text = "正在向 GitHub 查询最新发布…";
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            var result = await new UpdateChecker(new GitHubReleaseFeed(http))
+                .CheckAsync()
+                .ConfigureAwait(true);
+
+            UpdateStatusText.Text = result.Message;
+            _latestReleaseUrl = result.ReleaseUrl;
+            OpenReleaseButton.Visibility = string.IsNullOrEmpty(_latestReleaseUrl)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+        }
+        finally
+        {
+            CheckUpdateButton.IsEnabled = true;
+        }
+    }
+
+    private void OpenReleaseButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(_latestReleaseUrl))
+        {
+            return;
+        }
+
+        // Opening the release page in the browser keeps the download an explicit user action;
+        // the app never fetches or runs an installer on its own.
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_latestReleaseUrl)
+        {
+            UseShellExecute = true,
+        });
     }
 
     /// <summary>Lets the ledger price itself through the core once the core is actually reachable.</summary>

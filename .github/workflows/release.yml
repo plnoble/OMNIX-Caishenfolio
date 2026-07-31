@@ -1,0 +1,77 @@
+name: Release
+
+# Tag a release with scripts\version.ps1, then:
+#   git tag v0.11.0 && git push origin main --tags
+# The tag must match the VERSION file; the job refuses to publish if it does not.
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify the tag matches the VERSION file
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          if ($tag -ne $version) {
+            throw "Tag v$tag does not match VERSION ($version). Run scripts\version.ps1 before tagging."
+          }
+          Write-Host "Releasing v$version"
+
+      - name: Build
+        run: dotnet build Caishenfolio.slnx --configuration Release
+
+      - name: C# tests
+        run: dotnet test Caishenfolio.slnx --configuration Release --no-build
+
+      - name: Python tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}\python
+          CAISHENFOLIO_MARKET_PROVIDER: fixture
+          CAISHENFOLIO_SKIP_SYMBOL_INDEX_NETWORK: '1'
+        run: python -m unittest discover -s tests/python -p "test_*.py"
+
+      - name: Build MSI
+        run: dotnet build packaging\windows\Omnix.Installer.wixproj --configuration Release
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem packaging/windows/bin/x64/Release/*.msi | Select-Object -First 1
+          (Get-FileHash $msi.FullName -Algorithm SHA256).Hash + "  " + $msi.Name |
+            Out-File -FilePath packaging/windows/bin/x64/Release/checksums.sha256 -Encoding utf8
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OMNIX-Caishenfolio ${{ github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: |
+            packaging/windows/bin/x64/Release/*.msi
+            packaging/windows/bin/x64/Release/checksums.sha256
+          body: |
+            个人多市场多资产理财工作台。
+
+            安装：下载 MSI 后直接运行。已安装旧版本时为原地升级，
+            账本数据保存在 `%LocalAppData%\Caishenfolio`，升级与卸载都不会删除。
+
+            研究/模拟结论，非投资建议。

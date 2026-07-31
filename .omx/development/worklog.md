@@ -128,3 +128,24 @@
 - 事故：`Setter Property="Resources"` 编译期无错但启动即崩（详见 error-ledger）；改为应用级隐式样式。
 - 验证：`dotnet build` 0 错 0 警；C# 183 全过；Python 82 全过；**启动冒烟通过**（窗口标题 v0.10.0）。
 - 未做：旧研究页 1225 行 code-behind 未 MVVM 化（改动风险高于收益，已列入 handoff 的 Next）。
+
+## 2026-07-31 - V1~V4 版本治理与产品化
+
+- **版本号收敛为单一来源**：根目录 `VERSION` / `PHASE` 单行纯文本，MSBuild / C# / Python / PowerShell 共用。
+  修复前实际存在四个源且已全部不一致：`Directory.Build.props` 0.2.0、`ProductInfo` 0.10.0、
+  Python `__version__` 0.10.0、`pyproject.toml` 0.4.0；Python `PRODUCT_PHASE` 也还停在 R0。
+- `ProductInfo.Version/.Phase` 改为读程序集属性（`InformationalVersion` + `AssemblyMetadata`），代码里不再出现版本字面量。
+- `ProductVersionTests` 断言四处一致 + 版本必须是三段 semver，漂移即红灯。
+- `scripts/version.ps1`：查看 / `-Bump patch|minor|major` / `-SetVersion`；同步 Python 常量与 pyproject。
+  两个编码坑：PS 5.1 读 .ps1 需 UTF-8 BOM 否则中文乱码且解析错乱；而 `Set-Content -Encoding utf8` 会**写入** BOM，
+  会污染 VERSION 与 .py，故写文件改用 `UTF8Encoding($false)`。
+- **MSI 打包**：移植归档工程的 WiX 方案为 `packaging/windows/Omnix.{Installer.wixproj,Product.wxs}`，
+  新 GUID、OMNIX 命名、`ProductVersion=$(OmnixVersion)`。实测产出 1.13MB MSI，包内 ProductVersion=0.10.0。
+  `MajorUpgrade` 支持原地升级；用户数据在 LocalAppData，升级/卸载都不动。
+- **更新检查**：`UpdateChecker` + `IReleaseFeed`（GitHub Releases 只读）。数值比较而非字符串比较
+  （`0.9.0 < 0.10.0`）；网络失败/无 Release/无法解析的 tag 全部 fail-closed 且不阻塞使用；
+  不自动下载安装，只打开发布页。系统页新增「检查更新」。
+- **CI**：`.github/workflows/ci.yml`（push/PR：构建 + 双侧测试 + 产出 MSI 制品，Python 强制 fixture 源）；
+  `release.yml`（打 tag：先校验 tag 与 VERSION 一致，再测试、构建 MSI、算 SHA256、建**草稿** Release）。
+- 新增 `docs/RELEASE.md`。
+- 验证：C# 183 → 206 全过；Python 82 全过；MSI 构建成功并核对包内版本号。

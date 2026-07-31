@@ -1,0 +1,33 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <!--
+    Builds the Windows MSI. The desktop is published first into obj\, then packaged.
+
+    ProductVersion comes from $(OmnixVersion), which Directory.Build.props reads from the root
+    VERSION file — the installer version can never disagree with the app's own version.
+  -->
+  <PropertyGroup>
+    <OutputName>OMNIX-Caishenfolio</OutputName>
+    <OutputType>Package</OutputType>
+    <Platform>x64</Platform>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <DesktopPublishOutput>$(MSBuildProjectDirectory)\obj\$(Configuration)\DesktopPublishOutput\</DesktopPublishOutput>
+    <DefineConstants>DesktopPublishOutput=$(DesktopPublishOutput);ProductVersion=$(OmnixVersion)</DefineConstants>
+    <PackageVersion>$(OmnixVersion)</PackageVersion>
+  </PropertyGroup>
+
+  <Target Name="RestoreDesktopForInstaller" BeforeTargets="PublishDesktopForInstaller">
+    <MSBuild Projects="..\..\src\Caishenfolio.Desktop\Caishenfolio.Desktop.csproj"
+             Targets="Restore"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64" />
+  </Target>
+
+  <Target Name="PublishDesktopForInstaller" BeforeTargets="CoreCompile">
+    <MSBuild Projects="..\..\src\Caishenfolio.Desktop\Caishenfolio.Desktop.csproj"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=false;PublishSingleFile=false;PublishDir=$(DesktopPublishOutput)" />
+  </Target>
+
+  <Target Name="ReportMsiPath" AfterTargets="Build">
+    <Message Text="MSI=$(OutputPath)$(OutputName).msi (version $(OmnixVersion))" Importance="high" />
+  </Target>
+</Project>

@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="OMNIX-Caishenfolio"
+           Manufacturer="OMNIX"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="{7C4E5A21-9B3D-4F86-A0C2-1D5E8F3B7A64}"
+           Scope="perMachine">
+    <SummaryInformation Description="个人多市场多资产理财工作台：资产账本、估值、收益与研究。不含真实下单。" />
+
+    <!-- MajorUpgrade is how a new version replaces an old one: install the newer MSI and it
+         removes the previous build in place, keeping user data under LocalAppData untouched. -->
+    <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 OMNIX-Caishenfolio，无法降级安装。" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Installer policy:
+         - Ships the WPF desktop binaries only.
+         - .NET 8 Windows Desktop runtime is verified/bootstrapped outside this MSI.
+         - The Python Analytics Core is provisioned on first run, not bundled here.
+         - The ledger (portfolio.db) and all state live under %LocalAppData%\Caishenfolio and are
+           preserved across upgrade, repair and uninstall — losing a wealth ledger to an
+           uninstall would be unacceptable.
+         - No live trading, broker execution, or non-loopback exposure is installed. -->
+
+    <Feature Id="MainFeature" Title="OMNIX-Caishenfolio" Level="1">
+      <ComponentGroupRef Id="DesktopComponents" />
+      <ComponentRef Id="ApplicationShortcutComponent" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="OMNIX-Caishenfolio" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="OMNIX-Caishenfolio" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="DesktopComponents" Directory="INSTALLFOLDER">
+      <Component Id="MainExecutableComponent" Guid="{2F91C4D8-6A17-4B53-9E28-C0A7D4B61F35}">
+        <File Id="OmnixDesktopExe"
+              Source="$(var.DesktopPublishOutput)Caishenfolio.Desktop.exe"
+              KeyPath="yes" />
+      </Component>
+      <Files Include="$(var.DesktopPublishOutput)*.dll" />
+      <Files Include="$(var.DesktopPublishOutput)*.json" />
+    </ComponentGroup>
+
+    <Component Id="ApplicationShortcutComponent"
+               Directory="ApplicationProgramsFolder"
+               Guid="{8B3A0E67-51D4-4C29-B7F0-96E2A5C8D413}">
+      <Shortcut Id="ApplicationStartMenuShortcut"
+                Name="OMNIX-Caishenfolio"
+                Description="个人理财工作台"
+                Target="[INSTALLFOLDER]Caishenfolio.Desktop.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveApplicationProgramsFolder"
+                    Directory="ApplicationProgramsFolder"
+                    On="uninstall" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\OMNIX\Caishenfolio"
+                     Name="StartMenuShortcut"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
+    </Component>
+  </Package>
+</Wix>

@@ -459,6 +459,16 @@
                                 <Button Content="导出报告" Padding="12,6" Margin="0,0,8,8" Click="ExportReport_OnClick" />
                                 <Button Content="导出Parquet" Padding="12,6" Margin="0,0,8,8" Click="ExportParquet_OnClick" />
                             </WrapPanel>
+                            <TextBlock Text="版本与更新" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <WrapPanel Margin="0,0,0,8">
+                                <Button x:Name="CheckUpdateButton" Content="检查更新" Padding="12,6" Margin="0,0,8,8"
+                                        Click="CheckUpdateButton_OnClick" />
+                                <Button x:Name="OpenReleaseButton" Content="打开发布页" Padding="12,6" Margin="0,0,8,8"
+                                        Visibility="Collapsed" Click="OpenReleaseButton_OnClick" />
+                            </WrapPanel>
+                            <TextBlock x:Name="UpdateStatusText" TextWrapping="Wrap" Style="{StaticResource MutedText}"
+                                       Margin="0,0,0,16" Text="点击「检查更新」向 GitHub 查询最新发布版本。" />
+
                             <TextBlock x:Name="DisclaimerText" TextWrapping="Wrap" Style="{StaticResource MutedText}" Margin="0,8,0,0" />
                             <TextBlock x:Name="VersionText" Style="{StaticResource MutedText}" FontSize="12" Margin="0,12,0,0" />
                         </StackPanel>
