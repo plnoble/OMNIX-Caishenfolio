@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
+from caishenfolio_core import PRODUCT_PHASE
 from caishenfolio_core.market.fixture import FixtureMarketDataProvider
 from caishenfolio_core.server.app import AnalyticsApp, dispatch
 from caishenfolio_core.tasks.models import TaskKind, TaskStatus
@@ -50,10 +51,10 @@ class ResearchCommandTests(unittest.TestCase):
         self.assertEqual(payload["task"]["status"], TaskStatus.FAILED.value)
         self.assertIsNone(payload["artifact"])
 
-    def test_health_phase_p3(self) -> None:
+    def test_health_reports_current_phase(self) -> None:
         status, health = dispatch(AnalyticsApp(market=FixtureMarketDataProvider()), "GET", "/health")
         self.assertEqual(status, 200)
-        self.assertEqual(health["phase"], "P4")
+        self.assertEqual(health["phase"], PRODUCT_PHASE)
 
     def test_get_task_and_artifacts(self) -> None:
         app = AnalyticsApp(market=FixtureMarketDataProvider())

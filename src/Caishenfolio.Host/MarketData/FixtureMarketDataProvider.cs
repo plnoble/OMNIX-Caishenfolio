@@ -8,11 +8,16 @@ public sealed class FixtureMarketDataProvider
 
     private static readonly IReadOnlyList<SymbolSeed> Universe =
     [
-        new("SSE:600000", Data.Market.Ashare, AssetClass.Equity, "浦发银行", "CNY", 10.0m),
-        new("SZSE:000001", Data.Market.Ashare, AssetClass.Equity, "平安银行", "CNY", 12.5m),
-        new("HKEX:00700", Data.Market.Hk, AssetClass.Equity, "Tencent", "HKD", 320.0m),
-        new("NASDAQ:AAPL", Data.Market.Us, AssetClass.Equity, "Apple", "USD", 180.0m),
-        new("NYSE:SPY", Data.Market.Us, AssetClass.Etf, "SPDR S&P 500", "USD", 450.0m),
+        new("SSE:600000", MarketRegion.Cn, AssetClass.Equity, "浦发银行", "CNY", 10.0m),
+        new("SZSE:000001", MarketRegion.Cn, AssetClass.Equity, "平安银行", "CNY", 12.5m),
+        new("SSE:510300", MarketRegion.Cn, AssetClass.Etf, "沪深300ETF", "CNY", 4.2m),
+        new("SSE:113050", MarketRegion.Cn, AssetClass.ConvertibleBond, "南银转债", "CNY", 118.0m),
+        new("FUND:110022", MarketRegion.Cn, AssetClass.MutualFund, "易方达消费行业", "CNY", 3.5m),
+        new("HKEX:00700", MarketRegion.Hk, AssetClass.Equity, "Tencent", "HKD", 320.0m),
+        new("NASDAQ:AAPL", MarketRegion.Us, AssetClass.Equity, "Apple", "USD", 180.0m),
+        new("NYSE:SPY", MarketRegion.Us, AssetClass.Etf, "SPDR S&P 500", "USD", 450.0m),
+        new("TSE:7203", MarketRegion.Jp, AssetClass.Equity, "トヨタ自動車", "JPY", 2800.0m),
+        new("FX:USDCNY", MarketRegion.Global, AssetClass.Fx, "美元/人民币", "CNY", 7.2m),
     ];
 
     public IReadOnlyList<SymbolHit> Search(string query, int limit = 10)
@@ -106,7 +111,7 @@ public sealed class FixtureMarketDataProvider
 
     private sealed record SymbolSeed(
         string Symbol,
-        Data.Market Market,
+        MarketRegion Market,
         AssetClass AssetClass,
         string Name,
         string Currency,
@@ -114,7 +119,7 @@ public sealed class FixtureMarketDataProvider
 
     public sealed record SymbolHit(
         string Symbol,
-        Data.Market Market,
+        MarketRegion Market,
         AssetClass AssetClass,
         string Name,
         string Provider);

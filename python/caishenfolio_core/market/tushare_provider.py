@@ -7,7 +7,7 @@ from caishenfolio_core.data.bar_interval import BarInterval
 from caishenfolio_core.data.models import (
     Adjustment,
     AssetClass,
-    Market,
+    MarketRegion,
     OhlcvBar,
     ProviderResult,
     SymbolId,
@@ -47,7 +47,7 @@ class TushareMarketDataProvider:
             return [
                 SymbolHit(
                     parsed.value,
-                    Market.ASHARE,
+                    MarketRegion.CN,
                     AssetClass.EQUITY,
                     parsed.code,
                     self.PROVIDER_CODE,
@@ -59,7 +59,7 @@ class TushareMarketDataProvider:
             return [
                 SymbolHit(
                     f"{exchange}:{code}",
-                    Market.ASHARE,
+                    MarketRegion.CN,
                     AssetClass.EQUITY,
                     code,
                     self.PROVIDER_CODE,

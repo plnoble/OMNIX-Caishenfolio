@@ -63,7 +63,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
                 "event": "listening",
                 "host": host,
                 "port": port,
-                "product": "Caishenfolio",
+                "product": health.get("product"),
                 "phase": health.get("phase"),
                 "market_provider": health.get("market_provider"),
                 "market_provider_ready": health.get("market_provider_ready"),

@@ -1,3 +1,5 @@
+using Caishenfolio.Host.Data;
+
 namespace Caishenfolio.Desktop;
 
 /// <summary>
@@ -21,33 +23,21 @@ public static class MarketLabels
         return FromExchange(parts[0]);
     }
 
-    public static string FromExchange(string? exchange) => (exchange ?? "").Trim().ToUpperInvariant() switch
-    {
-        "SSE" or "SZSE" or "BSE" or "SH" or "SZ" => "A股",
-        "HKEX" or "HK" or "SEHK" => "港股",
-        "NASDAQ" or "NYSE" or "AMEX" or "US" => "美股",
-        "FUND" or "OF" => "基金",
-        _ => string.IsNullOrWhiteSpace(exchange) ? "未知市场" : exchange!,
-    };
+    public static string FromExchange(string? exchange) =>
+        ExchangeRegistry.TryGetRegion(exchange, out var region)
+            ? region.ToDisplayName()
+            : string.IsNullOrWhiteSpace(exchange) ? "未知市场" : exchange!.Trim();
 
-    public static string FromMarketField(string? market) => (market ?? "").Trim().ToLowerInvariant() switch
-    {
-        "ashare" or "a_share" or "cn" => "A股",
-        "hk" or "hongkong" => "港股",
-        "us" or "usa" => "美股",
-        "etf" => "ETF",
-        "fund" => "基金",
-        _ => string.IsNullOrWhiteSpace(market) ? "未知市场" : market!,
-    };
+    /// <summary>Accepts both current region codes and the legacy market strings still in saved state.</summary>
+    public static string FromMarketField(string? market) =>
+        MarketRegions.TryParse(market, out var region)
+            ? region.ToDisplayName()
+            : string.IsNullOrWhiteSpace(market) ? "未知市场" : market!.Trim();
 
-    public static string FromAssetClass(string? asset) => (asset ?? "").Trim().ToLowerInvariant() switch
-    {
-        "equity" => "股票",
-        "etf" => "ETF",
-        "index" => "指数",
-        "fund" => "基金",
-        _ => string.IsNullOrWhiteSpace(asset) ? "" : asset!,
-    };
+    public static string FromAssetClass(string? asset) =>
+        AssetClasses.TryParse(asset, out var parsed)
+            ? parsed.ToDisplayName()
+            : string.IsNullOrWhiteSpace(asset) ? "" : asset!.Trim();
 
     /// <summary>Example: [A股·股票] 浦发银行  ·  SSE:600000</summary>
     public static string FormatRow(string symbol, string? name, string? marketField = null, string? assetClass = null)

@@ -3,9 +3,10 @@
 ## Product
 
 - Name: **OMNIX-Caishenfolio**（品牌 OMNIX）
-- Path: `D:\Agent\Project\Caishenfolio`
-- Type: Windows local financial research & simulation workbench
-- Scope: research / simulation / backtest / export / report
+- Path: `D:\Agent\Project\OMNIX-Caishenfolio`
+- Type: Windows local **personal multi-market multi-asset wealth workbench**
+- Scope: 资产账本（账户/持仓/流水/估值/收益/配置）+ 研究（行情/计划/网格/回测/对比/报告）
+- Markets: A股 / 港股 / 美股 / 日股；Assets: 股票 / ETF / 场外基金 / 债券 / 可转债 / 汇率 / 现金
 - Out of scope: live broker order placement and exchange execution
 
 ## Working Agreement
@@ -26,7 +27,10 @@
 
 ## Data Semantics Rules
 
-- Internal symbol form: `EXCHANGE:SYMBOL` (e.g. `SSE:600000`, `HKEX:00700`, `NASDAQ:AAPL`).
+- Internal symbol form: `EXCHANGE:SYMBOL` (e.g. `SSE:600000`, `HKEX:00700`, `NASDAQ:AAPL`, `TSE:7203`, `FUND:110022`, `FX:USDCNY`).
+- Venue → region / currency / timezone comes from `ExchangeRegistry` (C#) and `data/markets.py` (Python). Do not re-derive ad hoc.
+- **Market region and asset class are orthogonal.** Never put an instrument type into the region enum.
+- Money is `Money` (decimal + currency). Never `double`, never cross-currency arithmetic without explicit FX conversion.
 - OHLCV results must carry provider, adjustment policy, provenance, and quality warnings.
 - Provider failure is **fail-closed**: return error/warning, never fabricate market data.
 - Do not mix adjustment policies inside one analysis window without explicit conversion.
@@ -45,9 +49,13 @@ Follow `agent-dev-protocol` under `.claude/skills/agent-dev-protocol/SKILL.md`.
 
 ## Current Phase
 
-**P5 — 侧栏导航工作台（行情/计划/网格/回测/对比/系统；不含券商自动挂单与安装包）**
+**R0 — 数据语义重构（市场/品种分离、Money、交易所注册表）**
+
+重构路线：R0 数据语义 → R1 账本内核 → R2 估值与收益 → R3 行情通道 → R4 桌面双主线 UI → R5 CSV 导入与报表。
 
 Completed earlier:
+
+- **P5 — 侧栏导航工作台（行情/计划/网格/回测/对比/系统）**
 
 - **P4.3.x — 计划买/卖横线、图上点选、真实成交台账**
 - **P4.2 — 网格策略（建议/回测/人工台账）**

@@ -6,23 +6,20 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Generic, TypeVar
 
+from caishenfolio_core.data.markets import AssetClass, MarketRegion, canonical_exchange
+
 _SYMBOL_RE = re.compile(r"^(?P<exchange>[A-Za-z0-9.]+):(?P<code>[A-Za-z0-9.\-]+)$")
 
 T = TypeVar("T")
 
-
-class Market(StrEnum):
-    ASHARE = "ashare"
-    HK = "hk"
-    US = "us"
-    ETF = "etf"
-
-
-class AssetClass(StrEnum):
-    EQUITY = "equity"
-    ETF = "etf"
-    INDEX = "index"
-    FUND = "fund"
+__all__ = [
+    "Adjustment",
+    "AssetClass",
+    "MarketRegion",
+    "OhlcvBar",
+    "ProviderResult",
+    "SymbolId",
+]
 
 
 class Adjustment(StrEnum):
@@ -61,6 +58,14 @@ class SymbolId:
             exchange=match.group("exchange").upper(),
             code=match.group("code").upper(),
         )
+
+    def normalized(self) -> SymbolId:
+        """Resolves venue aliases so the ledger keeps one identity per instrument
+        (``SH:600000`` and ``SSE:600000`` collapse). Unknown venues are preserved as-is."""
+        canonical = canonical_exchange(self.exchange)
+        if canonical is None or canonical == self.exchange:
+            return self
+        return SymbolId(exchange=canonical, code=self.code)
 
     def __str__(self) -> str:
         return self.value

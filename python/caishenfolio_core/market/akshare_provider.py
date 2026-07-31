@@ -6,10 +6,11 @@ from functools import lru_cache
 from typing import Any
 
 from caishenfolio_core.data.bar_interval import BarInterval
+from caishenfolio_core.data.markets import classify_cn_code, cn_exchange_for_code
 from caishenfolio_core.data.models import (
     Adjustment,
     AssetClass,
-    Market,
+    MarketRegion,
     OhlcvBar,
     ProviderResult,
     SymbolId,
@@ -80,8 +81,8 @@ class AkshareMarketDataProvider:
         # Pure A-share / fund / ETF numeric code (6 digits)
         if _CODE_ONLY_RE.match(q) and len(q) <= 6:
             code6 = q.zfill(6)
-            exchange = "SSE" if code6.startswith(("5", "6", "9")) else "SZSE"
-            market, asset = self._classify_cn_code(code6)
+            exchange = cn_exchange_for_code(code6)
+            market, asset = self._classify_cn_code(code6, exchange)
             hits.append(
                 SymbolHit(
                     f"{exchange}:{code6}",
@@ -117,7 +118,7 @@ class AkshareMarketDataProvider:
             hits.append(
                 SymbolHit(
                     f"HKEX:{code}",
-                    Market.HK,
+                    MarketRegion.HK,
                     AssetClass.EQUITY,
                     name=code,
                     provider=self.PROVIDER_CODE,
@@ -130,7 +131,7 @@ class AkshareMarketDataProvider:
             hits.append(
                 SymbolHit(
                     f"NASDAQ:{ticker}",
-                    Market.US,
+                    MarketRegion.US,
                     AssetClass.EQUITY,
                     name=ticker,
                     provider=self.PROVIDER_CODE,
@@ -139,7 +140,7 @@ class AkshareMarketDataProvider:
             hits.append(
                 SymbolHit(
                     f"NYSE:{ticker}",
-                    Market.US,
+                    MarketRegion.US,
                     AssetClass.EQUITY,
                     name=ticker,
                     provider=self.PROVIDER_CODE,
@@ -246,7 +247,7 @@ class AkshareMarketDataProvider:
 
     def _resolve_known_symbol(self, parsed: SymbolId) -> SymbolHit | None:
         if parsed.exchange in {"SSE", "SZSE", "BSE"}:
-            market, asset = self._classify_cn_code(parsed.code)
+            market, asset = self._classify_cn_code(parsed.code, parsed.exchange)
             name = parsed.code
             try:
                 for hit in self._search_a_share(parsed.code, limit=5):
@@ -257,21 +258,16 @@ class AkshareMarketDataProvider:
                 pass
             return SymbolHit(parsed.value, market, asset, name, self.PROVIDER_CODE)
         if parsed.exchange in {"HKEX", "HK"}:
-            return SymbolHit(parsed.value, Market.HK, AssetClass.EQUITY, parsed.code, self.PROVIDER_CODE)
+            return SymbolHit(parsed.value, MarketRegion.HK, AssetClass.EQUITY, parsed.code, self.PROVIDER_CODE)
         if parsed.exchange in {"NASDAQ", "NYSE", "AMEX", "US"}:
-            return SymbolHit(parsed.value, Market.US, AssetClass.EQUITY, parsed.code, self.PROVIDER_CODE)
+            return SymbolHit(parsed.value, MarketRegion.US, AssetClass.EQUITY, parsed.code, self.PROVIDER_CODE)
         if parsed.exchange in {"FUND", "OF"}:
-            return SymbolHit(parsed.value, Market.ETF, AssetClass.FUND, parsed.code, self.PROVIDER_CODE)
-        return SymbolHit(parsed.value, Market.US, AssetClass.EQUITY, parsed.code, self.PROVIDER_CODE)
+            return SymbolHit(parsed.value, MarketRegion.CN, AssetClass.MUTUAL_FUND, parsed.code, self.PROVIDER_CODE)
+        return SymbolHit(parsed.value, MarketRegion.US, AssetClass.EQUITY, parsed.code, self.PROVIDER_CODE)
 
     @staticmethod
-    def _classify_cn_code(code: str) -> tuple[Market, AssetClass]:
-        # Rough classification for display; bars still come from real APIs.
-        if code.startswith(("51", "15", "56", "58", "16")):
-            return Market.ETF, AssetClass.ETF
-        if code.startswith(("5", "1")) and not code.startswith(("51", "15")):
-            return Market.ETF, AssetClass.FUND
-        return Market.ASHARE, AssetClass.EQUITY
+    def _classify_cn_code(code: str, exchange: str | None = None) -> tuple[MarketRegion, AssetClass]:
+        return MarketRegion.CN, classify_cn_code(code, exchange)
 
     def _search_a_share(self, query: str, limit: int) -> list[SymbolHit]:
         assert self._ak is not None
@@ -335,7 +331,7 @@ class AkshareMarketDataProvider:
             hits.append(
                 SymbolHit(
                     f"{exchange}:{code}",
-                    Market.ETF,
+                    MarketRegion.CN,
                     AssetClass.ETF,
                     name=name,
                     provider=self.PROVIDER_CODE,

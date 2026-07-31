@@ -7,7 +7,7 @@ from caishenfolio_core.data.bar_interval import BarInterval
 from caishenfolio_core.data.models import (
     Adjustment,
     AssetClass,
-    Market,
+    MarketRegion,
     OhlcvBar,
     ProviderResult,
     SymbolId,
@@ -48,7 +48,7 @@ class YFinanceMarketDataProvider:
             yahoo = _to_yahoo_symbol(parsed)
             if yahoo is None:
                 return []
-            market = Market.US if parsed.exchange in {"NASDAQ", "NYSE", "AMEX", "US"} else Market.HK
+            market = MarketRegion.US if parsed.exchange in {"NASDAQ", "NYSE", "AMEX", "US"} else MarketRegion.HK
             return [
                 SymbolHit(
                     parsed.value,
@@ -64,14 +64,14 @@ class YFinanceMarketDataProvider:
         if not ticker.isalnum() and "." not in ticker:
             return []
         hits = [
-            SymbolHit(f"NASDAQ:{ticker}", Market.US, AssetClass.EQUITY, ticker, self.PROVIDER_CODE),
-            SymbolHit(f"NYSE:{ticker}", Market.US, AssetClass.EQUITY, ticker, self.PROVIDER_CODE),
+            SymbolHit(f"NASDAQ:{ticker}", MarketRegion.US, AssetClass.EQUITY, ticker, self.PROVIDER_CODE),
+            SymbolHit(f"NYSE:{ticker}", MarketRegion.US, AssetClass.EQUITY, ticker, self.PROVIDER_CODE),
         ]
         if ticker.isdigit() and len(ticker) <= 5:
             code = ticker.zfill(4) if len(ticker) <= 4 else ticker.zfill(5)
             hits.insert(
                 0,
-                SymbolHit(f"HKEX:{code}", Market.HK, AssetClass.EQUITY, code, self.PROVIDER_CODE),
+                SymbolHit(f"HKEX:{code}", MarketRegion.HK, AssetClass.EQUITY, code, self.PROVIDER_CODE),
             )
         return hits[:limit]
 

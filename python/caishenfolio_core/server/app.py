@@ -6,7 +6,7 @@ from datetime import date
 from typing import Any
 from urllib.parse import parse_qs
 
-from caishenfolio_core import PRODUCT_NAME, RESEARCH_DISCLAIMER, __version__
+from caishenfolio_core import PRODUCT_NAME, PRODUCT_PHASE, RESEARCH_DISCLAIMER, __version__
 from caishenfolio_core.data.bar_interval import BarInterval
 from caishenfolio_core.data.models import Adjustment
 from caishenfolio_core.market.bar_cache import BarsSqliteCache
@@ -63,7 +63,7 @@ class AnalyticsApp:
             "status": "ok",
             "product": PRODUCT_NAME,
             "version": __version__,
-            "phase": "P5",
+            "phase": PRODUCT_PHASE,
             "disclaimer": RESEARCH_DISCLAIMER,
             "live_trading_enabled": False,
             "grid_research_enabled": True,
@@ -508,7 +508,7 @@ class AnalyticsApp:
 
 
 def health_payload() -> dict[str, object]:
-    return AnalyticsApp(market=FixtureMarketDataProvider(), cache=None).health() | {"phase": "P4"}
+    return AnalyticsApp(market=FixtureMarketDataProvider(), cache=None).health()
 
 
 def validate_bind_host(host: str) -> str:

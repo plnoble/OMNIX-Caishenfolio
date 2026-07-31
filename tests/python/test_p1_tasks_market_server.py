@@ -6,6 +6,7 @@ import unittest
 from datetime import date
 from urllib.request import urlopen
 
+from caishenfolio_core import PRODUCT_NAME, PRODUCT_PHASE
 from caishenfolio_core.market.fixture import FixtureMarketDataProvider
 from caishenfolio_core.server.app import AnalyticsApp, dispatch
 from caishenfolio_core.server.http_server import serve
@@ -43,7 +44,7 @@ class DispatchTests(unittest.TestCase):
         app = AnalyticsApp(market=FixtureMarketDataProvider())
         status, health = dispatch(app, "GET", "/health")
         self.assertEqual(status, 200)
-        self.assertEqual(health["phase"], "P4")
+        self.assertEqual(health["phase"], PRODUCT_PHASE)
         self.assertEqual(health["market_provider"], "fixture")
         self.assertTrue(health["market_data_synthetic"])
 
@@ -91,7 +92,7 @@ class HttpServerSmokeTests(unittest.TestCase):
         self.assertIsNotNone(payload, msg=str(last_error))
         assert payload is not None
         self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["product"], "Caishenfolio")
+        self.assertEqual(payload["product"], PRODUCT_NAME)
 
 
 if __name__ == "__main__":

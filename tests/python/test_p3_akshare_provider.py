@@ -5,6 +5,7 @@ import unittest
 from datetime import date
 from unittest import mock
 
+from caishenfolio_core import PRODUCT_PHASE
 from caishenfolio_core.market.akshare_provider import AkshareMarketDataProvider
 from caishenfolio_core.market.factory import create_market_provider
 from caishenfolio_core.market.fixture import FixtureMarketDataProvider
@@ -19,7 +20,7 @@ class FactoryTests(unittest.TestCase):
         self.assertIsInstance(provider, FixtureMarketDataProvider)
 
     def test_akshare_explicit_name(self) -> None:
-        provider = create_market_provider("akshare")
+        provider = create_market_provider("akshare", use_cache=False)
         self.assertIsInstance(provider, AkshareMarketDataProvider)
 
     def test_auto_name(self) -> None:
@@ -48,7 +49,7 @@ class AkshareFailClosedTests(unittest.TestCase):
         app = AnalyticsApp(market=AkshareMarketDataProvider())
         status, health = dispatch(app, "GET", "/health")
         self.assertEqual(status, 200)
-        self.assertEqual(health["phase"], "P4")
+        self.assertEqual(health["phase"], PRODUCT_PHASE)
         self.assertEqual(health["market_provider"], "akshare")
         self.assertIn("market_provider_ready", health)
         self.assertFalse(health["market_data_synthetic"])

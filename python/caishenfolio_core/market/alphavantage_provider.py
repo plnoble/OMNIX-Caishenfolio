@@ -11,7 +11,7 @@ from caishenfolio_core.data.bar_interval import BarInterval
 from caishenfolio_core.data.models import (
     Adjustment,
     AssetClass,
-    Market,
+    MarketRegion,
     OhlcvBar,
     ProviderResult,
     SymbolId,
@@ -46,7 +46,7 @@ class AlphaVantageMarketDataProvider:
             return [
                 SymbolHit(
                     parsed.value,
-                    Market.US,
+                    MarketRegion.US,
                     AssetClass.EQUITY,
                     parsed.code,
                     self.PROVIDER_CODE,
@@ -55,8 +55,8 @@ class AlphaVantageMarketDataProvider:
         if q.isalpha():
             t = q.upper()
             return [
-                SymbolHit(f"NASDAQ:{t}", Market.US, AssetClass.EQUITY, t, self.PROVIDER_CODE),
-                SymbolHit(f"NYSE:{t}", Market.US, AssetClass.EQUITY, t, self.PROVIDER_CODE),
+                SymbolHit(f"NASDAQ:{t}", MarketRegion.US, AssetClass.EQUITY, t, self.PROVIDER_CODE),
+                SymbolHit(f"NYSE:{t}", MarketRegion.US, AssetClass.EQUITY, t, self.PROVIDER_CODE),
             ][:limit]
         return []
 

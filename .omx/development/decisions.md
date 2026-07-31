@@ -42,3 +42,24 @@
 - Rationale: no API keys in repo; covers A-share/HK/US/fund public endpoints; aligns with fail-closed (errors surface, never invent OHLCV).
 - Consequence: users must `pip install akshare pandas` and have network to upstream; offline tests force `fixture`.
 - Rejected for P3: paid commercial vendor keys in repo; silent fallback from real→fixture (would hide data truth).
+
+## 2026-07-31 - 重构定位：理财账本与研究双主线
+
+- Choice: 产品重心改为「资产账本 + 研究工作台」双主线，第一批覆盖 A股/港股/美股/日股 与 股票/ETF/场外基金/债券/可转债/汇率。
+- Choice: 保留 WPF + Python 双层；**账本领域下沉 C# Host**（SQLite + decimal + 汇率折算），Python 专注行情适配与研究分析。
+- Rationale: 符合 AGENTS.md「Host 拥有状态与审计权威」；Python 侧无需持有长期状态即可扩展数据源。
+- Rejected: 领域逻辑全放 Python（违反权威边界）；换栈为本地 Web（P3-P5 的桌面 UI 全部作废）。
+- 记账来源: 手工录入 + 通用 CSV 导入（券商专用格式解析留到后续）。
+
+## 2026-07-31 - R0 市场语义：地区与品种分离
+
+- Choice: 用 `MarketRegion` + `AssetClass` 取代原 `Market` 枚举。
+- Rationale: 原枚举把 `Etf` 当成市场，导致「美股 ETF」无法表达；账本按地区与品种两个维度做资产配置聚合，必须正交。
+- Consequence: 旧持久化字符串（"ashare"/"etf"/"fund"）保留别名解析，不破坏已存的自选与计划数据。
+- Choice: 金额一律 `Money`(decimal + 货币)，跨币种运算抛错而非静默相加。
+- Rationale: 质量门禁要求钱不得用二进制浮点；多币种组合下静默相加是最危险的一类错误。
+
+## 2026-07-31 - 阶段号单一来源
+
+- Choice: `PRODUCT_PHASE` 定义在 `caishenfolio_core/__init__.py`，C# `ProductInfo.Phase` 与之对齐；测试断言常量而非字面量。
+- Rationale: 阶段号此前在三处硬编码并已漂移（P5/P4/旧产品名），使 6 个测试长期红灯、门禁失效。

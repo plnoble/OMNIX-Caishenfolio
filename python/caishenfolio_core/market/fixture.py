@@ -7,7 +7,7 @@ from caishenfolio_core.data.bar_interval import BarInterval
 from caishenfolio_core.data.models import (
     Adjustment,
     AssetClass,
-    Market,
+    MarketRegion,
     OhlcvBar,
     ProviderResult,
     SymbolId,
@@ -17,7 +17,7 @@ from caishenfolio_core.data.models import (
 @dataclass(frozen=True)
 class SymbolSeed:
     symbol: str
-    market: Market
+    market: MarketRegion
     asset_class: AssetClass
     name: str
     currency: str
@@ -27,7 +27,7 @@ class SymbolSeed:
 @dataclass(frozen=True)
 class SymbolHit:
     symbol: str
-    market: Market
+    market: MarketRegion
     asset_class: AssetClass
     name: str
     provider: str
@@ -46,11 +46,16 @@ class FixtureMarketDataProvider:
     PROVIDER_CODE = "fixture"
 
     _UNIVERSE: tuple[SymbolSeed, ...] = (
-        SymbolSeed("SSE:600000", Market.ASHARE, AssetClass.EQUITY, "浦发银行", "CNY", 10.0),
-        SymbolSeed("SZSE:000001", Market.ASHARE, AssetClass.EQUITY, "平安银行", "CNY", 12.5),
-        SymbolSeed("HKEX:00700", Market.HK, AssetClass.EQUITY, "Tencent", "HKD", 320.0),
-        SymbolSeed("NASDAQ:AAPL", Market.US, AssetClass.EQUITY, "Apple", "USD", 180.0),
-        SymbolSeed("NYSE:SPY", Market.US, AssetClass.ETF, "SPDR S&P 500", "USD", 450.0),
+        SymbolSeed("SSE:600000", MarketRegion.CN, AssetClass.EQUITY, "浦发银行", "CNY", 10.0),
+        SymbolSeed("SZSE:000001", MarketRegion.CN, AssetClass.EQUITY, "平安银行", "CNY", 12.5),
+        SymbolSeed("SSE:510300", MarketRegion.CN, AssetClass.ETF, "沪深300ETF", "CNY", 4.2),
+        SymbolSeed("SSE:113050", MarketRegion.CN, AssetClass.CONVERTIBLE_BOND, "南银转债", "CNY", 118.0),
+        SymbolSeed("FUND:110022", MarketRegion.CN, AssetClass.MUTUAL_FUND, "易方达消费行业", "CNY", 3.5),
+        SymbolSeed("HKEX:00700", MarketRegion.HK, AssetClass.EQUITY, "Tencent", "HKD", 320.0),
+        SymbolSeed("NASDAQ:AAPL", MarketRegion.US, AssetClass.EQUITY, "Apple", "USD", 180.0),
+        SymbolSeed("NYSE:SPY", MarketRegion.US, AssetClass.ETF, "SPDR S&P 500", "USD", 450.0),
+        SymbolSeed("TSE:7203", MarketRegion.JP, AssetClass.EQUITY, "トヨタ自動車", "JPY", 2800.0),
+        SymbolSeed("FX:USDCNY", MarketRegion.GLOBAL, AssetClass.FX, "美元/人民币", "CNY", 7.2),
     )
 
     def search(self, query: str = "", limit: int = 10) -> list[SymbolHit]:

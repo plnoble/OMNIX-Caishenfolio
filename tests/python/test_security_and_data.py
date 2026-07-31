@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timezone
 
+from caishenfolio_core import PRODUCT_NAME, PRODUCT_PHASE
 from caishenfolio_core.data.models import Adjustment, OhlcvBar, ProviderResult, SymbolId
 from caishenfolio_core.security.loopback import ensure_loopback, is_loopback_host
 from caishenfolio_core.security.redaction import redact_mapping, redact_text
@@ -62,9 +63,9 @@ class SymbolAndProviderTests(unittest.TestCase):
     def test_health_payload(self) -> None:
         payload = health_payload()
         self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["product"], "Caishenfolio")
+        self.assertEqual(payload["product"], PRODUCT_NAME)
         self.assertFalse(payload["live_trading_enabled"])
-        self.assertEqual(payload["phase"], "P4")
+        self.assertEqual(payload["phase"], PRODUCT_PHASE)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,8 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from functools import lru_cache
 from pathlib import Path
 
-from caishenfolio_core.data.models import AssetClass, Market
+from caishenfolio_core.data.markets import classify_cn_code, cn_exchange_for_code
+from caishenfolio_core.data.models import MarketRegion
 from caishenfolio_core.market.fixture import SymbolHit
 
 # Offline seed — always works for common names (e.g. 平安).
@@ -110,8 +111,7 @@ def _load_from_akshare() -> list[tuple[str, str, str]]:
         name = str(row[name_col]).strip()
         if not name or name == "nan":
             continue
-        exchange = "SSE" if code.startswith(("5", "6", "9")) else "SZSE"
-        out.append((code, name, exchange))
+        out.append((code, name, cn_exchange_for_code(code)))
     if out:
         _save_to_disk(out)
     return out
@@ -165,15 +165,10 @@ def fuzzy_search_a_share(query: str, limit: int = 20) -> list[SymbolHit]:
     for code, name, exchange in load_a_share_name_index():
         name_l = name.lower()
         code_l = code.lower()
-        asset = (
-            AssetClass.ETF
-            if code.startswith(("51", "15", "56", "58", "16"))
-            else AssetClass.EQUITY
-        )
         hit = SymbolHit(
             f"{exchange}:{code}",
-            Market.ASHARE,
-            asset,
+            MarketRegion.CN,
+            classify_cn_code(code, exchange),
             name,
             provider="symbol_index",
         )
