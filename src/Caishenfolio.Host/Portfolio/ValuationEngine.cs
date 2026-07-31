@@ -17,8 +17,11 @@ public sealed record PriceQuote
     /// <summary>Percent spread between the highest and lowest source price.</summary>
     public decimal SpreadPercent { get; init; }
 
-    /// <summary>Each source and its price, for showing what disagreed.</summary>
+    /// <summary>Each source with its price and deviation, for showing what disagreed.</summary>
     public string Sources { get; init; } = "";
+
+    /// <summary>Sources deviating from the median beyond the tolerance.</summary>
+    public string Outliers { get; init; } = "";
 
     public static PriceQuote Of(
         string symbol,
@@ -28,7 +31,8 @@ public sealed record PriceQuote
         string provider = "",
         int sourceCount = 0,
         decimal spreadPercent = 0m,
-        string sources = "")
+        string sources = "",
+        string outliers = "")
     {
         if (price < 0m)
         {
@@ -45,6 +49,7 @@ public sealed record PriceQuote
             SourceCount = sourceCount,
             SpreadPercent = spreadPercent,
             Sources = sources,
+            Outliers = outliers,
         };
     }
 }

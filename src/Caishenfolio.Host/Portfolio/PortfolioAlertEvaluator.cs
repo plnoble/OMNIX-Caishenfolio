@@ -115,6 +115,12 @@ public static class PortfolioAlertEvaluator
                 continue;
             }
 
+            // Naming the deviating source is the actionable part: it tells you which feed to
+            // distrust, rather than only that something is off.
+            var blame = string.IsNullOrEmpty(quote.Outliers)
+                ? ""
+                : $"偏离最大的是 {quote.Outliers}。";
+
             alerts.Add(new PortfolioAlert
             {
                 Kind = AlertKind.PriceDisagreement,
@@ -122,7 +128,8 @@ public static class PortfolioAlertEvaluator
                 Symbol = position.Position.Symbol,
                 Title = "数据源价格不一致",
                 Message = $"{position.Position.Symbol} 的 {quote.SourceCount} 个数据源相差 " +
-                          $"{quote.SpreadPercent:0.##}%（{quote.Sources}），已取中位数 {quote.Price:#,0.####}，市值可能不准。",
+                          $"{quote.SpreadPercent:0.##}%（{quote.Sources}）。{blame}" +
+                          $"已取中位数 {quote.Price:#,0.####}，市值可能不准。",
             });
         }
 

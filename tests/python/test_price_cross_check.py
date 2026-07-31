@@ -97,7 +97,7 @@ class CrossCheckTests(unittest.TestCase):
         self.assertAlmostEqual(result.data.price, 10.1, places=6)
         self.assertIsNotNone(_warning_value(result.warnings, "price_disagreement:"))
 
-    def test_every_source_price_is_recorded(self) -> None:
+    def test_every_source_price_and_deviation_is_recorded(self) -> None:
         composite = CompositeMarketDataProvider([_StubProvider("a", 10.0), _StubProvider("b", 12.0)])
 
         result = composite.latest_quote("SSE:600000", cross_check=True)
@@ -105,9 +105,32 @@ class CrossCheckTests(unittest.TestCase):
         assert result.data is not None
         payload = result.data.to_dict()
         self.assertEqual(payload["source_count"], 2)
-        self.assertIn("a=10", str(payload["sources"]))
-        self.assertIn("b=12", str(payload["sources"]))
+        # Each source carries its own deviation from the median, not just the price.
+        self.assertIn("a=10(-9.1%)", str(payload["sources"]))
+        self.assertIn("b=12(+9.1%)", str(payload["sources"]))
         self.assertGreater(payload["spread_pct"], 0)
+
+    def test_the_deviating_source_is_named(self) -> None:
+        composite = CompositeMarketDataProvider([
+            _StubProvider("good_a", 10.0),
+            _StubProvider("good_b", 10.05),
+            _StubProvider("bad", 30.0),
+        ])
+
+        result = composite.latest_quote("SSE:600000", cross_check=True, tolerance_pct=2.0)
+
+        assert result.data is not None
+        # Knowing which feed to distrust is the actionable part.
+        self.assertEqual(result.data.to_dict()["outliers"], "bad")
+        self.assertIn("outliers:bad", result.warnings)
+
+    def test_agreeing_sources_name_no_outlier(self) -> None:
+        composite = CompositeMarketDataProvider([_StubProvider("a", 10.0), _StubProvider("b", 10.05)])
+
+        result = composite.latest_quote("SSE:600000", cross_check=True, tolerance_pct=2.0)
+
+        assert result.data is not None
+        self.assertEqual(result.data.to_dict()["outliers"], "")
 
     def test_a_single_available_source_still_answers(self) -> None:
         composite = CompositeMarketDataProvider([_StubProvider("a", 10.0), _StubProvider("b", None)])

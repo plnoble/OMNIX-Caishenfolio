@@ -601,9 +601,13 @@ public sealed class MarketQuoteDto
     [JsonPropertyName("spread_pct")]
     public decimal SpreadPercent { get; set; }
 
-    /// <summary>Each source and its price, e.g. <c>akshare=10.5;yfinance=10.7</c>.</summary>
+    /// <summary>Each source, its price and its deviation, e.g. <c>akshare=10(-9.1%);yfinance=12(+9.1%)</c>.</summary>
     [JsonPropertyName("sources")]
     public string Sources { get; set; } = "";
+
+    /// <summary>Sources whose price deviates from the median by more than the tolerance.</summary>
+    [JsonPropertyName("outliers")]
+    public string Outliers { get; set; } = "";
 }
 
 public sealed class MarketNavResponse

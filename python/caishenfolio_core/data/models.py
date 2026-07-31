@@ -112,6 +112,7 @@ class Quote:
             "source_count": int(provenance.get("cross_check_count", 0) or 0),
             "spread_pct": float(provenance.get("cross_check_spread_pct", 0) or 0),
             "sources": provenance.get("cross_check_sources", ""),
+            "outliers": provenance.get("cross_check_outliers", ""),
             "provenance": provenance,
         }
 

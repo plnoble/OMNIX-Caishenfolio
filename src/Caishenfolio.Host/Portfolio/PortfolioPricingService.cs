@@ -50,7 +50,8 @@ public sealed class AnalyticsCorePricingSource(AnalyticsCoreClient client) : IMa
             data.Provider,
             data.SourceCount,
             data.SpreadPercent,
-            data.Sources);
+            data.Sources,
+            data.Outliers);
     }
 
     public async Task<FxRate?> TryGetFxRateAsync(

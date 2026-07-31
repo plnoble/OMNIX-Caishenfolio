@@ -29,7 +29,8 @@ public class PriceCrossCheckTests : IDisposable
     public void DisagreeingSourcesRaiseAWarning()
     {
         var quote = PriceQuote.Of("SSE:600000", 11m, "CNY", AsOf, "auto",
-            sourceCount: 2, spreadPercent: 18.18m, sources: "akshare=10;yfinance=12");
+            sourceCount: 2, spreadPercent: 18.18m,
+            sources: "akshare=10(-9.1%);yfinance=12(+9.1%)", outliers: "yfinance");
 
         var alert = Assert.Single(
             PortfolioAlertEvaluator.Evaluate(Valuation(quote), priceTolerancePercent: 2m),
@@ -38,8 +39,23 @@ public class PriceCrossCheckTests : IDisposable
         Assert.Equal(AlertSeverity.Warning, alert.Severity);
         Assert.Equal("SSE:600000", alert.Symbol);
         Assert.Contains("18.18%", alert.Message);
-        Assert.Contains("akshare=10;yfinance=12", alert.Message);
+        Assert.Contains("akshare=10(-9.1%)", alert.Message);
+        // Names the feed to distrust, not just that something disagreed.
+        Assert.Contains("偏离最大的是 yfinance", alert.Message);
         Assert.Contains("已取中位数", alert.Message);
+    }
+
+    [Fact]
+    public void WithoutAnIdentifiedOutlierTheMessageOmitsTheBlameClause()
+    {
+        var quote = PriceQuote.Of("SSE:600000", 11m, "CNY", AsOf, "auto",
+            sourceCount: 2, spreadPercent: 18.18m, sources: "a=10;b=12");
+
+        var alert = Assert.Single(
+            PortfolioAlertEvaluator.Evaluate(Valuation(quote), priceTolerancePercent: 2m),
+            a => a.Kind == AlertKind.PriceDisagreement);
+
+        Assert.DoesNotContain("偏离最大的是", alert.Message);
     }
 
     [Fact]

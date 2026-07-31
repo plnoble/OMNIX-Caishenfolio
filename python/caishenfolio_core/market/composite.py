@@ -187,7 +187,22 @@ class CompositeMarketDataProvider:
         spread_pct = 0.0 if median <= 0 else (prices[-1] - prices[0]) / median * 100.0
 
         chosen = min(comparable, key=lambda item: abs(item[1].price - median))
-        sources = ";".join(f"{code}={q.price:g}" for code, q in quotes)
+
+        # Per-source deviation, not just the overall spread: knowing *which* source is off is
+        # what lets you decide whether to distrust it.
+        deviations = {
+            code: 0.0 if median <= 0 else (q.price - median) / median * 100.0
+            for code, q in comparable
+        }
+        outliers = sorted(
+            (code for code, dev in deviations.items() if abs(dev) > tolerance_pct),
+            key=lambda code: abs(deviations[code]),
+            reverse=True,
+        )
+        sources = ";".join(
+            f"{code}={q.price:g}" + (f"({deviations[code]:+.1f}%)" if code in deviations else "")
+            for code, q in quotes
+        )
 
         warnings = ["cross_checked", f"sources:{len(comparable)}"]
         if len(comparable) < 2:
@@ -196,6 +211,8 @@ class CompositeMarketDataProvider:
             warnings.append("currency_disagreement:" + ",".join(mismatched))
         if spread_pct > tolerance_pct:
             warnings.append(f"price_disagreement:{spread_pct:.2f}")
+        if outliers:
+            warnings.append("outliers:" + ",".join(outliers))
 
         quote = Quote(
             symbol=chosen[1].symbol,
@@ -208,6 +225,7 @@ class CompositeMarketDataProvider:
                 "cross_check_sources": sources,
                 "cross_check_spread_pct": f"{spread_pct:.4f}",
                 "cross_check_count": str(len(comparable)),
+                "cross_check_outliers": ",".join(outliers),
             },
         )
         return ProviderResult.success(self.PROVIDER_CODE, quote, warnings=tuple(warnings))
