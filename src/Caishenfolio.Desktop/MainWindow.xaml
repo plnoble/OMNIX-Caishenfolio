@@ -154,9 +154,26 @@
         <Grid Grid.Column="1">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
+
+            <!-- Update banner: only ever shown for a genuinely newer published release -->
+            <Border Grid.Row="1" x:Name="UpdateBanner" Visibility="Collapsed"
+                    Background="#1E3A2E" BorderBrush="{StaticResource BrushAccent}" BorderThickness="0,0,0,1"
+                    Padding="12,8">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="✕" Padding="8,2" Margin="6,0,0,0"
+                            ToolTip="本次不再显示" Click="DismissUpdateBanner_OnClick" />
+                    <Button DockPanel.Dock="Right" Content="忽略此版本" Padding="10,3" Margin="6,0,0,0"
+                            Click="IgnoreUpdateVersion_OnClick" />
+                    <Button DockPanel.Dock="Right" Content="去下载" Padding="10,3"
+                            Click="OpenReleaseButton_OnClick" />
+                    <TextBlock x:Name="UpdateBannerText" VerticalAlignment="Center" TextWrapping="Wrap"
+                               Foreground="{StaticResource BrushFgPrimary}" />
+                </DockPanel>
+            </Border>
 
             <!-- Top context bar -->
             <Border Grid.Row="0" Background="{StaticResource BrushBgPanel}" BorderBrush="{StaticResource BrushBorder}" BorderThickness="0,0,0,1" Padding="12,8">
@@ -213,7 +230,7 @@
             </Border>
 
             <!-- Pages host -->
-            <Grid Grid.Row="1" Margin="10">
+            <Grid Grid.Row="2" Margin="10">
                 <!-- ===== 我的资产 ===== -->
                 <Border x:Name="PageOverview" Background="{StaticResource BrushBgApp}" CornerRadius="10"
                         BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
@@ -479,7 +496,7 @@
             </Grid>
 
             <!-- Bottom status -->
-            <Border Grid.Row="2" Background="{StaticResource BrushBgNav}" BorderBrush="{StaticResource BrushBorder}"
+            <Border Grid.Row="3" Background="{StaticResource BrushBgNav}" BorderBrush="{StaticResource BrushBorder}"
                     BorderThickness="0,1,0,0" Padding="12,8">
                 <TextBlock x:Name="StatusText" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"
                            Foreground="{StaticResource BrushFgPrimary}" />

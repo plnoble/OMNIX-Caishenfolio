@@ -35,6 +35,8 @@ public partial class MainWindow : Window
     private bool _barsExpanded;
     private string _currentPage = "market";
     private string? _latestReleaseUrl;
+    private string? _pendingUpdateVersion;
+    private readonly UpdatePreferenceStore _updatePreferences;
 
     public MainWindow()
     {
@@ -64,6 +66,7 @@ public partial class MainWindow : Window
         _watchlist = new WatchlistStore(_pathRoots.GetRoot(PathRootKind.State));
         _pricePlan = new PricePlanStore(_pathRoots.GetRoot(PathRootKind.State));
         _portfolio = PortfolioStore.UnderStateRoot(_pathRoots.GetRoot(PathRootKind.State));
+        _updatePreferences = new UpdatePreferenceStore(_pathRoots.GetRoot(PathRootKind.State));
         _pythonRuntime = new PythonRuntimeProvisioner(new PythonRuntimeOptions
         {
             StateRoot = _pathRoots.GetRoot(PathRootKind.State),
@@ -106,6 +109,9 @@ public partial class MainWindow : Window
             AttachPortfolioPricing();
             await _portfolioModel.RefreshAsync().ConfigureAwait(true);
             await SyncWatchlistCacheQuietAsync().ConfigureAwait(true);
+
+            // Last, so a slow or unreachable GitHub never delays the ledger or the core.
+            await CheckForUpdateQuietlyAsync().ConfigureAwait(true);
         };
 
         Closed += (_, _) =>
@@ -123,21 +129,79 @@ public partial class MainWindow : Window
         UpdateStatusText.Text = "正在向 GitHub 查询最新发布…";
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            var result = await new UpdateChecker(new GitHubReleaseFeed(http))
-                .CheckAsync()
-                .ConfigureAwait(true);
-
+            var result = await CheckForUpdateAsync().ConfigureAwait(true);
             UpdateStatusText.Text = result.Message;
-            _latestReleaseUrl = result.ReleaseUrl;
-            OpenReleaseButton.Visibility = string.IsNullOrEmpty(_latestReleaseUrl)
-                ? Visibility.Collapsed
-                : Visibility.Visible;
+
+            // A manual check shows the banner even for a version previously ignored: asking
+            // explicitly overrides the earlier "don't remind me".
+            if (result.HasUpdate)
+            {
+                ShowUpdateBanner(result);
+            }
         }
         finally
         {
             CheckUpdateButton.IsEnabled = true;
         }
+    }
+
+    /// <summary>
+    /// Silent startup check. Never blocks startup and never interrupts: it only surfaces a
+    /// banner for a genuinely newer published release the user has not already dismissed.
+    /// </summary>
+    private async Task CheckForUpdateQuietlyAsync()
+    {
+        try
+        {
+            var result = await CheckForUpdateAsync().ConfigureAwait(true);
+            UpdateStatusText.Text = result.Message;
+            if (_updatePreferences.Load().ShouldNotify(result))
+            {
+                ShowUpdateBanner(result);
+            }
+        }
+        catch (Exception)
+        {
+            // Offline, proxied, rate-limited — none of that is worth a word on startup.
+        }
+    }
+
+    private async Task<UpdateCheckResult> CheckForUpdateAsync()
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        var result = await new UpdateChecker(new GitHubReleaseFeed(http))
+            .CheckAsync()
+            .ConfigureAwait(true);
+
+        _latestReleaseUrl = result.ReleaseUrl;
+        OpenReleaseButton.Visibility = string.IsNullOrEmpty(_latestReleaseUrl)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        _updatePreferences.RecordCheck(DateTimeOffset.UtcNow);
+        return result;
+    }
+
+    private void ShowUpdateBanner(UpdateCheckResult result)
+    {
+        _pendingUpdateVersion = result.LatestVersion;
+        UpdateBannerText.Text =
+            $"发现新版本 v{result.LatestVersion}（当前 v{result.CurrentVersion}）。" +
+            "下载后运行 MSI 即可原地升级，账本数据不受影响。";
+        UpdateBanner.Visibility = Visibility.Visible;
+    }
+
+    private void DismissUpdateBanner_OnClick(object sender, RoutedEventArgs e) =>
+        UpdateBanner.Visibility = Visibility.Collapsed;
+
+    private void IgnoreUpdateVersion_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(_pendingUpdateVersion))
+        {
+            _updatePreferences.IgnoreVersion(_pendingUpdateVersion);
+            StatusText.Text = $"已忽略 v{_pendingUpdateVersion}；有更新的版本时仍会提示。";
+        }
+
+        UpdateBanner.Visibility = Visibility.Collapsed;
     }
 
     private void OpenReleaseButton_OnClick(object sender, RoutedEventArgs e)
