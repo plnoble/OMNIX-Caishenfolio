@@ -11,7 +11,7 @@ namespace Caishenfolio.Host.Portfolio;
 public sealed class PortfolioStore : IDisposable
 {
     /// <summary>Bump when the schema changes and add the matching step in <see cref="Migrate"/>.</summary>
-    public const int SchemaVersion = 4;
+    public const int SchemaVersion = 5;
 
     private readonly string _connectionString;
     private readonly object _gate = new();
@@ -417,6 +417,179 @@ public sealed class PortfolioStore : IDisposable
     public FxConverter CreateFxConverter(DateOnly? asOf = null, string pivot = Currencies.Usd) =>
         new(ListFxRates(asOf), pivot);
 
+    // --- IPO subscriptions ---------------------------------------------------------
+
+    /// <summary>
+    /// Saves the subscription and, once it becomes a real holding, mirrors it into the ledger so
+    /// positions live in one place. The mirrored rows use deterministic ids, so re-saving after
+    /// each status change updates them rather than duplicating the position.
+    /// </summary>
+    public IpoSubscription SaveIpoSubscription(IpoSubscription subscription)
+    {
+        ArgumentNullException.ThrowIfNull(subscription);
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = tx;
+                command.CommandText = """
+                    INSERT INTO ipo_subscriptions (
+                        id, account_id, symbol, name, subscribe_date, status, currency,
+                        subscribed_quantity, allotted_quantity, issue_price,
+                        payment_date, listing_date, sold_date, sold_price, fee, note)
+                    VALUES (
+                        $id, $account, $symbol, $name, $subscribed, $status, $currency,
+                        $subQty, $allotQty, $price,
+                        $paid, $listed, $sold, $soldPrice, $fee, $note)
+                    ON CONFLICT(id) DO UPDATE SET
+                        status = excluded.status,
+                        name = excluded.name,
+                        allotted_quantity = excluded.allotted_quantity,
+                        payment_date = excluded.payment_date,
+                        listing_date = excluded.listing_date,
+                        sold_date = excluded.sold_date,
+                        sold_price = excluded.sold_price,
+                        fee = excluded.fee,
+                        note = excluded.note;
+                    """;
+                command.Parameters.AddWithValue("$id", subscription.Id);
+                command.Parameters.AddWithValue("$account", subscription.AccountId);
+                command.Parameters.AddWithValue("$symbol", subscription.Symbol);
+                command.Parameters.AddWithValue("$name", subscription.Name);
+                command.Parameters.AddWithValue("$subscribed", subscription.SubscribeDate.ToString("yyyy-MM-dd"));
+                command.Parameters.AddWithValue("$status", subscription.Status.ToString());
+                command.Parameters.AddWithValue("$currency", subscription.Currency);
+                command.Parameters.AddWithValue("$subQty", subscription.SubscribedQuantity);
+                command.Parameters.AddWithValue("$allotQty", subscription.AllottedQuantity);
+                command.Parameters.AddWithValue("$price", subscription.IssuePrice);
+                command.Parameters.AddWithValue("$paid", DateOrNull(subscription.PaymentDate));
+                command.Parameters.AddWithValue("$listed", DateOrNull(subscription.ListingDate));
+                command.Parameters.AddWithValue("$sold", DateOrNull(subscription.SoldDate));
+                command.Parameters.AddWithValue("$soldPrice", subscription.SoldPrice);
+                command.Parameters.AddWithValue("$fee", subscription.Fee);
+                command.Parameters.AddWithValue("$note", subscription.Note);
+                command.ExecuteNonQuery();
+            }
+
+            foreach (var transaction in subscription.ToLedgerTransactions())
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = tx;
+                command.CommandText = """
+                    INSERT INTO transactions (
+                        id, account_id, kind, trade_date, symbol, quantity, price, currency,
+                        fee, tax, cash_amount, counter_currency, counter_amount, fx_rate,
+                        note, import_batch_id, recorded_at)
+                    VALUES (
+                        $id, $account, $kind, $date, $symbol, $qty, $price, $currency,
+                        $fee, 0, 0, '', 0, 0, $note, $batch, $recorded)
+                    ON CONFLICT(id) DO UPDATE SET
+                        trade_date = excluded.trade_date,
+                        quantity = excluded.quantity,
+                        price = excluded.price,
+                        fee = excluded.fee,
+                        note = excluded.note;
+                    """;
+                command.Parameters.AddWithValue("$id", transaction.Id);
+                command.Parameters.AddWithValue("$account", transaction.AccountId);
+                command.Parameters.AddWithValue("$kind", transaction.Kind.ToString());
+                command.Parameters.AddWithValue("$date", transaction.TradeDate.ToString("yyyy-MM-dd"));
+                command.Parameters.AddWithValue("$symbol", transaction.Symbol);
+                command.Parameters.AddWithValue("$qty", transaction.Quantity);
+                command.Parameters.AddWithValue("$price", transaction.Price);
+                command.Parameters.AddWithValue("$currency", transaction.Currency);
+                command.Parameters.AddWithValue("$fee", transaction.Fee);
+                command.Parameters.AddWithValue("$note", transaction.Note);
+                command.Parameters.AddWithValue("$batch", IpoBatchId);
+                command.Parameters.AddWithValue("$recorded", transaction.RecordedAt.ToString("O"));
+                command.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
+
+        return subscription;
+    }
+
+    /// <summary>Import batch tag on ledger rows that came from an IPO record.</summary>
+    public const string IpoBatchId = "ipo";
+
+    public IReadOnlyList<IpoSubscription> ListIpoSubscriptions(string? accountId = null)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, account_id, symbol, name, subscribe_date, status, currency,
+                       subscribed_quantity, allotted_quantity, issue_price,
+                       payment_date, listing_date, sold_date, sold_price, fee, note
+                FROM ipo_subscriptions
+                WHERE ($account IS NULL OR account_id = $account)
+                ORDER BY subscribe_date DESC, id;
+                """;
+            command.Parameters.AddWithValue("$account", (object?)accountId ?? DBNull.Value);
+
+            using var reader = command.ExecuteReader();
+            var results = new List<IpoSubscription>();
+            while (reader.Read())
+            {
+                results.Add(new IpoSubscription
+                {
+                    Id = reader.GetString(0),
+                    AccountId = reader.GetString(1),
+                    Symbol = reader.GetString(2),
+                    Name = reader.GetString(3),
+                    SubscribeDate = DateOnly.ParseExact(reader.GetString(4), "yyyy-MM-dd"),
+                    Status = Enum.Parse<IpoStatus>(reader.GetString(5)),
+                    Currency = reader.GetString(6),
+                    SubscribedQuantity = reader.GetDecimal(7),
+                    AllottedQuantity = reader.GetDecimal(8),
+                    IssuePrice = reader.GetDecimal(9),
+                    PaymentDate = ReadDate(reader, 10),
+                    ListingDate = ReadDate(reader, 11),
+                    SoldDate = ReadDate(reader, 12),
+                    SoldPrice = reader.GetDecimal(13),
+                    Fee = reader.GetDecimal(14),
+                    Note = reader.GetString(15),
+                });
+            }
+
+            return results;
+        }
+    }
+
+    public bool RemoveIpoSubscription(string id)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            using var command = connection.CreateCommand();
+            command.Transaction = tx;
+            // The mirrored ledger rows go with it, or the position would outlive its record.
+            command.CommandText = """
+                DELETE FROM transactions WHERE id = $buy OR id = $sell;
+                DELETE FROM ipo_subscriptions WHERE id = $id;
+                """;
+            command.Parameters.AddWithValue("$id", id);
+            command.Parameters.AddWithValue("$buy", $"txn_ipo_buy_{id}");
+            command.Parameters.AddWithValue("$sell", $"txn_ipo_sell_{id}");
+            var affected = command.ExecuteNonQuery();
+            tx.Commit();
+            return affected > 0;
+        }
+    }
+
+    private static object DateOrNull(DateOnly? value) =>
+        value is null ? DBNull.Value : value.Value.ToString("yyyy-MM-dd");
+
+    private static DateOnly? ReadDate(SqliteDataReader reader, int index) =>
+        reader.IsDBNull(index) ? null : DateOnly.ParseExact(reader.GetString(index), "yyyy-MM-dd");
+
     // --- settings ------------------------------------------------------------------
 
     /// <summary>Stored preferences, falling back to defaults for anything never set.</summary>
@@ -670,6 +843,32 @@ public sealed class PortfolioStore : IDisposable
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+                """);
+        }
+
+        if (current < 5)
+        {
+            Execute(connection, tx, """
+                CREATE TABLE IF NOT EXISTS ipo_subscriptions (
+                    id TEXT PRIMARY KEY,
+                    account_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    name TEXT NOT NULL DEFAULT '',
+                    subscribe_date TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    currency TEXT NOT NULL,
+                    subscribed_quantity TEXT NOT NULL DEFAULT '0',
+                    allotted_quantity TEXT NOT NULL DEFAULT '0',
+                    issue_price TEXT NOT NULL DEFAULT '0',
+                    payment_date TEXT,
+                    listing_date TEXT,
+                    sold_date TEXT,
+                    sold_price TEXT NOT NULL DEFAULT '0',
+                    fee TEXT NOT NULL DEFAULT '0',
+                    note TEXT NOT NULL DEFAULT ''
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_ipo_account ON ipo_subscriptions(account_id);
                 """);
         }
 
