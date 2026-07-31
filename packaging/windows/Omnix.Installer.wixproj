@@ -11,7 +11,10 @@
     <Platform>x64</Platform>
     <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
     <DesktopPublishOutput>$(MSBuildProjectDirectory)\obj\$(Configuration)\DesktopPublishOutput\</DesktopPublishOutput>
-    <DefineConstants>DesktopPublishOutput=$(DesktopPublishOutput);ProductVersion=$(OmnixVersion)</DefineConstants>
+    <!-- Harvest from a staged copy: WiX's Files element has no Exclude, and __pycache__ or a
+         stale egg-info on a developer machine must not end up inside the MSI. -->
+    <PythonSource>$(MSBuildProjectDirectory)\obj\$(Configuration)\PythonStage\</PythonSource>
+    <DefineConstants>DesktopPublishOutput=$(DesktopPublishOutput);PythonSource=$(PythonSource);ProductVersion=$(OmnixVersion)</DefineConstants>
     <PackageVersion>$(OmnixVersion)</PackageVersion>
     <!-- Chinese wizard to match the app's own language. -->
     <Cultures>zh-CN</Cultures>
@@ -21,6 +24,21 @@
     <!-- Without this the MSI runs with the basic progress-only UI: no install-location page. -->
     <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
   </ItemGroup>
+
+  <Target Name="StagePythonCore" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <PythonManifest Include="$(MSBuildProjectDirectory)\..\..\python\pyproject.toml" />
+      <PythonModule Include="$(MSBuildProjectDirectory)\..\..\python\caishenfolio_core\**\*"
+                    Exclude="$(MSBuildProjectDirectory)\..\..\python\caishenfolio_core\**\__pycache__\**\*" />
+    </ItemGroup>
+    <RemoveDir Directories="$(PythonSource)" />
+    <!-- RecursiveDir is relative to each wildcard root, so the package folder has to be named
+         explicitly; without it the module is flattened and the core cannot be imported. -->
+    <Copy SourceFiles="@(PythonManifest)" DestinationFolder="$(PythonSource)" />
+    <Copy SourceFiles="@(PythonModule)"
+          DestinationFiles="@(PythonModule -&gt; '$(PythonSource)caishenfolio_core\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Message Text="Staged Python core: @(PythonModule-&gt;Count()) module files" Importance="high" />
+  </Target>
 
   <Target Name="RestoreDesktopForInstaller" BeforeTargets="PublishDesktopForInstaller">
     <MSBuild Projects="..\..\src\Caishenfolio.Desktop\Caishenfolio.Desktop.csproj"

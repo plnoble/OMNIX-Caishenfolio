@@ -1,6 +1,6 @@
 [project]
 name = "caishenfolio-core"
-version = "0.11.0"
+version = "0.11.1"
 description = "Caishenfolio Analytics Core — research/simulation only"
 requires-python = ">=3.12"
 dependencies = []

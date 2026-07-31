@@ -37,6 +37,7 @@ public partial class MainWindow : Window
     private string? _latestReleaseUrl;
     private string? _pendingUpdateVersion;
     private readonly UpdatePreferenceStore _updatePreferences;
+    private readonly string? _coreRoot;
 
     public MainWindow()
     {
@@ -67,10 +68,11 @@ public partial class MainWindow : Window
         _pricePlan = new PricePlanStore(_pathRoots.GetRoot(PathRootKind.State));
         _portfolio = PortfolioStore.UnderStateRoot(_pathRoots.GetRoot(PathRootKind.State));
         _updatePreferences = new UpdatePreferenceStore(_pathRoots.GetRoot(PathRootKind.State));
+        _coreRoot = FindCoreRoot();
         _pythonRuntime = new PythonRuntimeProvisioner(new PythonRuntimeOptions
         {
             StateRoot = _pathRoots.GetRoot(PathRootKind.State),
-            PythonProjectDirectory = Path.Combine(FindRepoRoot(), "python"),
+            PythonProjectDirectory = Path.Combine(_coreRoot ?? AppContext.BaseDirectory, "python"),
         });
 
         // The pricing source is attached once the Analytics Core is up; until then the ledger
@@ -371,7 +373,16 @@ public partial class MainWindow : Window
 
             var prefix = auto ? "启动时自动" : "";
             var progress = new Progress(msg => StatusText.Text = msg);
-            var repoRoot = FindRepoRoot();
+            if (_coreRoot is null)
+            {
+                // The ledger, valuation history and CSV import all keep working without the core;
+                // only live prices need it. Say so instead of failing the whole app.
+                StatusText.Text = "未找到分析核心（python 目录）。账本仍可使用，但取不到行情价格。";
+                PythonRuntimeText.Text = "Python 运行时：缺少 python 目录，无法启动分析核心。";
+                return;
+            }
+
+            var repoRoot = _coreRoot;
 
             // Prefer a private uv-managed venv under the State root. A machine without uv keeps
             // working on system Python; only then do we fall back to installing into it.
@@ -1321,14 +1332,20 @@ public partial class MainWindow : Window
         return message;
     }
 
-    private static string FindRepoRoot()
+    /// <summary>
+    /// Directory that contains the <c>python</c> package tree, or null when it is not present.
+    ///
+    /// Two layouts have to work: installed, where <c>python\</c> sits next to the executable, and
+    /// developer, where it is further up the repository. Returning null rather than throwing is
+    /// deliberate — this used to be called from the constructor and an installed copy, which has
+    /// no repository above it, crashed before the window ever appeared.
+    /// </summary>
+    private static string? FindCoreRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)
         {
-            var pythonDir = Path.Combine(dir.FullName, "python", "caishenfolio_core");
-            var solution = Path.Combine(dir.FullName, "Caishenfolio.slnx");
-            if (Directory.Exists(pythonDir) && File.Exists(solution))
+            if (Directory.Exists(Path.Combine(dir.FullName, "python", "caishenfolio_core")))
             {
                 return dir.FullName;
             }
@@ -1336,7 +1353,7 @@ public partial class MainWindow : Window
             dir = dir.Parent;
         }
 
-        throw new DirectoryNotFoundException("无法定位 Caishenfolio 仓库根目录。");
+        return null;
     }
 
     private sealed class SymbolRow

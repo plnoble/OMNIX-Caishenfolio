@@ -28,6 +28,7 @@
 
     <Feature Id="MainFeature" Title="OMNIX-Caishenfolio" Level="1">
       <ComponentGroupRef Id="DesktopComponents" />
+      <ComponentGroupRef Id="AnalyticsCoreComponents" />
       <ComponentRef Id="ApplicationShortcutComponent" />
       <ComponentRef Id="DesktopShortcutComponent" />
     </Feature>
@@ -48,7 +49,11 @@
     </UI>
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="OMNIX-Caishenfolio" />
+      <Directory Id="INSTALLFOLDER" Name="OMNIX-Caishenfolio">
+        <!-- The app looks for `python\caishenfolio_core` next to the executable. Shipping only
+             the desktop binaries made an installed copy unable to start the Analytics Core. -->
+        <Directory Id="PythonFolder" Name="python" />
+      </Directory>
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder">
@@ -65,6 +70,12 @@
       </Component>
       <Files Include="$(var.DesktopPublishOutput)*.dll" />
       <Files Include="$(var.DesktopPublishOutput)*.json" />
+    </ComponentGroup>
+
+    <!-- The Python Analytics Core source. Its dependencies are still provisioned on first run;
+         only the package itself ships here. Build leftovers are excluded. -->
+    <ComponentGroup Id="AnalyticsCoreComponents" Directory="PythonFolder">
+      <Files Include="$(var.PythonSource)**" />
     </ComponentGroup>
 
     <Component Id="ApplicationShortcutComponent"
