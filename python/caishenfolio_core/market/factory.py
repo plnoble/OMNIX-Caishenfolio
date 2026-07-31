@@ -11,6 +11,7 @@ from caishenfolio_core.market.composite import CompositeMarketDataProvider
 from caishenfolio_core.market.credentials import public_secret_status
 from caishenfolio_core.market.fixture import FixtureMarketDataProvider
 from caishenfolio_core.market.network import trust_env_enabled
+from caishenfolio_core.market.tencent_provider import TencentQuoteProvider
 from caishenfolio_core.market.tushare_provider import TushareMarketDataProvider
 from caishenfolio_core.market.yfinance_provider import YFinanceMarketDataProvider
 
@@ -32,6 +33,8 @@ def create_market_provider(name: str | None = None, *, use_cache: bool | None = 
         inner = AkshareMarketDataProvider()
     elif selected in {"yfinance", "yahoo"}:
         inner = YFinanceMarketDataProvider()
+    elif selected in {"tencent", "qt"}:
+        inner = TencentQuoteProvider()
     elif selected in {"tushare"}:
         inner = TushareMarketDataProvider()
     elif selected in {"alphavantage", "alpha_vantage", "av"}:
@@ -40,7 +43,7 @@ def create_market_provider(name: str | None = None, *, use_cache: bool | None = 
         inner = CompositeMarketDataProvider(_real_providers_in_priority())
     else:
         raise ValueError(
-            f"未知行情数据源 '{selected}'。支持: auto, akshare, yfinance, tushare, alphavantage, fixture。"
+            f"未知行情数据源 '{selected}'。支持: auto, akshare, yfinance, tencent, tushare, alphavantage, fixture。"
         )
 
     if use_cache and selected not in {"fixture", "synthetic", "demo"}:
@@ -50,9 +53,12 @@ def create_market_provider(name: str | None = None, *, use_cache: bool | None = 
 
 def _real_providers_in_priority() -> list[Any]:
     # Order matters: free broad CN first, then free global, then key-based.
+    # Tencent is quote-only and dependency-free, so it also answers before the venv is provisioned
+    # and gives CN prices a second opinion for cross-checking.
     return [
         AkshareMarketDataProvider(),
         YFinanceMarketDataProvider(),
+        TencentQuoteProvider(),
         TushareMarketDataProvider(),
         AlphaVantageMarketDataProvider(),
     ]

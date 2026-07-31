@@ -28,6 +28,17 @@ PROVIDER_CATALOG: list[dict[str, Any]] = [
         "implemented": True,
     },
     {
+        "id": "tencent",
+        "name": "腾讯行情（qt.gtimg.cn）",
+        "cost": "free",
+        "cost_label": "免费（无 API Key，无第三方依赖）",
+        "needs_user_key": False,
+        "pip": [],
+        "markets": ["ashare"],
+        "notes": "仅最新价；纯标准库实现，装好即可用，也为 A 股价格提供交叉核对的第二个来源。",
+        "implemented": True,
+    },
+    {
         "id": "yfinance",
         "name": "Yahoo Finance (yfinance)",
         "cost": "free",
