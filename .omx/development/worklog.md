@@ -60,3 +60,17 @@
   http_server 仍写死旧产品名）。改为单一来源 `PRODUCT_PHASE`，测试断言常量。
 - 版本/阶段：0.10.0 / R0（C# `ProductInfo` 与 Python `PRODUCT_PHASE` 对齐）。
 - 验证：`dotnet build` 成功；C# 测试 42 → 83 全过；Python 测试 47（6 红）→ 60 全过。
+
+## 2026-07-31 - R1 账本内核
+
+- 新增 `Host/Portfolio` 领域：`Account`（多币种，余额按「账户+货币」分开）、`Instrument`（由交易所推导地区/货币）、
+  `LedgerTransaction`（13 种流水，工厂方法内建校验）、`Position`/`CashBalance`/`ExternalFlow`。
+- `PositionCalculator`：移动加权平均成本法；买入费税进成本；卖出结转已实现盈亏；送股只加份额不加成本；
+  拆股按比例缩放；分红/票息计入收益而非冲减成本；超卖 fail-closed 并提示补期初持仓。
+- `OpeningPosition` / `OpeningCash`：支持从既有持仓建账，不必回补多年历史。
+- 换汇改为记录回单两边金额（`CounterAmount`）：1/7.2 在 decimal 下无精确表示，按汇率反推会在余额里留残差。
+- `PortfolioStore`：SQLite（State root，`PRAGMA user_version` 版本化迁移，v1），decimal 以 TEXT 存储避免 REAL 精度损失；
+  批量插入原子化；账户/标的/流水 CRUD 与过滤；`LoadState()` 回放。
+- `LegacyFillImporter`：把 P4.3 的 JSON 成交台账（double 金额、无货币）迁入账本，货币按交易所推导，
+  用确定性 id 保证重复导入幂等，坏行跳过并给出警告而不是中断整批。
+- 验证：C# 测试 83 → 116 全过；Python 60 全过；`dotnet build` 成功。
