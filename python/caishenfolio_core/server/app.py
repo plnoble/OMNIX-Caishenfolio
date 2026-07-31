@@ -18,6 +18,7 @@ from caishenfolio_core.market.fund_catalog import search_funds
 from caishenfolio_core.market.parquet_store import export_bars_parquet, parquet_available
 from caishenfolio_core.market.symbol_index import fuzzy_search_a_share
 from caishenfolio_core.research.backtest import cost_model_from_dict, ma_cross_backtest
+from caishenfolio_core.research.evaluation import evaluate, out_of_sample_report
 from caishenfolio_core.research.compare import compare_normalized_closes
 from caishenfolio_core.research.grid import grid_backtest, suggest_grid_from_bars
 from caishenfolio_core.research.grid_ledger import GridLedgerStore
@@ -304,16 +305,31 @@ class AnalyticsApp:
                 "bars": bars_payload,
                 "disclaimer": RESEARCH_DISCLAIMER,
             }
-        result = ma_cross_backtest(
-            list(bars_payload["data"]),
-            symbol=symbol,
-            fast=fast,
-            slow=slow,
-            costs=cost_model_from_dict(costs),
-        )
+        bars = list(bars_payload["data"])
+        cost_model = cost_model_from_dict(costs)
+        result = ma_cross_backtest(bars, symbol=symbol, fast=fast, slow=slow, costs=cost_model)
+
         payload = result.to_dict()
         payload["bars_provider"] = bars_payload.get("provider")
         payload["interval"] = bars_payload.get("interval")
+
+        # A total return alone flatters every rule. These are the numbers that decide whether it
+        # is worth anything, and the out-of-sample half is the one that can say "no".
+        payload["metrics"] = evaluate(
+            result.equity_curve, result.trade_log, result.buy_hold_return
+        ).to_dict()
+
+        report = out_of_sample_report(
+            bars,
+            lambda slice_: ma_cross_backtest(
+                slice_, symbol=symbol, fast=fast, slow=slow, costs=cost_model
+            ),
+        )
+        payload["out_of_sample"] = report.to_dict() if report else None
+        if report is None:
+            payload.setdefault("warnings", []).append(
+                "样本区间太短，无法做样本外检验（至少需要约 200 根K线）。"
+            )
         return payload
 
     def research_compare(
