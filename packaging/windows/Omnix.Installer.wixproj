@@ -13,7 +13,14 @@
     <DesktopPublishOutput>$(MSBuildProjectDirectory)\obj\$(Configuration)\DesktopPublishOutput\</DesktopPublishOutput>
     <DefineConstants>DesktopPublishOutput=$(DesktopPublishOutput);ProductVersion=$(OmnixVersion)</DefineConstants>
     <PackageVersion>$(OmnixVersion)</PackageVersion>
+    <!-- Chinese wizard to match the app's own language. -->
+    <Cultures>zh-CN</Cultures>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Without this the MSI runs with the basic progress-only UI: no install-location page. -->
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
+  </ItemGroup>
 
   <Target Name="RestoreDesktopForInstaller" BeforeTargets="PublishDesktopForInstaller">
     <MSBuild Projects="..\..\src\Caishenfolio.Desktop\Caishenfolio.Desktop.csproj"

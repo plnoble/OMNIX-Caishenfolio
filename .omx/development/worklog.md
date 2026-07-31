@@ -198,3 +198,21 @@
 - 澄清了一条容易踩的链路（已写入 docs/RELEASE.md）：GitHub `/releases/latest` **按设计排除草稿**，
   而我们的发布工作流刻意建草稿，所以必须人工点发布客户端才看得到；推 main 则完全不产生可见更新。
 - 验证：C# 249 → 255 全过；构建 0 警告；UI 冒烟通过（提示条 XAML 随主窗口加载已被覆盖）。
+
+## 2026-07-31 - v0.11.0 安装包体验修复 + 首次发版
+
+- 用户反馈实测：装完没有安装位置可选、桌面没有快捷方式。两条都属实，是包的缺陷：
+  - **根本没引 WiX UI 扩展**，`msiexec` 只跑默认基础界面（仅进度条），没有目录选择页。
+    现引入 `WixToolset.UI.wixext` + `WixUI_InstallDir`，`WIXUI_INSTALLDIR=INSTALLFOLDER`。
+  - 只建了开始菜单快捷方式；补 `DesktopShortcutComponent`（`DesktopFolder`）。
+  - `ARPINSTALLLOCATION` 未设置，控制面板「安装位置」为空；已补 `SetProperty ... After=CostFinalize`。
+- 跳过许可协议页（Welcome→InstallDir 用 Order=2 覆盖内置 Order=1）：本项目没有许可文本，
+  空白协议页只是多一次点击。
+- 引入 UI 扩展后暴露编码问题：MSI 数据库代码页被钉在 1252，装不下中文产品名与快捷方式描述。
+  改 `Codepage="936"` `Language="2052"`，并把向导本身本地化为 zh-CN。
+- **版本必须升到 0.11.0**：已安装的是 0.10.0，`MajorUpgrade` 默认不允许同版本覆盖，
+  修好的包若仍是 0.10.0 用户得先手动卸载。
+- 验证：MSI 表级核对（`InstallDirDlg` 存在、`WIXUI_INSTALLDIR`、两个快捷方式、ProductLanguage 2052、
+  WelcomeDlg Next→InstallDirDlg Order 2）；C# 255 + Python 82 全过；构建 0 警告；UI 冒烟通过。
+- 未做：向导的可视化点击走查没有自动化成功（msiexec UI 在独立进程，按标题跨进程查找会误抓到
+  标题含同名字符串的其他窗口）。表级证据充分，实际观感由安装时确认。

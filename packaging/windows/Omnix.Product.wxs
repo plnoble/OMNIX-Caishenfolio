@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <!-- Codepage 936: the default 1252 cannot hold the Chinese product and shortcut strings,
+       which only surfaced once the UI extension pinned the database codepage. -->
   <Package Name="OMNIX-Caishenfolio"
            Manufacturer="OMNIX"
            Version="$(var.ProductVersion)"
            UpgradeCode="{7C4E5A21-9B3D-4F86-A0C2-1D5E8F3B7A64}"
+           Codepage="936"
+           Language="2052"
            Scope="perMachine">
     <SummaryInformation Description="个人多市场多资产理财工作台：资产账本、估值、收益与研究。不含真实下单。" />
 
@@ -24,7 +29,23 @@
     <Feature Id="MainFeature" Title="OMNIX-Caishenfolio" Level="1">
       <ComponentGroupRef Id="DesktopComponents" />
       <ComponentRef Id="ApplicationShortcutComponent" />
+      <ComponentRef Id="DesktopShortcutComponent" />
     </Feature>
+
+    <!-- Wizard with a Change… step so the install location is the user's choice, not a fixed
+         path. WIXUI_INSTALLDIR names the directory that page edits. -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+
+    <!-- Without this, "安装位置" is blank in Programs and Features and for anything that
+         reads InstallLocation from the uninstall registry key. -->
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
+
+    <!-- Skip the licence page: this project ships no licence text, and an empty agreement
+         screen is a click that tells the user nothing. -->
+    <UI>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" />
+    </UI>
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="OMNIX-Caishenfolio" />
@@ -33,6 +54,8 @@
     <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="ApplicationProgramsFolder" Name="OMNIX-Caishenfolio" />
     </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder" />
 
     <ComponentGroup Id="DesktopComponents" Directory="INSTALLFOLDER">
       <Component Id="MainExecutableComponent" Guid="{2F91C4D8-6A17-4B53-9E28-C0A7D4B61F35}">
@@ -58,6 +81,22 @@
       <RegistryValue Root="HKCU"
                      Key="Software\OMNIX\Caishenfolio"
                      Name="StartMenuShortcut"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
+    </Component>
+
+    <Component Id="DesktopShortcutComponent"
+               Directory="DesktopFolder"
+               Guid="{4D6E2B95-8C71-42A0-B3E9-5F27A8D0C614}">
+      <Shortcut Id="ApplicationDesktopShortcut"
+                Name="OMNIX-Caishenfolio"
+                Description="个人理财工作台"
+                Target="[INSTALLFOLDER]Caishenfolio.Desktop.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\OMNIX\Caishenfolio"
+                     Name="DesktopShortcut"
                      Type="integer"
                      Value="1"
                      KeyPath="yes" />
