@@ -60,6 +60,9 @@ public partial class PortfolioSettingsWindow : Window
         CurrencyBox.Text = ToPercent(settings.Thresholds.Currency);
         CashBox.Text = ToPercent(settings.Thresholds.Cash);
 
+        CrossCheckBox.IsChecked = settings.CrossCheckPrices;
+        PriceToleranceBox.Text = settings.PriceTolerancePercent.ToString("0.##", CultureInfo.InvariantCulture);
+
         foreach (var asset in TargetableClasses)
         {
             var code = asset.ToCode();
@@ -170,6 +173,8 @@ public partial class PortfolioSettingsWindow : Window
                     Cash = ReadPercent(CashBox, "现金上限"),
                 },
                 TargetAssetAllocation = targets,
+                CrossCheckPrices = CrossCheckBox.IsChecked == true,
+                PriceTolerancePercent = ReadNumber(PriceToleranceBox, "价格容差"),
             });
 
             Saved = true;
@@ -219,6 +224,13 @@ public partial class PortfolioSettingsWindow : Window
             LegacyStatusText.Text = $"导入失败：{ex.Message}";
         }
     }
+
+    /// <summary>Reads a plain number, unlike <see cref="ReadPercent"/> which converts to a fraction.</summary>
+    private static decimal ReadNumber(TextBox box, string label) =>
+        decimal.TryParse((box.Text ?? "").Trim().TrimEnd('%'), NumberStyles.Any,
+            CultureInfo.InvariantCulture, out var value)
+            ? value
+            : throw new LedgerException($"{label}无法解析：{box.Text}");
 
     private static decimal ReadPercent(TextBox box, string label) =>
         TryParsePercent(box.Text, out var value)

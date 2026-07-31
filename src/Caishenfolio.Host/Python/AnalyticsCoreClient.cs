@@ -102,9 +102,20 @@ public sealed class AnalyticsCoreClient : IDisposable
     /// <summary>Latest price for one instrument — the channel portfolio valuation consumes.</summary>
     public async Task<MarketQuoteResponse> GetQuoteAsync(
         string symbol,
+        bool crossCheck = false,
+        decimal? tolerancePercent = null,
         CancellationToken cancellationToken = default)
     {
         var path = $"market/quote?symbol={Uri.EscapeDataString(symbol)}";
+        if (crossCheck)
+        {
+            path += "&cross_check=1";
+            if (tolerancePercent is { } tolerance)
+            {
+                path += $"&tolerance={tolerance.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            }
+        }
+
         using var response = await _http.GetAsync(path, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         var payload = await response.Content
@@ -581,6 +592,18 @@ public sealed class MarketQuoteDto
 
     [JsonPropertyName("provider")]
     public string Provider { get; set; } = "";
+
+    /// <summary>How many sources agreed on a currency and were compared; 0 when not cross-checked.</summary>
+    [JsonPropertyName("source_count")]
+    public int SourceCount { get; set; }
+
+    /// <summary>Percent spread between the highest and lowest source price.</summary>
+    [JsonPropertyName("spread_pct")]
+    public decimal SpreadPercent { get; set; }
+
+    /// <summary>Each source and its price, e.g. <c>akshare=10.5;yfinance=10.7</c>.</summary>
+    [JsonPropertyName("sources")]
+    public string Sources { get; set; } = "";
 }
 
 public sealed class MarketNavResponse

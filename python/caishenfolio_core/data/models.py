@@ -101,13 +101,18 @@ class Quote:
     provenance: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
+        provenance = dict(self.provenance)
         return {
             "symbol": self.symbol,
             "price": self.price,
             "currency": self.currency,
             "as_of": self.as_of.isoformat(),
             "provider": self.provider,
-            "provenance": dict(self.provenance),
+            # Lifted out of provenance so the desktop can read them without parsing a bag of strings.
+            "source_count": int(provenance.get("cross_check_count", 0) or 0),
+            "spread_pct": float(provenance.get("cross_check_spread_pct", 0) or 0),
+            "sources": provenance.get("cross_check_sources", ""),
+            "provenance": provenance,
         }
 
 

@@ -70,6 +70,19 @@
                                Foreground="{StaticResource BrushFgMuted}" Margin="6,4" />
                 </Grid>
 
+                <!-- Price cross-check -->
+                <TextBlock Text="取价方式" Style="{StaticResource SectionTitle}" />
+                <CheckBox x:Name="CrossCheckBox" Content="向多个数据源交叉核对价格（取中位数）"
+                          Foreground="{StaticResource BrushFgPrimary}" Margin="0,0,0,6" />
+                <TextBlock Text="关闭时只用第一个应答的数据源，快但一个错价会静默算错市值。开启后取价请求变多、刷新变慢。"
+                           TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12" Margin="0,0,0,8" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
+                    <TextBlock Text="价格容差" VerticalAlignment="Center" Width="130" />
+                    <TextBox x:Name="PriceToleranceBox" Width="90" />
+                    <TextBlock Text="%  各源相差超过此值就提醒" VerticalAlignment="Center"
+                               Foreground="{StaticResource BrushFgMuted}" Margin="6,0" />
+                </StackPanel>
+
                 <!-- Target allocation -->
                 <TextBlock Text="目标配置" Style="{StaticResource SectionTitle}" />
                 <TextBlock Text="填写你自己的目标比例，总览页会算出与当前配置的差额金额。要么全部留空，要么合计正好 100%。"

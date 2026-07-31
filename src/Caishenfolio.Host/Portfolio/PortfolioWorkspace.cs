@@ -86,6 +86,12 @@ public sealed class PortfolioWorkspace
         FxConverter fx;
 
         var source = PricingSource;
+        if (source is AnalyticsCorePricingSource coreSource)
+        {
+            coreSource.CrossCheck = Settings.CrossCheckPrices;
+            coreSource.TolerancePercent = Settings.PriceTolerancePercent;
+        }
+
         if (source is null)
         {
             // Offline: value with whatever rates were snapshotted; every holding stays unpriced.
@@ -123,7 +129,12 @@ public sealed class PortfolioWorkspace
             _store.ListValuationHistory(BaseCurrency),
             Settings.TargetAssetAllocation);
 
-        var alerts = PortfolioAlertEvaluator.Evaluate(valuation, PlannedLevels(), risk, asOf: date);
+        var alerts = PortfolioAlertEvaluator.Evaluate(
+            valuation,
+            PlannedLevels(),
+            risk,
+            asOf: date,
+            priceTolerancePercent: Settings.PriceTolerancePercent);
 
         return new WorkspaceSnapshot
         {

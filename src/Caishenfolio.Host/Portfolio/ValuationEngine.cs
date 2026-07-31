@@ -11,7 +11,24 @@ public sealed record PriceQuote
     public required DateOnly AsOf { get; init; }
     public string Provider { get; init; } = "";
 
-    public static PriceQuote Of(string symbol, decimal price, string currency, DateOnly asOf, string provider = "")
+    /// <summary>Number of sources compared; 0 when the price came from a single source.</summary>
+    public int SourceCount { get; init; }
+
+    /// <summary>Percent spread between the highest and lowest source price.</summary>
+    public decimal SpreadPercent { get; init; }
+
+    /// <summary>Each source and its price, for showing what disagreed.</summary>
+    public string Sources { get; init; } = "";
+
+    public static PriceQuote Of(
+        string symbol,
+        decimal price,
+        string currency,
+        DateOnly asOf,
+        string provider = "",
+        int sourceCount = 0,
+        decimal spreadPercent = 0m,
+        string sources = "")
     {
         if (price < 0m)
         {
@@ -25,6 +42,9 @@ public sealed record PriceQuote
             Currency = Currencies.Normalize(currency),
             AsOf = asOf,
             Provider = provider,
+            SourceCount = sourceCount,
+            SpreadPercent = spreadPercent,
+            Sources = sources,
         };
     }
 }

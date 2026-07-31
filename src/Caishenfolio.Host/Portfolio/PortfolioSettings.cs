@@ -17,6 +17,16 @@ public sealed record PortfolioSettings
     public IReadOnlyDictionary<string, decimal> TargetAssetAllocation { get; init; } =
         new Dictionary<string, decimal>(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Ask every data source for each price and compare, instead of trusting whichever answers
+    /// first. Costs one request per extra source; catches a bad price before it mis-values the
+    /// portfolio.
+    /// </summary>
+    public bool CrossCheckPrices { get; init; } = true;
+
+    /// <summary>Percent spread between sources beyond which a quote is reported as disputed.</summary>
+    public decimal PriceTolerancePercent { get; init; } = 2m;
+
     public static PortfolioSettings Default { get; } = new();
 
     public decimal TargetTotal => TargetAssetAllocation.Values.Sum();
@@ -34,6 +44,10 @@ public sealed record PortfolioSettings
         EnsureFraction(Thresholds.Region, "市场上限");
         EnsureFraction(Thresholds.Currency, "货币上限");
         EnsureFraction(Thresholds.Cash, "现金上限");
+        if (PriceTolerancePercent <= 0m || PriceTolerancePercent > 100m)
+        {
+            throw new LedgerException($"价格容差必须大于 0% 且不超过 100%（收到 {PriceTolerancePercent}）。");
+        }
 
         var targets = new Dictionary<string, decimal>(StringComparer.Ordinal);
         foreach (var (key, weight) in TargetAssetAllocation)
@@ -91,6 +105,8 @@ public sealed record PortfolioSettings
             ["risk.region"] = Format(Thresholds.Region),
             ["risk.currency"] = Format(Thresholds.Currency),
             ["risk.cash"] = Format(Thresholds.Cash),
+            ["price.cross_check"] = CrossCheckPrices ? "1" : "0",
+            ["price.tolerance_pct"] = Format(PriceTolerancePercent),
         };
 
         foreach (var (key, weight) in TargetAssetAllocation)
@@ -127,6 +143,8 @@ public sealed record PortfolioSettings
                 Cash = Read(values, "risk.cash", defaults.Thresholds.Cash),
             },
             TargetAssetAllocation = targets,
+            CrossCheckPrices = !values.TryGetValue("price.cross_check", out var cross) || cross != "0",
+            PriceTolerancePercent = Read(values, "price.tolerance_pct", defaults.PriceTolerancePercent),
         };
     }
 

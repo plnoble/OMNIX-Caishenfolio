@@ -24,10 +24,18 @@ public interface IMarketPricingSource
 /// <summary>Pricing backed by the Python Analytics Core over loopback.</summary>
 public sealed class AnalyticsCorePricingSource(AnalyticsCoreClient client) : IMarketPricingSource
 {
+    /// <summary>Ask every source and compare, rather than trusting whichever answers first.</summary>
+    public bool CrossCheck { get; set; }
+
+    /// <summary>Percent spread beyond which a quote is reported as disputed.</summary>
+    public decimal TolerancePercent { get; set; } = 2m;
+
     public async Task<PriceQuote?> TryGetQuoteAsync(
         string symbol, CancellationToken cancellationToken = default)
     {
-        var response = await client.GetQuoteAsync(symbol, cancellationToken).ConfigureAwait(false);
+        var response = await client
+            .GetQuoteAsync(symbol, CrossCheck, CrossCheck ? TolerancePercent : null, cancellationToken)
+            .ConfigureAwait(false);
         if (!response.Ok || response.Data is null)
         {
             return null;
@@ -39,7 +47,10 @@ public sealed class AnalyticsCorePricingSource(AnalyticsCoreClient client) : IMa
             data.Price,
             data.Currency,
             ParseDate(data.AsOf),
-            data.Provider);
+            data.Provider,
+            data.SourceCount,
+            data.SpreadPercent,
+            data.Sources);
     }
 
     public async Task<FxRate?> TryGetFxRateAsync(

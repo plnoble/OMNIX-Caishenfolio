@@ -77,8 +77,24 @@ class CachingMarketFacade:
 
     # Quote / NAV / FX are pass-through: the bar cache is keyed by symbol+interval+window and
     # has nothing to say about a single latest price or a rate.
-    def latest_quote(self, symbol: str) -> ProviderResult[Quote]:
-        return self._delegate("latest_quote", lambda: self.upstream.latest_quote(symbol))
+    def latest_quote(
+        self,
+        symbol: str,
+        cross_check: bool = False,
+        tolerance_pct: float | None = None,
+    ) -> ProviderResult[Quote]:
+        def call() -> ProviderResult[Quote]:
+            try:
+                if tolerance_pct is None:
+                    return self.upstream.latest_quote(symbol, cross_check=cross_check)
+                return self.upstream.latest_quote(
+                    symbol, cross_check=cross_check, tolerance_pct=tolerance_pct
+                )
+            except TypeError:
+                # A single provider has no cross-check to do; its plain signature is fine.
+                return self.upstream.latest_quote(symbol)
+
+        return self._delegate("latest_quote", call)
 
     def nav_series(self, symbol: str, start: date, end: date) -> ProviderResult[list[NavPoint]]:
         return self._delegate("nav_series", lambda: self.upstream.nav_series(symbol, start, end))

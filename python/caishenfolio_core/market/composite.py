@@ -15,6 +15,32 @@ from caishenfolio_core.data.models import (
 from caishenfolio_core.market.fixture import SymbolHit
 
 
+#: Percent spread between sources beyond which a quote is flagged as disputed.
+DEFAULT_PRICE_TOLERANCE_PCT = 2.0
+
+
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def _majority_currency(quotes: list[tuple[str, Quote]]) -> str:
+    counts: dict[str, int] = {}
+    for _, quote in quotes:
+        counts[quote.currency] = counts.get(quote.currency, 0) + 1
+    # Ties fall back to the first provider's currency, which follows the configured priority.
+    best = max(counts.values())
+    for _, quote in quotes:
+        if counts[quote.currency] == best:
+            return quote.currency
+    return quotes[0][1].currency
+
+
 class CompositeMarketDataProvider:
     """Try real providers in order. Never falls back to synthetic fixture."""
 
@@ -102,12 +128,89 @@ class CompositeMarketDataProvider:
             warnings=("all_providers_failed", "fail_closed"),
         )
 
-    def latest_quote(self, symbol: str) -> ProviderResult[Quote]:
-        return self._first_success(
-            "latest_quote",
-            lambda provider: provider.latest_quote(symbol),
-            f"未取得 {symbol} 的最新价格",
+    def latest_quote(
+        self,
+        symbol: str,
+        cross_check: bool = False,
+        tolerance_pct: float = DEFAULT_PRICE_TOLERANCE_PCT,
+    ) -> ProviderResult[Quote]:
+        if not cross_check:
+            return self._first_success(
+                "latest_quote",
+                lambda provider: provider.latest_quote(symbol),
+                f"未取得 {symbol} 的最新价格",
+            )
+        return self._cross_checked_quote(symbol, tolerance_pct)
+
+    def _cross_checked_quote(self, symbol: str, tolerance_pct: float) -> ProviderResult[Quote]:
+        """Asks every capable provider and reports when they disagree.
+
+        Taking the first answer is fine for a chart, but a wrong price silently mis-values a
+        whole portfolio. This keeps the median (robust to one bad source) and attaches every
+        source's price so a disagreement is visible instead of averaged away.
+        """
+        quotes: list[tuple[str, Quote]] = []
+        errors: list[str] = []
+
+        for provider in self._providers:
+            code = getattr(provider, "PROVIDER_CODE", type(provider).__name__)
+            if not callable(getattr(provider, "latest_quote", None)):
+                continue
+            if hasattr(provider, "ready") and not provider.ready:
+                continue
+            try:
+                result = provider.latest_quote(symbol)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{code}: {exc}")
+                continue
+            if result.ok and result.data is not None and result.data.price > 0:
+                quotes.append((code, result.data))
+            else:
+                errors.append(f"{code}: {result.error or 'empty'}")
+
+        if not quotes:
+            detail = " | ".join(errors) if errors else "无可用数据源"
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"未取得 {symbol} 的最新价格（fail-closed，未生成数据）：{detail}",
+                warnings=("all_providers_failed", "fail_closed"),
+            )
+
+        # Only prices in the same currency are comparable; a source quoting another currency is
+        # itself a disagreement worth reporting rather than silently mixing into the median.
+        base_currency = _majority_currency(quotes)
+        comparable = [(code, q) for code, q in quotes if q.currency == base_currency]
+        mismatched = [code for code, q in quotes if q.currency != base_currency]
+
+        prices = sorted(q.price for _, q in comparable)
+        median = _median(prices)
+        spread_pct = 0.0 if median <= 0 else (prices[-1] - prices[0]) / median * 100.0
+
+        chosen = min(comparable, key=lambda item: abs(item[1].price - median))
+        sources = ";".join(f"{code}={q.price:g}" for code, q in quotes)
+
+        warnings = ["cross_checked", f"sources:{len(comparable)}"]
+        if len(comparable) < 2:
+            warnings.append("single_source")
+        if mismatched:
+            warnings.append("currency_disagreement:" + ",".join(mismatched))
+        if spread_pct > tolerance_pct:
+            warnings.append(f"price_disagreement:{spread_pct:.2f}")
+
+        quote = Quote(
+            symbol=chosen[1].symbol,
+            price=median,
+            currency=base_currency,
+            as_of=chosen[1].as_of,
+            provider=self.PROVIDER_CODE,
+            provenance={
+                **dict(chosen[1].provenance),
+                "cross_check_sources": sources,
+                "cross_check_spread_pct": f"{spread_pct:.4f}",
+                "cross_check_count": str(len(comparable)),
+            },
         )
+        return ProviderResult.success(self.PROVIDER_CODE, quote, warnings=tuple(warnings))
 
     def nav_series(self, symbol: str, start: date, end: date) -> ProviderResult[list[NavPoint]]:
         return self._first_success(

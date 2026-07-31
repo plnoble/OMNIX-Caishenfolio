@@ -183,13 +183,28 @@ class AnalyticsApp:
             "error": result.error,
         }
 
-    def market_quote(self, symbol: str) -> dict[str, object]:
-        """Latest price for one instrument — the valuation channel, not a bar series."""
-        return self._capability_payload(
-            "latest_quote",
-            lambda: self.market.latest_quote(symbol),
-            lambda quote: quote.to_dict(),
-        )
+    def market_quote(
+        self,
+        symbol: str,
+        cross_check: bool = False,
+        tolerance_pct: float | None = None,
+    ) -> dict[str, object]:
+        """Latest price for one instrument — the valuation channel, not a bar series.
+
+        With ``cross_check`` every capable source is asked and the median is returned, so a
+        single source disagreeing shows up instead of silently setting the portfolio's value.
+        """
+        def call() -> Any:
+            try:
+                if tolerance_pct is None:
+                    return self.market.latest_quote(symbol, cross_check=cross_check)
+                return self.market.latest_quote(
+                    symbol, cross_check=cross_check, tolerance_pct=tolerance_pct
+                )
+            except TypeError:
+                return self.market.latest_quote(symbol)
+
+        return self._capability_payload("latest_quote", call, lambda quote: quote.to_dict())
 
     def market_nav(self, symbol: str, start: str, end: str) -> dict[str, object]:
         """Daily NAV for an off-exchange fund. Funds have no OHLCV, so they get their own route."""
@@ -612,7 +627,12 @@ def dispatch(app: AnalyticsApp, method: str, path: str, query: str = "", body: d
     if method == "GET" and normalized == "/market/quote":
         if "symbol" not in params:
             return 400, {"error": "必须提供 symbol。"}
-        return 200, app.market_quote(params["symbol"])
+        cross_check = (params.get("cross_check") or "").strip().lower() in {"1", "true", "yes"}
+        try:
+            tolerance = float(params["tolerance"]) if "tolerance" in params else None
+        except ValueError:
+            return 400, {"error": "tolerance 必须是数字（百分比）。"}
+        return 200, app.market_quote(params["symbol"], cross_check, tolerance)
     if method == "GET" and normalized == "/market/nav":
         if "symbol" not in params or "start" not in params or "end" not in params:
             return 400, {"error": "必须提供 symbol、start、end。"}

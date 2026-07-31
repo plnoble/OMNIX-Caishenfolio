@@ -216,3 +216,22 @@
   WelcomeDlg Next→InstallDirDlg Order 2）；C# 255 + Python 82 全过；构建 0 警告；UI 冒烟通过。
 - 未做：向导的可视化点击走查没有自动化成功（msiexec UI 在独立进程，按标题跨进程查找会误抓到
   标题含同名字符串的其他窗口）。表级证据充分，实际观感由安装时确认。
+
+## 2026-07-31 - 交叉验证取价（借鉴 ai-berkshire）
+
+- 读了 xbtlin/ai-berkshire（MIT，14.8k star）。它是 Claude Code 的提示词/技能集合，不是应用：
+  无账本、无数据接入层、无持久化。与本项目几乎正交，唯一值得借的是 `financial_rigor.py` 的
+  **cross_validate**（同一数据点多源比对 + 容差报警）。
+  decimal 精度我们 R0 已有；本福特查财报、三情景估值不适用；「强制结论」与我们不给建议的底线相悖，不采纳。
+  README 自报的收益率（+69.29% / +66.38% / 1.46 亿）无法验证，不作为依据。
+- 修补的真实缺陷：`CompositeMarketDataProvider._first_success` **只用第一个应答的源，从不交叉核对**。
+  对研究工作台无妨，对理财软件意味着一个错价会静默算错净资产。
+- `latest_quote(symbol, cross_check, tolerance_pct)`：询问所有可用源 → 按多数币种筛出可比报价 →
+  取**中位数**（对单个离群源稳健）→ 记录每个源的报价与价差。
+  价差 = (max-min)/median；超容差加 `price_disagreement:{pct}` 警告。
+  币种不一致的源不混入中位数，单独报 `currency_disagreement`。单源可用时照常返回并标 `single_source`。
+  全部失败仍 fail-closed。默认路径（cross_check=false）行为完全不变。
+- 贯通到桌面：`Quote.to_dict` 提升出 `source_count/spread_pct/sources` 三个字段 →
+  `MarketQuoteDto` → `PriceQuote` → 新增 `AlertKind.PriceDisagreement`，在提醒栏显示各源报价。
+- 设置窗口新增「交叉核对价格」开关（默认开）与「价格容差」（默认 2%），存进 settings 表。
+- 验证：Python 82 → 93 全过；C# 255 → 264 全过；构建 0 警告；UI 冒烟与安装布局冒烟均通过。

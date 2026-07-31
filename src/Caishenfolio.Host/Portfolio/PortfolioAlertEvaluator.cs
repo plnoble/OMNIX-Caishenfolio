@@ -12,6 +12,8 @@ public enum AlertKind
     Concentration,
     /// <summary>The newest price is older than expected — the valuation may be behind.</summary>
     StalePrice,
+    /// <summary>Data sources disagree on the price, so the market value may be wrong.</summary>
+    PriceDisagreement,
     /// <summary>A holding could not be priced at all, so it is missing from the totals.</summary>
     Unpriced,
 }
@@ -45,7 +47,8 @@ public static class PortfolioAlertEvaluator
         IReadOnlyList<PlannedPriceLevel>? plannedLevels = null,
         PortfolioRiskReport? risk = null,
         int stalePriceDays = 5,
-        DateOnly? asOf = null)
+        DateOnly? asOf = null,
+        decimal priceTolerancePercent = 2m)
     {
         ArgumentNullException.ThrowIfNull(valuation);
         var today = asOf ?? valuation.AsOf;
@@ -101,6 +104,25 @@ public static class PortfolioAlertEvaluator
                 Symbol = position.Position.Symbol,
                 Title = "缺价格",
                 Message = $"{position.Position.Symbol} 取不到价格或汇率，未计入总资产（不会按 0 计算）。",
+            });
+        }
+
+        foreach (var position in priced.Values)
+        {
+            var quote = position.Quote!;
+            if (quote.SourceCount < 2 || quote.SpreadPercent <= priceTolerancePercent)
+            {
+                continue;
+            }
+
+            alerts.Add(new PortfolioAlert
+            {
+                Kind = AlertKind.PriceDisagreement,
+                Severity = AlertSeverity.Warning,
+                Symbol = position.Position.Symbol,
+                Title = "数据源价格不一致",
+                Message = $"{position.Position.Symbol} 的 {quote.SourceCount} 个数据源相差 " +
+                          $"{quote.SpreadPercent:0.##}%（{quote.Sources}），已取中位数 {quote.Price:#,0.####}，市值可能不准。",
             });
         }
 
