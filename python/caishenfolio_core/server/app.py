@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Callable
 from urllib.parse import parse_qs
 
@@ -19,6 +19,7 @@ from caishenfolio_core.market.parquet_store import export_bars_parquet, parquet_
 from caishenfolio_core.market.symbol_index import fuzzy_search_a_share
 from caishenfolio_core.research.backtest import cost_model_from_dict, ma_cross_backtest
 from caishenfolio_core.research.evaluation import evaluate, out_of_sample_report
+from caishenfolio_core.research.fx_carry import build_panel as build_carry_panel
 from caishenfolio_core.research.valuation import position_from_history
 from caishenfolio_core.research.compare import compare_normalized_closes
 from caishenfolio_core.research.grid import grid_backtest, suggest_grid_from_bars
@@ -266,6 +267,51 @@ class AnalyticsApp:
             lambda: self.market.financial_summary(symbol, periods),
             lambda rows: [row.to_dict() for row in rows],
         )
+
+    def market_fx_carry(
+        self,
+        base_currency: str,
+        currencies: list[str],
+        history_days: int = 365,
+    ) -> dict[str, object]:
+        """Rate differentials and where each pair sits in its own recent range."""
+        rates: dict[str, float | None] = {}
+        history: dict[str, list[float]] = {}
+        warnings: list[str] = []
+
+        for currency in currencies:
+            currency = currency.strip().upper()
+            if not currency or currency == base_currency.upper():
+                continue
+
+            if not callable(getattr(self.market, "fx_rate", None)):
+                warnings.append("当前行情源不支持汇率查询。")
+                break
+
+            result = self.market.fx_rate(currency, base_currency)
+            rates[currency] = result.data.rate if result.ok and result.data else None
+            if not result.ok:
+                warnings.append(f"{currency}/{base_currency}：{result.error or '取汇率失败'}")
+
+            # Historical quotes come from the bar channel when the pair is charted.
+            bars = self.market_bars(
+                f"FX:{currency}{base_currency.upper()}",
+                (date.today() - timedelta(days=history_days)).isoformat(),
+                date.today().isoformat(),
+            )
+            if bars.get("ok") and bars.get("data"):
+                history[currency] = [float(bar["close"]) for bar in bars["data"]]
+
+        panel = build_carry_panel(
+            base_currency=base_currency,
+            rates=rates,
+            rate_history=history,
+            exposures=None,
+        )
+        payload = panel.to_dict()
+        payload["ok"] = bool(panel.legs)
+        payload["warnings"] = warnings
+        return payload
 
     def market_fx(self, base_currency: str, quote_currency: str) -> dict[str, object]:
         return self._capability_payload(
@@ -693,6 +739,10 @@ def dispatch(app: AnalyticsApp, method: str, path: str, query: str = "", body: d
         if "symbol" not in params or "start" not in params or "end" not in params:
             return 400, {"error": "必须提供 symbol、start、end。"}
         return 200, app.market_nav(params["symbol"], params["start"], params["end"])
+    if method == "GET" and normalized == "/market/fx/carry":
+        base = params.get("base", "CNY")
+        wanted = [c for c in (params.get("currencies", "USD,HKD,JPY")).split(",") if c.strip()]
+        return 200, app.market_fx_carry(base, wanted, int(params.get("days", "365")))
     if method == "GET" and normalized == "/market/valuation":
         if "symbol" not in params:
             return 400, {"error": "必须提供 symbol。"}
