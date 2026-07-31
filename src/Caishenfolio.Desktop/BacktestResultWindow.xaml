@@ -16,6 +16,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <TextBlock x:Name="TitleBlock" Grid.Row="0" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10"
@@ -29,10 +30,34 @@
         <TextBlock x:Name="SummaryText" Grid.Row="2" Margin="0,10,0,8" TextWrapping="Wrap"
                    FontFamily="Consolas" FontSize="12" />
 
-        <TextBlock Grid.Row="3" Opacity="0.75" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10"
-                   Text="研究/模拟结论，非投资建议。成本与涨跌停为简化模型。" />
+        <!-- The part that can say "this rule does not work" -->
+        <Border Grid.Row="3" x:Name="VerdictPanel" Visibility="Collapsed" CornerRadius="8"
+                Padding="12,10" Margin="0,0,0,10" BorderThickness="1"
+                Background="#16202B" BorderBrush="#2A3542">
+            <StackPanel>
+                <DockPanel Margin="0,0,0,6">
+                    <Border DockPanel.Dock="Right" x:Name="VerdictBadge" CornerRadius="6" Padding="10,3">
+                        <TextBlock x:Name="VerdictBadgeText" FontWeight="SemiBold" Foreground="#0B1018" />
+                    </Border>
+                    <TextBlock Text="样本外检验：把后 30% 的行情留出来，用前 70% 得到的规则去跑它没见过的数据"
+                               FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center" />
+                </DockPanel>
+                <TextBlock x:Name="MetricsText" TextWrapping="Wrap" FontFamily="Consolas" FontSize="11"
+                           Opacity="0.9" Margin="0,0,0,6" />
+                <ItemsControl x:Name="FindingList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,3" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
 
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+        <TextBlock Grid.Row="4" Opacity="0.75" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10"
+                   Text="研究/模拟结论，非投资建议。成本与涨跌停为简化模型；历史表现不代表未来。" />
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="导出到报告" Padding="12,6" Margin="0,0,8,0" Click="ExportReport_OnClick" />
             <Button Content="关闭" Padding="16,6" IsCancel="True" Click="Close_OnClick" />
         </StackPanel>

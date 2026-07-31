@@ -134,7 +134,8 @@ public sealed class PortfolioWorkspace
             PlannedLevels(),
             risk,
             asOf: date,
-            priceTolerancePercent: Settings.PriceTolerancePercent);
+            priceTolerancePercent: Settings.PriceTolerancePercent,
+            ipoSubscriptions: _store.ListIpoSubscriptions());
 
         return new WorkspaceSnapshot
         {

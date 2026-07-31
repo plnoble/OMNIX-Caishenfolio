@@ -34,6 +34,77 @@ public partial class BacktestResultWindow : Window
         LoadResult(result);
     }
 
+    /// <summary>
+    /// Shows the numbers that decide whether a rule is worth anything, and the out-of-sample
+    /// verdict. A headline return alone flatters every rule; this panel is what can say no.
+    /// </summary>
+    private void RenderVerdict(JsonElement result)
+    {
+        var findings = new List<string>();
+
+        if (result.TryGetProperty("metrics", out var metrics) && metrics.ValueKind == JsonValueKind.Object)
+        {
+            var lines = new StringBuilder();
+            lines.AppendLine(
+                $"胜率={Ratio(metrics, "win_rate")}  盈亏比={Number(metrics, "profit_factor")}  " +
+                $"最长连亏={Integer(metrics, "max_consecutive_losses")} 笔");
+            lines.AppendLine(
+                $"年化={Ratio(metrics, "annualized_return")}  波动率={Ratio(metrics, "volatility")}  " +
+                $"回撤持续={Integer(metrics, "max_drawdown_bars")} 根K线");
+            lines.Append(
+                $"扣成本后相对买入持有={Ratio(metrics, "excess_over_buy_hold")}  " +
+                $"单位回撤收益={Number(metrics, "return_over_max_drawdown")}");
+            MetricsText.Text = lines.ToString();
+        }
+
+        var hasReport = result.TryGetProperty("out_of_sample", out var oos)
+                        && oos.ValueKind == JsonValueKind.Object;
+        if (!hasReport)
+        {
+            VerdictBadgeText.Text = "数据不足";
+            VerdictBadge.Background = Brush(0xB4, 0xC0, 0xD0);
+            findings.Add("样本区间太短，无法留出样本外数据检验。至少约 200 根K线才有意义。");
+        }
+        else
+        {
+            var survives = oos.TryGetProperty("survives_out_of_sample", out var s) && s.GetBoolean();
+            VerdictBadgeText.Text = survives ? "样本外仍成立" : "样本外未通过";
+            VerdictBadge.Background = survives ? Brush(0x5E, 0xE4, 0xA8) : Brush(0xFF, 0x7A, 0x88);
+
+            if (oos.TryGetProperty("findings", out var list) && list.ValueKind == JsonValueKind.Array)
+            {
+                findings.AddRange(
+                    list.EnumerateArray().Select(f => "· " + (f.GetString() ?? "")));
+            }
+
+            if (oos.TryGetProperty("split_date", out var split))
+            {
+                findings.Add($"· 切分点：{split.GetString()} 之后的数据规则从未见过。");
+            }
+        }
+
+        FindingList.ItemsSource = findings;
+        VerdictPanel.Visibility = Visibility.Visible;
+    }
+
+    private static System.Windows.Media.SolidColorBrush Brush(byte r, byte g, byte b) =>
+        new(System.Windows.Media.Color.FromRgb(r, g, b));
+
+    private static string Ratio(JsonElement source, string name) =>
+        source.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetDouble().ToString("P2")
+            : "—";
+
+    private static string Number(JsonElement source, string name) =>
+        source.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetDouble().ToString("0.##")
+            : "—";
+
+    private static string Integer(JsonElement source, string name) =>
+        source.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetInt32().ToString()
+            : "—";
+
     private void LoadResult(JsonElement result)
     {
         _points = new List<(string, double, double)>();
@@ -70,6 +141,7 @@ public partial class BacktestResultWindow : Window
         }
 
         SummaryText.Text = sb.ToString();
+        RenderVerdict(result);
 
         if (result.TryGetProperty("equity_curve", out var curve) && curve.ValueKind == JsonValueKind.Array)
         {

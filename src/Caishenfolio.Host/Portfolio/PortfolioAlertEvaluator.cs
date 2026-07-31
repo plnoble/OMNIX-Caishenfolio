@@ -16,6 +16,8 @@ public enum AlertKind
     PriceDisagreement,
     /// <summary>A holding could not be priced at all, so it is missing from the totals.</summary>
     Unpriced,
+    /// <summary>An IPO needs an action by a date — paying for an allotment, or a listing arriving.</summary>
+    IpoDeadline,
 }
 
 public enum AlertSeverity
@@ -48,7 +50,8 @@ public static class PortfolioAlertEvaluator
         PortfolioRiskReport? risk = null,
         int stalePriceDays = 5,
         DateOnly? asOf = null,
-        decimal priceTolerancePercent = 2m)
+        decimal priceTolerancePercent = 2m,
+        IReadOnlyList<IpoSubscription>? ipoSubscriptions = null)
     {
         ArgumentNullException.ThrowIfNull(valuation);
         var today = asOf ?? valuation.AsOf;
@@ -154,6 +157,8 @@ public static class PortfolioAlertEvaluator
             }
         }
 
+        alerts.AddRange(IpoAlerts(ipoSubscriptions ?? [], today));
+
         foreach (var finding in risk?.Findings ?? [])
         {
             alerts.Add(new PortfolioAlert
@@ -171,6 +176,64 @@ public static class PortfolioAlertEvaluator
             .ThenBy(a => a.Kind)
             .ThenBy(a => a.Symbol, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    /// <summary>
+    /// Deadlines an IPO record implies. Missing a payment date forfeits the allotment outright
+    /// and, on A-shares, bars further applications for months — so an unpaid allotment is the
+    /// loudest thing this app can tell you about.
+    /// </summary>
+    private static IEnumerable<PortfolioAlert> IpoAlerts(
+        IReadOnlyList<IpoSubscription> subscriptions, DateOnly today)
+    {
+        foreach (var ipo in subscriptions)
+        {
+            var label = string.IsNullOrWhiteSpace(ipo.Name) ? ipo.Symbol : $"{ipo.Name}（{ipo.Symbol}）";
+
+            if (ipo.Status == IpoStatus.Allotted)
+            {
+                yield return new PortfolioAlert
+                {
+                    Kind = AlertKind.IpoDeadline,
+                    Severity = AlertSeverity.Warning,
+                    Symbol = ipo.Symbol,
+                    Title = "中签待缴款",
+                    Message = $"{label} 已中签 {ipo.AllottedQuantity:#,0} 股，还没登记缴款。" +
+                              "逾期未缴会作废，并影响后续申购资格。",
+                };
+                continue;
+            }
+
+            if (ipo.Status != IpoStatus.Paid || ipo.ListingDate is not { } listing)
+            {
+                continue;
+            }
+
+            var days = listing.DayNumber - today.DayNumber;
+            if (days > 7)
+            {
+                continue;
+            }
+
+            yield return new PortfolioAlert
+            {
+                Kind = AlertKind.IpoDeadline,
+                Severity = AlertSeverity.Info,
+                Symbol = ipo.Symbol,
+                Title = days switch
+                {
+                    > 0 => "即将上市",
+                    0 => "今日上市",
+                    _ => "已上市待卖出",
+                },
+                Message = days switch
+                {
+                    > 0 => $"{label} 将于 {listing:yyyy-MM-dd}（{days} 天后）上市，可以准备卖出计划了。",
+                    0 => $"{label} 今日上市，可以卖出。",
+                    _ => $"{label} 已于 {listing:yyyy-MM-dd} 上市（{-days} 天前），还没登记卖出。",
+                },
+            };
+        }
     }
 
     private static string NormalizeSymbol(string symbol) =>
