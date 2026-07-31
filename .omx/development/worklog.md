@@ -88,3 +88,18 @@
   链式时间加权收益、年化。无解时返回 null，不编造数字；跨币种现金流直接拒绝。
 - `PortfolioStore` 迁移至 v2：新增 `fx_rates` 快照表，`CreateFxConverter(asOf)` 不会用未来汇率估过去。
 - 验证：C# 测试 116 → 151 全过。
+
+## 2026-07-31 - R3 行情通道扩展
+
+- Provider 从「只有 OHLCV」扩展出三条通道：`latest_quote`（估值用最新价）、`nav_series`（场外基金净值）、
+  `fx_rate`（货币对）。`market/base.py` 用能力协议声明，composite 按能力路由并逐一汇报失败。
+- 基金净值不再伪装成 K 线：新增 `NavPoint`（无 open/high/low/volume）。此前每天要编造三个字段；
+  图表仍可用（`_bars_cn_fund` 由净值通道派生并保留 `fund_nav_not_ohlcv` 警告）。
+- 日股：Yahoo ticker 映射改由交易所注册表提供（`TSE:7203 → 7203.T`、`FX:USDCNY → USDCNY=X`、
+  `HKEX:00700 → 0700.HK`），yfinance 的货币也改为按交易所推导，不再写死 USD/HKD 二选一。
+- 债券：A 股路由按 `classify_cn_code` 分流，可转债走 `bond_zh_hs_cov_daily`、其他交易所债券走 `bond_zh_hs_daily`。
+- 汇率：yfinance 走 `USDCNY=X`；akshare 走 `fx_spot_quote`（缺接口时明确提示改用 yfinance）。
+- 新增路由 `/market/quote`、`/market/nav`、`/market/fx`，C# `AnalyticsCoreClient` 增加对应类型化方法。
+- `PortfolioPricingService`：按持仓收集报价与汇率，缺失转为警告（估值随之标记不完整而非按 0 计），
+  直连汇率缺失时回退到枢轴腿以便三角换算，取到的汇率写入快照表供离线估值。
+- 验证：Python 测试 60 → 82 全过；C# 测试 151 → 157 全过。

@@ -4,12 +4,20 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from caishenfolio_core.data.bar_interval import BarInterval
+from caishenfolio_core.data.markets import (
+    fx_symbol,
+    quote_currency,
+    region_of,
+    yahoo_ticker,
+)
 from caishenfolio_core.data.models import (
     Adjustment,
     AssetClass,
+    FxQuote,
     MarketRegion,
     OhlcvBar,
     ProviderResult,
+    Quote,
     SymbolId,
 )
 from caishenfolio_core.market.fixture import SymbolHit
@@ -45,15 +53,15 @@ class YFinanceMarketDataProvider:
 
         parsed = SymbolId.try_parse(q)
         if parsed is not None:
+            parsed = parsed.normalized()
             yahoo = _to_yahoo_symbol(parsed)
             if yahoo is None:
                 return []
-            market = MarketRegion.US if parsed.exchange in {"NASDAQ", "NYSE", "AMEX", "US"} else MarketRegion.HK
             return [
                 SymbolHit(
                     parsed.value,
-                    market,
-                    AssetClass.EQUITY,
+                    region_of(parsed.value),
+                    AssetClass.FX if parsed.exchange == "FX" else AssetClass.EQUITY,
                     parsed.code,
                     self.PROVIDER_CODE,
                 )
@@ -155,7 +163,7 @@ class YFinanceMarketDataProvider:
                 pass
 
         bars: list[OhlcvBar] = []
-        currency = "USD" if parsed.exchange in {"NASDAQ", "NYSE", "AMEX", "US"} else "HKD"
+        currency = quote_currency(parsed.normalized().value) or "USD"
         for idx, row in df.iterrows():
             try:
                 if hasattr(idx, "date"):
@@ -212,13 +220,68 @@ class YFinanceMarketDataProvider:
         )
 
 
+    def latest_quote(self, symbol: str) -> ProviderResult[Quote]:
+        """Last close from a short recent window — no separate endpoint, so no new failure mode."""
+        today = date.today()
+        result = self.historical_bars(symbol, today - timedelta(days=_QUOTE_LOOKBACK_DAYS), today)
+        if not result.ok or not result.data:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                result.error or f"未取得 {symbol} 的最新价格。",
+                warnings=result.warnings or ("fail_closed",),
+            )
+
+        last = result.data[-1]
+        return ProviderResult.success(
+            self.PROVIDER_CODE,
+            Quote(
+                symbol=SymbolId.parse(symbol).normalized().value,
+                price=last.close,
+                currency=last.currency,
+                as_of=last.timestamp_utc.date(),
+                provider=self.PROVIDER_CODE,
+                provenance={**dict(last.provenance), "channel": "latest_quote"},
+            ),
+            warnings=("real_market_data", "not_for_investment_decisions", "yfinance_unofficial"),
+        )
+
+    def fx_rate(self, base_currency: str, quote_currency_code: str) -> ProviderResult[FxQuote]:
+        base = (base_currency or "").strip().upper()
+        quote = (quote_currency_code or "").strip().upper()
+        if not base or not quote or base == quote:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"无效货币对 {base}/{quote}。",
+                warnings=("fail_closed",),
+            )
+
+        pair = fx_symbol(base, quote)
+        result = self.latest_quote(pair)
+        if not result.ok or result.data is None:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                result.error or f"未取得 {base}/{quote} 的汇率。",
+                warnings=result.warnings or ("fail_closed",),
+            )
+
+        return ProviderResult.success(
+            self.PROVIDER_CODE,
+            FxQuote(
+                base_currency=base,
+                quote_currency=quote,
+                rate=result.data.price,
+                as_of=result.data.as_of,
+                provider=self.PROVIDER_CODE,
+                provenance=dict(result.data.provenance),
+            ),
+            warnings=result.warnings,
+        )
+
+
+#: Enough calendar days to clear a long weekend or holiday run in any covered market.
+_QUOTE_LOOKBACK_DAYS = 12
+
+
 def _to_yahoo_symbol(parsed: SymbolId) -> str | None:
-    if parsed.exchange in {"NASDAQ", "NYSE", "AMEX", "US"}:
-        return parsed.code
-    if parsed.exchange in {"HKEX", "HK"}:
-        # Yahoo HK: 0700.HK
-        code = parsed.code.lstrip("0") or "0"
-        if parsed.code.isdigit():
-            code = parsed.code.zfill(4)
-        return f"{code}.HK"
-    return None
+    """Venue-to-ticker mapping lives in the exchange registry, so TSE and FX come for free."""
+    return yahoo_ticker(parsed.normalized().value)

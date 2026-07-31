@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import date
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs
 
 from caishenfolio_core import PRODUCT_NAME, PRODUCT_PHASE, RESEARCH_DISCLAIMER, __version__
@@ -179,6 +179,66 @@ class AnalyticsApp:
                 }
                 for bar in result.data
             ],
+            "warnings": list(result.warnings),
+            "error": result.error,
+        }
+
+    def market_quote(self, symbol: str) -> dict[str, object]:
+        """Latest price for one instrument — the valuation channel, not a bar series."""
+        return self._capability_payload(
+            "latest_quote",
+            lambda: self.market.latest_quote(symbol),
+            lambda quote: quote.to_dict(),
+        )
+
+    def market_nav(self, symbol: str, start: str, end: str) -> dict[str, object]:
+        """Daily NAV for an off-exchange fund. Funds have no OHLCV, so they get their own route."""
+        try:
+            start_date = date.fromisoformat(start)
+            end_date = date.fromisoformat(end)
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "provider": getattr(self.market, "PROVIDER_CODE", "unknown"),
+                "data": None,
+                "warnings": [],
+                "error": str(exc),
+            }
+
+        return self._capability_payload(
+            "nav_series",
+            lambda: self.market.nav_series(symbol, start_date, end_date),
+            lambda points: [point.to_dict() for point in points],
+        )
+
+    def market_fx(self, base_currency: str, quote_currency: str) -> dict[str, object]:
+        return self._capability_payload(
+            "fx_rate",
+            lambda: self.market.fx_rate(base_currency, quote_currency),
+            lambda quote: quote.to_dict(),
+        )
+
+    def _capability_payload(
+        self,
+        capability: str,
+        call: Callable[[], Any],
+        serialize: Callable[[Any], Any],
+    ) -> dict[str, object]:
+        provider = getattr(self.market, "PROVIDER_CODE", "unknown")
+        if not callable(getattr(self.market, capability, None)):
+            return {
+                "ok": False,
+                "provider": provider,
+                "data": None,
+                "warnings": ["unsupported_capability", "fail_closed"],
+                "error": f"当前行情源不支持 {capability}。",
+            }
+
+        result = call()
+        return {
+            "ok": result.ok,
+            "provider": result.provider,
+            "data": None if result.data is None else serialize(result.data),
             "warnings": list(result.warnings),
             "error": result.error,
         }
@@ -549,6 +609,18 @@ def dispatch(app: AnalyticsApp, method: str, path: str, query: str = "", body: d
             params.get("adjustment", Adjustment.RAW.value),
             params.get("interval", BarInterval.DAILY.value),
         )
+    if method == "GET" and normalized == "/market/quote":
+        if "symbol" not in params:
+            return 400, {"error": "必须提供 symbol。"}
+        return 200, app.market_quote(params["symbol"])
+    if method == "GET" and normalized == "/market/nav":
+        if "symbol" not in params or "start" not in params or "end" not in params:
+            return 400, {"error": "必须提供 symbol、start、end。"}
+        return 200, app.market_nav(params["symbol"], params["start"], params["end"])
+    if method == "GET" and normalized == "/market/fx":
+        if "base" not in params or "quote" not in params:
+            return 400, {"error": "必须提供 base、quote（如 base=USD&quote=CNY）。"}
+        return 200, app.market_fx(params["base"], params["quote"])
     if method == "GET" and normalized == "/tasks":
         return 200, app.list_tasks(params.get("kind"), params.get("status"), int(params.get("limit", "50")))
     if method == "POST" and normalized == "/tasks":

@@ -99,6 +99,55 @@ public sealed class AnalyticsCoreClient : IDisposable
         return payload ?? new MarketBarsResponse { Ok = false, Error = "Empty bars payload." };
     }
 
+    /// <summary>Latest price for one instrument — the channel portfolio valuation consumes.</summary>
+    public async Task<MarketQuoteResponse> GetQuoteAsync(
+        string symbol,
+        CancellationToken cancellationToken = default)
+    {
+        var path = $"market/quote?symbol={Uri.EscapeDataString(symbol)}";
+        using var response = await _http.GetAsync(path, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        var payload = await response.Content
+            .ReadFromJsonAsync<MarketQuoteResponse>(JsonOptions, cancellationToken)
+            .ConfigureAwait(false);
+        return payload ?? new MarketQuoteResponse { Ok = false, Error = "Empty quote payload." };
+    }
+
+    /// <summary>Daily NAV series for an off-exchange fund; funds have no OHLCV.</summary>
+    public async Task<MarketNavResponse> GetNavSeriesAsync(
+        string symbol,
+        string start,
+        string end,
+        CancellationToken cancellationToken = default)
+    {
+        var path =
+            $"market/nav?symbol={Uri.EscapeDataString(symbol)}" +
+            $"&start={Uri.EscapeDataString(start)}" +
+            $"&end={Uri.EscapeDataString(end)}";
+        using var response = await _http.GetAsync(path, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        var payload = await response.Content
+            .ReadFromJsonAsync<MarketNavResponse>(JsonOptions, cancellationToken)
+            .ConfigureAwait(false);
+        return payload ?? new MarketNavResponse { Ok = false, Error = "Empty NAV payload." };
+    }
+
+    public async Task<MarketFxResponse> GetFxRateAsync(
+        string baseCurrency,
+        string quoteCurrency,
+        CancellationToken cancellationToken = default)
+    {
+        var path =
+            $"market/fx?base={Uri.EscapeDataString(baseCurrency)}" +
+            $"&quote={Uri.EscapeDataString(quoteCurrency)}";
+        using var response = await _http.GetAsync(path, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        var payload = await response.Content
+            .ReadFromJsonAsync<MarketFxResponse>(JsonOptions, cancellationToken)
+            .ConfigureAwait(false);
+        return payload ?? new MarketFxResponse { Ok = false, Error = "Empty FX payload." };
+    }
+
     public async Task<JsonElement> SyncWatchlistCacheAsync(
         IEnumerable<string> symbols,
         int years = 10,
@@ -493,6 +542,114 @@ public sealed class SymbolSearchItem
 
     [JsonPropertyName("name")]
     public string Name { get; set; } = "";
+
+    [JsonPropertyName("provider")]
+    public string Provider { get; set; } = "";
+}
+
+public sealed class MarketQuoteResponse
+{
+    [JsonPropertyName("ok")]
+    public bool Ok { get; set; }
+
+    [JsonPropertyName("provider")]
+    public string Provider { get; set; } = "";
+
+    [JsonPropertyName("data")]
+    public MarketQuoteDto? Data { get; set; }
+
+    [JsonPropertyName("warnings")]
+    public List<string> Warnings { get; set; } = new();
+
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
+}
+
+public sealed class MarketQuoteDto
+{
+    [JsonPropertyName("symbol")]
+    public string Symbol { get; set; } = "";
+
+    [JsonPropertyName("price")]
+    public decimal Price { get; set; }
+
+    [JsonPropertyName("currency")]
+    public string Currency { get; set; } = "";
+
+    [JsonPropertyName("as_of")]
+    public string AsOf { get; set; } = "";
+
+    [JsonPropertyName("provider")]
+    public string Provider { get; set; } = "";
+}
+
+public sealed class MarketNavResponse
+{
+    [JsonPropertyName("ok")]
+    public bool Ok { get; set; }
+
+    [JsonPropertyName("provider")]
+    public string Provider { get; set; } = "";
+
+    [JsonPropertyName("data")]
+    public List<MarketNavPointDto>? Data { get; set; }
+
+    [JsonPropertyName("warnings")]
+    public List<string> Warnings { get; set; } = new();
+
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
+}
+
+public sealed class MarketNavPointDto
+{
+    [JsonPropertyName("as_of")]
+    public string AsOf { get; set; } = "";
+
+    [JsonPropertyName("nav")]
+    public decimal Nav { get; set; }
+
+    [JsonPropertyName("accumulated_nav")]
+    public decimal? AccumulatedNav { get; set; }
+
+    [JsonPropertyName("daily_return")]
+    public decimal? DailyReturn { get; set; }
+
+    [JsonPropertyName("currency")]
+    public string Currency { get; set; } = "";
+}
+
+public sealed class MarketFxResponse
+{
+    [JsonPropertyName("ok")]
+    public bool Ok { get; set; }
+
+    [JsonPropertyName("provider")]
+    public string Provider { get; set; } = "";
+
+    [JsonPropertyName("data")]
+    public MarketFxDto? Data { get; set; }
+
+    [JsonPropertyName("warnings")]
+    public List<string> Warnings { get; set; } = new();
+
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
+}
+
+public sealed class MarketFxDto
+{
+    [JsonPropertyName("base_currency")]
+    public string BaseCurrency { get; set; } = "";
+
+    [JsonPropertyName("quote_currency")]
+    public string QuoteCurrency { get; set; } = "";
+
+    [JsonPropertyName("rate")]
+    public decimal Rate { get; set; }
+
+    [JsonPropertyName("as_of")]
+    public string AsOf { get; set; } = "";
 
     [JsonPropertyName("provider")]
     public string Provider { get; set; } = "";

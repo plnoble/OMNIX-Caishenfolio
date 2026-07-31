@@ -242,7 +242,8 @@ def yahoo_ticker(symbol: str) -> str | None:
     if info.code == CN_FUND_EXCHANGE:
         return None  # Off-exchange funds are NAV-priced; Yahoo has no ticker for them.
     if info.code == "HKEX":
-        code = code.zfill(4)
+        # Yahoo uses four digits: HKEX:00700 and HKEX:700 both become 0700.HK.
+        code = (code.lstrip("0") or "0").zfill(4)
     if info.code == "TSE":
         code = code.lstrip("0") or code
     return f"{code}{info.yahoo_suffix}"

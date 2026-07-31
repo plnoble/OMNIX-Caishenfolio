@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from caishenfolio_core.data.bar_interval import BarInterval
-from caishenfolio_core.data.models import Adjustment, OhlcvBar, ProviderResult
+from caishenfolio_core.data.models import (
+    Adjustment,
+    FxQuote,
+    NavPoint,
+    OhlcvBar,
+    ProviderResult,
+    Quote,
+)
 from caishenfolio_core.market.bar_cache import BarsSqliteCache
 from caishenfolio_core.market.fixture import SymbolHit
 
@@ -67,6 +74,28 @@ class CachingMarketFacade:
 
     def search(self, query: str = "", limit: int = 10) -> list[SymbolHit]:
         return self.upstream.search(query, limit=limit)
+
+    # Quote / NAV / FX are pass-through: the bar cache is keyed by symbol+interval+window and
+    # has nothing to say about a single latest price or a rate.
+    def latest_quote(self, symbol: str) -> ProviderResult[Quote]:
+        return self._delegate("latest_quote", lambda: self.upstream.latest_quote(symbol))
+
+    def nav_series(self, symbol: str, start: date, end: date) -> ProviderResult[list[NavPoint]]:
+        return self._delegate("nav_series", lambda: self.upstream.nav_series(symbol, start, end))
+
+    def fx_rate(self, base_currency: str, quote_currency: str) -> ProviderResult[FxQuote]:
+        return self._delegate(
+            "fx_rate", lambda: self.upstream.fx_rate(base_currency, quote_currency)
+        )
+
+    def _delegate(self, capability: str, call: Callable[[], ProviderResult[Any]]) -> ProviderResult[Any]:
+        if not callable(getattr(self.upstream, capability, None)):
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"当前数据源不支持 {capability}。",
+                warnings=("unsupported_capability", "fail_closed"),
+            )
+        return call()
 
     def historical_bars(
         self,

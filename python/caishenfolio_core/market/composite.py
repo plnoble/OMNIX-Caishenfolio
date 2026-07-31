@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, Callable
 
 from caishenfolio_core.data.bar_interval import BarInterval
-from caishenfolio_core.data.models import Adjustment, OhlcvBar, ProviderResult
+from caishenfolio_core.data.models import (
+    Adjustment,
+    FxQuote,
+    NavPoint,
+    OhlcvBar,
+    ProviderResult,
+    Quote,
+)
 from caishenfolio_core.market.fixture import SymbolHit
 
 
@@ -92,5 +99,61 @@ class CompositeMarketDataProvider:
         return ProviderResult.failure(
             self.PROVIDER_CODE,
             f"全部真实行情源均失败（fail-closed，未生成数据）：{detail}",
+            warnings=("all_providers_failed", "fail_closed"),
+        )
+
+    def latest_quote(self, symbol: str) -> ProviderResult[Quote]:
+        return self._first_success(
+            "latest_quote",
+            lambda provider: provider.latest_quote(symbol),
+            f"未取得 {symbol} 的最新价格",
+        )
+
+    def nav_series(self, symbol: str, start: date, end: date) -> ProviderResult[list[NavPoint]]:
+        return self._first_success(
+            "nav_series",
+            lambda provider: provider.nav_series(symbol, start, end),
+            f"未取得 {symbol} 的净值序列",
+        )
+
+    def fx_rate(self, base_currency: str, quote_currency: str) -> ProviderResult[FxQuote]:
+        return self._first_success(
+            "fx_rate",
+            lambda provider: provider.fx_rate(base_currency, quote_currency),
+            f"未取得 {base_currency}/{quote_currency} 的汇率",
+        )
+
+    def _first_success(
+        self,
+        capability: str,
+        call: Callable[[Any], ProviderResult[Any]],
+        failure_summary: str,
+    ) -> ProviderResult[Any]:
+        """Tries each provider that implements the capability; reports every failure, invents nothing."""
+        errors: list[str] = []
+        for provider in self._providers:
+            code = getattr(provider, "PROVIDER_CODE", type(provider).__name__)
+            if not callable(getattr(provider, capability, None)):
+                continue
+            if hasattr(provider, "ready") and not provider.ready:
+                errors.append(f"{code}: not_ready")
+                continue
+            try:
+                result = call(provider)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{code}: {exc}")
+                continue
+            if result.ok and result.data:
+                return ProviderResult.success(
+                    code,
+                    result.data,
+                    warnings=tuple(result.warnings) + (f"resolved_by:{code}",),
+                )
+            errors.append(f"{code}: {result.error or 'empty'}")
+
+        detail = " | ".join(errors) if errors else f"无数据源实现 {capability}"
+        return ProviderResult.failure(
+            self.PROVIDER_CODE,
+            f"{failure_summary}（fail-closed，未生成数据）：{detail}",
             warnings=("all_providers_failed", "fail_closed"),
         )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Generic, TypeVar
 
@@ -15,9 +15,12 @@ T = TypeVar("T")
 __all__ = [
     "Adjustment",
     "AssetClass",
+    "FxQuote",
     "MarketRegion",
+    "NavPoint",
     "OhlcvBar",
     "ProviderResult",
+    "Quote",
     "SymbolId",
 ]
 
@@ -84,6 +87,83 @@ class OhlcvBar:
     provider: str
     amount: float | None = None
     provenance: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class Quote:
+    """Latest observed price for one instrument. Valuation consumes this, not a full bar series."""
+
+    symbol: str
+    price: float
+    currency: str
+    as_of: date
+    provider: str
+    provenance: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "symbol": self.symbol,
+            "price": self.price,
+            "currency": self.currency,
+            "as_of": self.as_of.isoformat(),
+            "provider": self.provider,
+            "provenance": dict(self.provenance),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class NavPoint:
+    """One daily NAV observation for an off-exchange fund.
+
+    Kept separate from :class:`OhlcvBar` on purpose: a fund has no open/high/low and no
+    volume, so forcing it into a bar shape produced three fabricated fields per day.
+    """
+
+    as_of: date
+    nav: float
+    currency: str
+    provider: str
+    accumulated_nav: float | None = None
+    daily_return: float | None = None
+    provenance: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "as_of": self.as_of.isoformat(),
+            "nav": self.nav,
+            "accumulated_nav": self.accumulated_nav,
+            "daily_return": self.daily_return,
+            "currency": self.currency,
+            "provider": self.provider,
+            "provenance": dict(self.provenance),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class FxQuote:
+    """``rate`` units of ``quote_currency`` per single unit of ``base_currency``."""
+
+    base_currency: str
+    quote_currency: str
+    rate: float
+    as_of: date
+    provider: str
+    provenance: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def symbol(self) -> str:
+        return f"FX:{self.base_currency}{self.quote_currency}"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "symbol": self.symbol,
+            "base_currency": self.base_currency,
+            "quote_currency": self.quote_currency,
+            "rate": self.rate,
+            "as_of": self.as_of.isoformat(),
+            "provider": self.provider,
+            "provenance": dict(self.provenance),
+        }
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,11 +7,22 @@ from caishenfolio_core.data.bar_interval import BarInterval
 from caishenfolio_core.data.models import (
     Adjustment,
     AssetClass,
+    FxQuote,
     MarketRegion,
+    NavPoint,
     OhlcvBar,
     ProviderResult,
+    Quote,
     SymbolId,
 )
+
+# Demo rates only — every value here is synthetic and must never inform a real decision.
+_FIXTURE_FX: dict[tuple[str, str], float] = {
+    ("USD", "CNY"): 7.2,
+    ("USD", "HKD"): 7.8,
+    ("USD", "JPY"): 150.0,
+    ("HKD", "CNY"): 0.923,
+}
 
 
 @dataclass(frozen=True)
@@ -72,6 +83,95 @@ class FixtureMarketDataProvider:
             SymbolHit(item.symbol, item.market, item.asset_class, item.name, self.PROVIDER_CODE)
             for item in matches[:limit]
         ]
+
+    def latest_quote(self, symbol: str) -> ProviderResult[Quote]:
+        seed = self._seed_for(symbol)
+        if seed is None:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"标的 '{symbol}' 不在演示池内。",
+                warnings=("fail_closed",),
+            )
+        return ProviderResult.success(
+            self.PROVIDER_CODE,
+            Quote(
+                symbol=seed.symbol,
+                price=seed.base_close,
+                currency=seed.currency,
+                as_of=date.today(),
+                provider=self.PROVIDER_CODE,
+                provenance={"synthetic": "true"},
+            ),
+            warnings=("fixture_synthetic_data", "not_for_investment_decisions"),
+        )
+
+    def nav_series(self, symbol: str, start: date, end: date) -> ProviderResult[list[NavPoint]]:
+        seed = self._seed_for(symbol)
+        if seed is None or seed.asset_class is not AssetClass.MUTUAL_FUND:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"'{symbol}' 不是演示池内的场外基金。",
+                warnings=("fail_closed",),
+            )
+        if end < start:
+            return ProviderResult.failure(self.PROVIDER_CODE, "结束日期必须不早于开始日期。")
+
+        points: list[NavPoint] = []
+        day = start
+        offset = 0
+        while day <= end:
+            if day.weekday() < 5:
+                nav = round(seed.base_close + offset * 0.002, 4)
+                points.append(
+                    NavPoint(
+                        as_of=day,
+                        nav=nav,
+                        accumulated_nav=round(nav + 0.5, 4),
+                        currency=seed.currency,
+                        provider=self.PROVIDER_CODE,
+                        provenance={"synthetic": "true", "symbol": seed.symbol},
+                    )
+                )
+                offset += 1
+            day += timedelta(days=1)
+
+        return ProviderResult.success(
+            self.PROVIDER_CODE,
+            points,
+            warnings=("fixture_synthetic_data", "not_for_investment_decisions"),
+        )
+
+    def fx_rate(self, base_currency: str, quote_currency: str) -> ProviderResult[FxQuote]:
+        base = (base_currency or "").strip().upper()
+        quote = (quote_currency or "").strip().upper()
+        rate = _FIXTURE_FX.get((base, quote))
+        if rate is None and (quote, base) in _FIXTURE_FX:
+            rate = 1.0 / _FIXTURE_FX[(quote, base)]
+        if rate is None:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"演示池内没有 {base}/{quote} 的汇率。",
+                warnings=("fail_closed",),
+            )
+        return ProviderResult.success(
+            self.PROVIDER_CODE,
+            FxQuote(
+                base_currency=base,
+                quote_currency=quote,
+                rate=rate,
+                as_of=date.today(),
+                provider=self.PROVIDER_CODE,
+                provenance={"synthetic": "true"},
+            ),
+            warnings=("fixture_synthetic_data", "not_for_investment_decisions"),
+        )
+
+    def _seed_for(self, symbol: str) -> SymbolSeed | None:
+        parsed = SymbolId.try_parse(symbol)
+        if parsed is None:
+            return None
+        wanted = parsed.normalized().value
+        return next((item for item in self._UNIVERSE if item.symbol == wanted), None)
 
     def historical_bars(
         self,

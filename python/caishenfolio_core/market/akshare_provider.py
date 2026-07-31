@@ -1,18 +1,25 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any
 
 from caishenfolio_core.data.bar_interval import BarInterval
-from caishenfolio_core.data.markets import classify_cn_code, cn_exchange_for_code
+from caishenfolio_core.data.markets import (
+    CN_FUND_EXCHANGE,
+    classify_cn_code,
+    cn_exchange_for_code,
+)
 from caishenfolio_core.data.models import (
     Adjustment,
     AssetClass,
+    FxQuote,
     MarketRegion,
+    NavPoint,
     OhlcvBar,
     ProviderResult,
+    Quote,
     SymbolId,
 )
 from caishenfolio_core.market.fixture import SymbolHit
@@ -27,6 +34,8 @@ from caishenfolio_core.market.symbol_index import fuzzy_search_a_share
 
 _CODE_ONLY_RE = re.compile(r"^[0-9]{5,6}$")
 _US_TICKER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9.\-]{0,9}$")
+#: Enough calendar days to clear a long holiday run in any covered market.
+_QUOTE_LOOKBACK_DAYS = 12
 
 
 def _try_import_akshare() -> Any | None:
@@ -215,6 +224,15 @@ class AkshareMarketDataProvider:
         interval: BarInterval,
     ) -> ProviderResult[list[OhlcvBar]]:
         if parsed.exchange in {"SSE", "SZSE", "BSE"}:
+            asset = classify_cn_code(parsed.code, parsed.exchange)
+            if asset in {AssetClass.BOND, AssetClass.CONVERTIBLE_BOND}:
+                if interval is not BarInterval.DAILY:
+                    return ProviderResult.failure(
+                        self.PROVIDER_CODE,
+                        "债券行情本阶段仅支持日频。",
+                        warnings=("unsupported_interval", "fail_closed"),
+                    )
+                return self._bars_cn_bond(ak, parsed, start, end, adjustment, asset)
             if interval.is_intraday:
                 return self._bars_ashare_min(ak, parsed, start, end, adjustment, interval)
             if interval.is_aggregate_from_daily:
@@ -628,15 +646,83 @@ class AkshareMarketDataProvider:
             warnings=("real_market_data", "not_for_investment_decisions"),
         )
 
-    def _bars_cn_fund(
-        self,
-        ak: Any,
-        parsed: SymbolId,
-        start: date,
-        end: date,
-        adjustment: Adjustment,
-    ) -> ProviderResult[list[OhlcvBar]]:
-        code = parsed.code
+    def latest_quote(self, symbol: str) -> ProviderResult[Quote]:
+        """Last close (or last NAV for funds) over a short recent window."""
+        parsed = SymbolId.try_parse(symbol)
+        if parsed is None:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE, f"无效标的 '{symbol}'。", warnings=("fail_closed",)
+            )
+        parsed = parsed.normalized()
+        today = date.today()
+        window_start = today - timedelta(days=_QUOTE_LOOKBACK_DAYS)
+
+        if parsed.exchange == CN_FUND_EXCHANGE:
+            nav = self.nav_series(parsed.value, window_start, today)
+            if not nav.ok or not nav.data:
+                return ProviderResult.failure(
+                    self.PROVIDER_CODE,
+                    nav.error or f"未取得 {parsed.value} 的最新净值。",
+                    warnings=nav.warnings or ("fail_closed",),
+                )
+            last_nav = nav.data[-1]
+            return ProviderResult.success(
+                self.PROVIDER_CODE,
+                Quote(
+                    symbol=parsed.value,
+                    price=last_nav.nav,
+                    currency=last_nav.currency,
+                    as_of=last_nav.as_of,
+                    provider=self.PROVIDER_CODE,
+                    provenance={**dict(last_nav.provenance), "channel": "latest_quote"},
+                ),
+                warnings=nav.warnings,
+            )
+
+        bars = self.historical_bars(parsed.value, window_start, today)
+        if not bars.ok or not bars.data:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                bars.error or f"未取得 {parsed.value} 的最新价格。",
+                warnings=bars.warnings or ("fail_closed",),
+            )
+        last = bars.data[-1]
+        return ProviderResult.success(
+            self.PROVIDER_CODE,
+            Quote(
+                symbol=parsed.value,
+                price=last.close,
+                currency=last.currency,
+                as_of=last.timestamp_utc.date(),
+                provider=self.PROVIDER_CODE,
+                provenance={**dict(last.provenance), "channel": "latest_quote"},
+            ),
+            warnings=bars.warnings,
+        )
+
+    def nav_series(self, symbol: str, start: date, end: date) -> ProviderResult[list[NavPoint]]:
+        """Daily NAV for an off-exchange open-end fund — the fund's own price channel."""
+        ak = self._require_ak()
+        if isinstance(ak, ProviderResult):
+            return ak  # type: ignore[return-value]
+
+        parsed = SymbolId.try_parse(symbol)
+        if parsed is None:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE, f"无效标的 '{symbol}'。", warnings=("fail_closed",)
+            )
+        parsed = parsed.normalized()
+        if parsed.exchange != CN_FUND_EXCHANGE:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"'{parsed.value}' 不是场外基金（应为 FUND:代码）。",
+                warnings=("unsupported_symbol", "fail_closed"),
+            )
+        if end < start:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE, "结束日期必须不早于开始日期。", warnings=("fail_closed",)
+            )
+
         fn = getattr(ak, "fund_open_fund_info_em", None)
         if fn is None:
             return ProviderResult.failure(
@@ -644,13 +730,13 @@ class AkshareMarketDataProvider:
                 "当前 akshare 缺少公募基金净值接口 fund_open_fund_info_em。",
                 warnings=("unsupported_api", "fail_closed"),
             )
-        # indicator 单位净值; 接口返回可能不含 OHLCV 完整字段
+
         try:
-            df = fn(symbol=code, indicator="单位净值走势")
+            df = call_with_direct_fallback(lambda: fn(symbol=parsed.code, indicator="单位净值走势"))
         except Exception as exc:  # noqa: BLE001
             return ProviderResult.failure(
                 self.PROVIDER_CODE,
-                f"公募基金净值获取失败：{parsed.value}（{exc}）",
+                f"公募基金净值获取失败：{parsed.value}（{humanize_market_error(exc)}）",
                 warnings=("upstream_error", "fail_closed"),
             )
         if df is None or getattr(df, "empty", True):
@@ -659,10 +745,14 @@ class AkshareMarketDataProvider:
                 f"未从上游取得基金净值：{parsed.value}",
                 warnings=("empty_upstream", "fail_closed"),
             )
-        # Map NAV series to OHLC with open=high=low=close=nav (documented as NAV, not trade bars)
-        date_col = "净值日期" if "净值日期" in df.columns else df.columns[0]
-        nav_col = "单位净值" if "单位净值" in df.columns else df.columns[1]
-        bars: list[OhlcvBar] = []
+
+        cols = [str(c) for c in df.columns]
+        date_col = _pick_column(df, ("净值日期", "date")) or cols[0]
+        nav_col = _pick_column(df, ("单位净值", "nav")) or (cols[1] if len(cols) > 1 else cols[0])
+        accum_col = _pick_column(df, ("累计净值",))
+        growth_col = _pick_column(df, ("日增长率",))
+
+        points: list[NavPoint] = []
         for _, row in df.iterrows():
             try:
                 day = _parse_day(row[date_col])
@@ -671,18 +761,14 @@ class AkshareMarketDataProvider:
                 nav = float(row[nav_col])
             except Exception:  # noqa: BLE001
                 continue
-            bars.append(
-                OhlcvBar(
-                    timestamp_utc=datetime(day.year, day.month, day.day, tzinfo=timezone.utc),
-                    open=nav,
-                    high=nav,
-                    low=nav,
-                    close=nav,
-                    volume=0.0,
+            points.append(
+                NavPoint(
+                    as_of=day,
+                    nav=nav,
+                    accumulated_nav=_optional_float(row, accum_col),
+                    daily_return=_optional_float(row, growth_col),
                     currency="CNY",
-                    adjustment=adjustment,
                     provider=self.PROVIDER_CODE,
-                    amount=None,
                     provenance={
                         "source": self.PROVIDER_CODE,
                         "symbol": parsed.value,
@@ -692,19 +778,203 @@ class AkshareMarketDataProvider:
                     },
                 )
             )
-        if not bars:
+
+        if not points:
             return ProviderResult.failure(
                 self.PROVIDER_CODE,
                 f"基金净值无落在区间内的数据：{parsed.value}",
                 warnings=("empty_window", "fail_closed"),
             )
+
+        points.sort(key=lambda p: p.as_of)
+        return ProviderResult.success(
+            self.PROVIDER_CODE,
+            points,
+            warnings=("real_market_data", "not_for_investment_decisions"),
+        )
+
+    def fx_rate(self, base_currency: str, quote_currency_code: str) -> ProviderResult[FxQuote]:
+        """CN interbank spot quotes. Yahoo covers pairs this source does not."""
+        ak = self._require_ak()
+        if isinstance(ak, ProviderResult):
+            return ak  # type: ignore[return-value]
+
+        base = (base_currency or "").strip().upper()
+        quote = (quote_currency_code or "").strip().upper()
+        if not base or not quote or base == quote:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE, f"无效货币对 {base}/{quote}。", warnings=("fail_closed",)
+            )
+
+        fn = getattr(ak, "fx_spot_quote", None)
+        if fn is None:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                "当前 akshare 缺少外汇报价接口 fx_spot_quote；可改用 yfinance 数据源取汇率。",
+                warnings=("unsupported_api", "fail_closed"),
+            )
+
+        try:
+            df = call_with_direct_fallback(fn)
+        except Exception as exc:  # noqa: BLE001
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"外汇报价获取失败：{humanize_market_error(exc)}",
+                warnings=("upstream_error", "fail_closed"),
+            )
+        if df is None or getattr(df, "empty", True):
+            return ProviderResult.failure(
+                self.PROVIDER_CODE, "未取得外汇报价。", warnings=("empty_upstream", "fail_closed")
+            )
+
+        pair_col = _pick_column(df, ("货币对", "pair", "symbol"))
+        bid_col = _pick_column(df, ("买报价", "bid"))
+        ask_col = _pick_column(df, ("卖报价", "ask"))
+        if pair_col is None or (bid_col is None and ask_col is None):
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                "外汇报价字段无法解析。",
+                warnings=("parse_error", "fail_closed"),
+            )
+
+        wanted = f"{base}/{quote}"
+        inverted = f"{quote}/{base}"
+        for _, row in df.iterrows():
+            label = str(row[pair_col]).strip().upper()
+            if label not in {wanted, inverted}:
+                continue
+            mid = _mid_price(row, bid_col, ask_col)
+            if mid is None or mid <= 0:
+                continue
+            rate = mid if label == wanted else 1.0 / mid
+            return ProviderResult.success(
+                self.PROVIDER_CODE,
+                FxQuote(
+                    base_currency=base,
+                    quote_currency=quote,
+                    rate=rate,
+                    as_of=date.today(),
+                    provider=self.PROVIDER_CODE,
+                    provenance={
+                        "source": self.PROVIDER_CODE,
+                        "source_api": "fx_spot_quote",
+                        "upstream_pair": label,
+                        "synthetic": "false",
+                    },
+                ),
+                warnings=("real_market_data", "not_for_investment_decisions"),
+            )
+
+        return ProviderResult.failure(
+            self.PROVIDER_CODE,
+            f"外汇报价中没有 {wanted}。",
+            warnings=("pair_not_found", "fail_closed"),
+        )
+
+    def _bars_cn_fund(
+        self,
+        ak: Any,
+        parsed: SymbolId,
+        start: date,
+        end: date,
+        adjustment: Adjustment,
+    ) -> ProviderResult[list[OhlcvBar]]:
+        """Chart-facing view of the NAV series.
+
+        The NAV channel stays the source of truth; open/high/low simply repeat the NAV so the
+        existing chart keeps working, and the ``fund_nav_not_ohlcv`` warning says so.
+        """
+        result = self.nav_series(parsed.value, start, end)
+        if not result.ok or not result.data:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                result.error or f"未取得基金净值：{parsed.value}",
+                warnings=result.warnings or ("fail_closed",),
+            )
+
+        bars = [
+            OhlcvBar(
+                timestamp_utc=datetime(p.as_of.year, p.as_of.month, p.as_of.day, tzinfo=timezone.utc),
+                open=p.nav,
+                high=p.nav,
+                low=p.nav,
+                close=p.nav,
+                volume=0.0,
+                currency=p.currency,
+                adjustment=adjustment,
+                provider=self.PROVIDER_CODE,
+                amount=None,
+                provenance=dict(p.provenance),
+            )
+            for p in result.data
+        ]
+        return ProviderResult.success(
+            self.PROVIDER_CODE,
+            bars,
+            warnings=tuple(result.warnings) + ("fund_nav_not_ohlcv",),
+        )
+
+    def _bars_cn_bond(
+        self,
+        ak: Any,
+        parsed: SymbolId,
+        start: date,
+        end: date,
+        adjustment: Adjustment,
+        asset: AssetClass,
+    ) -> ProviderResult[list[OhlcvBar]]:
+        prefix = "sh" if parsed.exchange == "SSE" else "sz"
+        ticker = f"{prefix}{parsed.code}"
+        is_convertible = asset is AssetClass.CONVERTIBLE_BOND
+        api_name = "bond_zh_hs_cov_daily" if is_convertible else "bond_zh_hs_daily"
+        fn = getattr(ak, api_name, None)
+        if fn is None:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"当前 akshare 缺少债券接口 {api_name}。",
+                warnings=("unsupported_api", "fail_closed"),
+            )
+
+        try:
+            df = call_with_direct_fallback(lambda: fn(symbol=ticker))
+        except Exception as exc:  # noqa: BLE001
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"债券行情获取失败：{parsed.value}（{humanize_market_error(exc)}）",
+                warnings=("upstream_error", "fail_closed"),
+            )
+        if df is None or getattr(df, "empty", True):
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"未从上游取得债券行情：{parsed.value}",
+                warnings=("empty_upstream", "fail_closed"),
+            )
+
+        bars = _df_to_bars(
+            df,
+            provider=self.PROVIDER_CODE,
+            currency="CNY",
+            adjustment=adjustment,
+            symbol=parsed.value,
+            source_api=api_name,
+            date_candidates=("日期", "date"),
+        )
+        # These APIs return full history, so clip to the requested window.
+        bars = [bar for bar in bars if start <= bar.timestamp_utc.date() <= end]
+        if not bars:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"债券行情无落在区间内的数据：{parsed.value}",
+                warnings=("empty_window", "fail_closed"),
+            )
+
         return ProviderResult.success(
             self.PROVIDER_CODE,
             bars,
             warnings=(
                 "real_market_data",
-                "fund_nav_not_ohlcv",
                 "not_for_investment_decisions",
+                f"source_api:{api_name}",
             ),
         )
 
@@ -772,6 +1042,24 @@ def _pick_column(df: Any, candidates: tuple[str, ...]) -> str | None:
         if name.lower() in lower_map:
             return lower_map[name.lower()]
     return None
+
+
+def _optional_float(row: Any, column: str | None) -> float | None:
+    if column is None:
+        return None
+    try:
+        value = float(row[column])
+    except Exception:  # noqa: BLE001
+        return None
+    return None if value != value else value  # drop NaN
+
+
+def _mid_price(row: Any, bid_col: str | None, ask_col: str | None) -> float | None:
+    bid = _optional_float(row, bid_col)
+    ask = _optional_float(row, ask_col)
+    if bid is not None and ask is not None:
+        return (bid + ask) / 2.0
+    return bid if bid is not None else ask
 
 
 def _df_to_bars(
