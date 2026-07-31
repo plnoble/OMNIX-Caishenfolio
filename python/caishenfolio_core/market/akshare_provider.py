@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone  # noqa: F401
 from functools import lru_cache
 from typing import Any
 
@@ -14,6 +14,7 @@ from caishenfolio_core.data.markets import (
 from caishenfolio_core.data.models import (
     Adjustment,
     AssetClass,
+    FinancialPeriod,
     FxQuote,
     MarketRegion,
     NavPoint,
@@ -21,6 +22,7 @@ from caishenfolio_core.data.models import (
     ProviderResult,
     Quote,
     SymbolId,
+    ValuationPoint,
 )
 from caishenfolio_core.market.fixture import SymbolHit
 from caishenfolio_core.market.network import (
@@ -793,6 +795,133 @@ class AkshareMarketDataProvider:
             warnings=("real_market_data", "not_for_investment_decisions"),
         )
 
+    def valuation_history(self, symbol: str, years: int = 10) -> ProviderResult[list[ValuationPoint]]:
+        """Daily PE/PB/dividend-yield history — the distribution a percentile is taken over."""
+        ak = self._require_ak()
+        if isinstance(ak, ProviderResult):
+            return ak  # type: ignore[return-value]
+
+        parsed = SymbolId.try_parse(symbol)
+        if parsed is None or parsed.normalized().exchange not in {"SSE", "SZSE", "BSE"}:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"估值历史当前仅支持 A 股（收到 '{symbol}'）。",
+                warnings=("unsupported_symbol", "fail_closed"),
+            )
+
+        fn = getattr(ak, "stock_a_indicator_lg", None)
+        if fn is None:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                "当前 akshare 缺少估值指标接口 stock_a_indicator_lg。",
+                warnings=("unsupported_api", "fail_closed"),
+            )
+
+        code = parsed.normalized().code
+        try:
+            df = call_with_direct_fallback(lambda: fn(symbol=code))
+        except Exception as exc:  # noqa: BLE001
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"估值历史获取失败：{symbol}（{humanize_market_error(exc)}）",
+                warnings=("upstream_error", "fail_closed"),
+            )
+        if df is None or getattr(df, "empty", True):
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"未取得估值历史：{symbol}",
+                warnings=("empty_upstream", "fail_closed"),
+            )
+
+        date_col = _pick_column(df, ("trade_date", "date", "日期"))
+        pe_col = _pick_column(df, ("pe_ttm", "pe", "市盈率"))
+        pb_col = _pick_column(df, ("pb", "市净率"))
+        dy_col = _pick_column(df, ("dv_ttm", "dv_ratio", "股息率"))
+        if date_col is None:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE, "估值历史字段无法解析。", warnings=("parse_error", "fail_closed")
+            )
+
+        cutoff = date.today() - timedelta(days=int(years * 365.25))
+        points: list[ValuationPoint] = []
+        for _, row in df.iterrows():
+            day = _parse_day(row[date_col])
+            if day is None or day < cutoff:
+                continue
+            points.append(
+                ValuationPoint(
+                    as_of=day,
+                    pe=_optional_float(row, pe_col),
+                    pb=_optional_float(row, pb_col),
+                    dividend_yield=_optional_float(row, dy_col),
+                )
+            )
+
+        if not points:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"估值历史在近 {years} 年内无数据：{symbol}",
+                warnings=("empty_window", "fail_closed"),
+            )
+
+        points.sort(key=lambda p: p.as_of)
+        return ProviderResult.success(
+            self.PROVIDER_CODE,
+            points,
+            warnings=("real_market_data", "not_for_investment_decisions"),
+        )
+
+    def financial_summary(self, symbol: str, periods: int = 5) -> ProviderResult[list[FinancialPeriod]]:
+        """Headline figures as filed: revenue, net profit, EPS, ROE."""
+        ak = self._require_ak()
+        if isinstance(ak, ProviderResult):
+            return ak  # type: ignore[return-value]
+
+        parsed = SymbolId.try_parse(symbol)
+        if parsed is None or parsed.normalized().exchange not in {"SSE", "SZSE", "BSE"}:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"财务摘要当前仅支持 A 股（收到 '{symbol}'）。",
+                warnings=("unsupported_symbol", "fail_closed"),
+            )
+
+        fn = getattr(ak, "stock_financial_abstract", None)
+        if fn is None:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                "当前 akshare 缺少财务摘要接口 stock_financial_abstract。",
+                warnings=("unsupported_api", "fail_closed"),
+            )
+
+        try:
+            df = call_with_direct_fallback(lambda: fn(symbol=parsed.normalized().code))
+        except Exception as exc:  # noqa: BLE001
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"财务摘要获取失败：{symbol}（{humanize_market_error(exc)}）",
+                warnings=("upstream_error", "fail_closed"),
+            )
+        if df is None or getattr(df, "empty", True):
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"未取得财务摘要：{symbol}",
+                warnings=("empty_upstream", "fail_closed"),
+            )
+
+        result = _financial_periods_from(df, periods)
+        if not result:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"财务摘要无法解析：{symbol}",
+                warnings=("parse_error", "fail_closed"),
+            )
+
+        return ProviderResult.success(
+            self.PROVIDER_CODE,
+            result,
+            warnings=("real_market_data", "not_for_investment_decisions"),
+        )
+
     def fx_rate(self, base_currency: str, quote_currency_code: str) -> ProviderResult[FxQuote]:
         """CN interbank spot quotes. Yahoo covers pairs this source does not."""
         ak = self._require_ak()
@@ -1042,6 +1171,94 @@ def _pick_column(df: Any, candidates: tuple[str, ...]) -> str | None:
         if name.lower() in lower_map:
             return lower_map[name.lower()]
     return None
+
+
+def _financial_periods_from(df: Any, wanted: int) -> list[FinancialPeriod]:
+    """Reads the abstract table, which upstream ships either row- or column-per-period."""
+    columns = [str(c) for c in df.columns]
+    period_columns = [c for c in columns if _looks_like_period(c)]
+
+    if period_columns:
+        # Wide layout: one column per reporting period, indicator names down the first column.
+        label_col = columns[0]
+        rows = {str(row[label_col]).strip(): row for _, row in df.iterrows()}
+        periods: list[FinancialPeriod] = []
+        for column in sorted(period_columns, reverse=True)[:wanted]:
+            periods.append(
+                FinancialPeriod(
+                    period=column,
+                    revenue=_row_value(rows, ("营业总收入", "营业收入"), column),
+                    net_profit=_row_value(rows, ("归母净利润", "净利润"), column),
+                    eps=_row_value(rows, ("基本每股收益", "每股收益"), column),
+                    roe=_row_value(rows, ("净资产收益率", "净资产收益率(ROE)"), column),
+                )
+            )
+        return _with_growth(periods)
+
+    # Long layout: one row per period.
+    period_col = _pick_column(df, ("报告期", "报告日", "period", "date"))
+    if period_col is None:
+        return []
+
+    periods = []
+    for _, row in df.iterrows():
+        periods.append(
+            FinancialPeriod(
+                period=str(row[period_col]),
+                revenue=_optional_float(row, _pick_column(df, ("营业总收入", "营业收入"))),
+                net_profit=_optional_float(row, _pick_column(df, ("归母净利润", "净利润"))),
+                eps=_optional_float(row, _pick_column(df, ("基本每股收益", "每股收益"))),
+                roe=_optional_float(row, _pick_column(df, ("净资产收益率",))),
+            )
+        )
+    periods.sort(key=lambda p: p.period, reverse=True)
+    return _with_growth(periods[:wanted])
+
+
+def _looks_like_period(name: str) -> bool:
+    digits = "".join(ch for ch in name if ch.isdigit())
+    return len(digits) == 8 and name.strip() == digits
+
+
+def _row_value(rows: dict[str, Any], labels: tuple[str, ...], column: str) -> float | None:
+    for label in labels:
+        row = rows.get(label)
+        if row is None:
+            continue
+        try:
+            value = float(row[column])
+        except Exception:  # noqa: BLE001
+            continue
+        return None if value != value else value
+    return None
+
+
+def _with_growth(periods: list[FinancialPeriod]) -> list[FinancialPeriod]:
+    """Fills year-on-year growth where consecutive periods allow it."""
+    out: list[FinancialPeriod] = []
+    for i, period in enumerate(periods):
+        previous = periods[i + 1] if i + 1 < len(periods) else None
+        out.append(
+            FinancialPeriod(
+                period=period.period,
+                revenue=period.revenue,
+                net_profit=period.net_profit,
+                eps=period.eps,
+                roe=period.roe,
+                revenue_growth=_growth(period.revenue, previous.revenue if previous else None),
+                profit_growth=_growth(period.net_profit, previous.net_profit if previous else None),
+            )
+        )
+    return out
+
+
+def _growth(current: float | None, previous: float | None) -> float | None:
+    if current is None or previous is None or previous == 0:
+        return None
+    # A swing from a loss to a profit has no meaningful percentage.
+    if previous < 0:
+        return None
+    return (current - previous) / previous
 
 
 def _optional_float(row: Any, column: str | None) -> float | None:

@@ -3,10 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
+import math
+
 from caishenfolio_core.data.bar_interval import BarInterval
 from caishenfolio_core.data.models import (
     Adjustment,
     AssetClass,
+    FinancialPeriod,
     FxQuote,
     MarketRegion,
     NavPoint,
@@ -14,6 +17,7 @@ from caishenfolio_core.data.models import (
     ProviderResult,
     Quote,
     SymbolId,
+    ValuationPoint,
 )
 
 # Demo rates only — every value here is synthetic and must never inform a real decision.
@@ -138,6 +142,71 @@ class FixtureMarketDataProvider:
         return ProviderResult.success(
             self.PROVIDER_CODE,
             points,
+            warnings=("fixture_synthetic_data", "not_for_investment_decisions"),
+        )
+
+    def valuation_history(self, symbol: str, years: int = 10) -> ProviderResult[list[ValuationPoint]]:
+        seed = self._seed_for(symbol)
+        if seed is None or seed.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"'{symbol}' 不在演示池内或没有估值指标。",
+                warnings=("fail_closed",),
+            )
+
+        # A slow sine so percentiles have a real distribution to rank against.
+        today = date.today()
+        points: list[ValuationPoint] = []
+        span = max(1, min(years, 10)) * 250
+        for i in range(span):
+            day = today - timedelta(days=span - i)
+            if day.weekday() >= 5:
+                continue
+            phase = math.sin(i / 180.0)
+            points.append(
+                ValuationPoint(
+                    as_of=day,
+                    pe=round(20.0 + 8.0 * phase, 4),
+                    pb=round(2.5 + 0.8 * phase, 4),
+                    dividend_yield=round(0.025 - 0.008 * phase, 6),
+                )
+            )
+
+        return ProviderResult.success(
+            self.PROVIDER_CODE,
+            points,
+            warnings=("fixture_synthetic_data", "not_for_investment_decisions"),
+        )
+
+    def financial_summary(self, symbol: str, periods: int = 5) -> ProviderResult[list[FinancialPeriod]]:
+        seed = self._seed_for(symbol)
+        if seed is None or seed.asset_class is not AssetClass.EQUITY:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"'{symbol}' 不在演示池内或不是股票。",
+                warnings=("fail_closed",),
+            )
+
+        year = date.today().year
+        result: list[FinancialPeriod] = []
+        for offset in range(periods):
+            revenue = 1_000_000_000.0 * (1.12 ** (periods - offset - 1))
+            profit = revenue * 0.18
+            result.append(
+                FinancialPeriod(
+                    period=f"{year - offset - 1}1231",
+                    revenue=round(revenue, 2),
+                    net_profit=round(profit, 2),
+                    eps=round(profit / 1_000_000_000.0, 4),
+                    roe=0.15,
+                    revenue_growth=None if offset == periods - 1 else 0.12,
+                    profit_growth=None if offset == periods - 1 else 0.12,
+                )
+            )
+
+        return ProviderResult.success(
+            self.PROVIDER_CODE,
+            result,
             warnings=("fixture_synthetic_data", "not_for_investment_decisions"),
         )
 

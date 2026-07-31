@@ -15,6 +15,7 @@ T = TypeVar("T")
 __all__ = [
     "Adjustment",
     "AssetClass",
+    "FinancialPeriod",
     "FxQuote",
     "MarketRegion",
     "NavPoint",
@@ -22,6 +23,7 @@ __all__ = [
     "ProviderResult",
     "Quote",
     "SymbolId",
+    "ValuationPoint",
 ]
 
 
@@ -142,6 +144,48 @@ class NavPoint:
             "currency": self.currency,
             "provider": self.provider,
             "provenance": dict(self.provenance),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ValuationPoint:
+    """One day's valuation multiples. The history of these is what a percentile is taken over."""
+
+    as_of: date
+    pe: float | None = None
+    pb: float | None = None
+    dividend_yield: float | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "as_of": self.as_of.isoformat(),
+            "pe": self.pe,
+            "pb": self.pb,
+            "dividend_yield": self.dividend_yield,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class FinancialPeriod:
+    """One reporting period's headline figures, as filed."""
+
+    period: str
+    revenue: float | None = None
+    net_profit: float | None = None
+    eps: float | None = None
+    roe: float | None = None
+    revenue_growth: float | None = None
+    profit_growth: float | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "period": self.period,
+            "revenue": self.revenue,
+            "net_profit": self.net_profit,
+            "eps": self.eps,
+            "roe": self.roe,
+            "revenue_growth": self.revenue_growth,
+            "profit_growth": self.profit_growth,
         }
 
 

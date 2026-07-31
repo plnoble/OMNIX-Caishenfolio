@@ -6,11 +6,13 @@ from typing import Any, Callable
 from caishenfolio_core.data.bar_interval import BarInterval
 from caishenfolio_core.data.models import (
     Adjustment,
+    FinancialPeriod,
     FxQuote,
     NavPoint,
     OhlcvBar,
     ProviderResult,
     Quote,
+    ValuationPoint,
 )
 from caishenfolio_core.market.fixture import SymbolHit
 
@@ -242,6 +244,20 @@ class CompositeMarketDataProvider:
             "fx_rate",
             lambda provider: provider.fx_rate(base_currency, quote_currency),
             f"未取得 {base_currency}/{quote_currency} 的汇率",
+        )
+
+    def valuation_history(self, symbol: str, years: int = 10) -> ProviderResult[list[ValuationPoint]]:
+        return self._first_success(
+            "valuation_history",
+            lambda provider: provider.valuation_history(symbol, years),
+            f"未取得 {symbol} 的估值历史",
+        )
+
+    def financial_summary(self, symbol: str, periods: int = 5) -> ProviderResult[list[FinancialPeriod]]:
+        return self._first_success(
+            "financial_summary",
+            lambda provider: provider.financial_summary(symbol, periods),
+            f"未取得 {symbol} 的财务摘要",
         )
 
     def _first_success(

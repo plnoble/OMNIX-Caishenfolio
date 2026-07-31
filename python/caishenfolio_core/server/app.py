@@ -19,6 +19,7 @@ from caishenfolio_core.market.parquet_store import export_bars_parquet, parquet_
 from caishenfolio_core.market.symbol_index import fuzzy_search_a_share
 from caishenfolio_core.research.backtest import cost_model_from_dict, ma_cross_backtest
 from caishenfolio_core.research.evaluation import evaluate, out_of_sample_report
+from caishenfolio_core.research.valuation import position_from_history
 from caishenfolio_core.research.compare import compare_normalized_closes
 from caishenfolio_core.research.grid import grid_backtest, suggest_grid_from_bars
 from caishenfolio_core.research.grid_ledger import GridLedgerStore
@@ -225,6 +226,45 @@ class AnalyticsApp:
             "nav_series",
             lambda: self.market.nav_series(symbol, start_date, end_date),
             lambda points: [point.to_dict() for point in points],
+        )
+
+    def market_valuation(self, symbol: str, years: int = 10) -> dict[str, object]:
+        """Current multiples and where each sits in its own history."""
+        provider = getattr(self.market, "PROVIDER_CODE", "unknown")
+        if not callable(getattr(self.market, "valuation_history", None)):
+            return {
+                "ok": False,
+                "provider": provider,
+                "data": None,
+                "warnings": ["unsupported_capability", "fail_closed"],
+                "error": "当前行情源不支持估值历史。",
+            }
+
+        result = self.market.valuation_history(symbol, years)
+        if not result.ok or not result.data:
+            return {
+                "ok": False,
+                "provider": result.provider,
+                "data": None,
+                "warnings": list(result.warnings),
+                "error": result.error or f"未取得 {symbol} 的估值历史。",
+            }
+
+        position = position_from_history(symbol, list(result.data), result.provider)
+        return {
+            "ok": True,
+            "provider": result.provider,
+            "data": position.to_dict(),
+            "history": [point.to_dict() for point in result.data],
+            "warnings": list(result.warnings),
+            "error": None,
+        }
+
+    def market_financials(self, symbol: str, periods: int = 5) -> dict[str, object]:
+        return self._capability_payload(
+            "financial_summary",
+            lambda: self.market.financial_summary(symbol, periods),
+            lambda rows: [row.to_dict() for row in rows],
         )
 
     def market_fx(self, base_currency: str, quote_currency: str) -> dict[str, object]:
@@ -653,6 +693,14 @@ def dispatch(app: AnalyticsApp, method: str, path: str, query: str = "", body: d
         if "symbol" not in params or "start" not in params or "end" not in params:
             return 400, {"error": "必须提供 symbol、start、end。"}
         return 200, app.market_nav(params["symbol"], params["start"], params["end"])
+    if method == "GET" and normalized == "/market/valuation":
+        if "symbol" not in params:
+            return 400, {"error": "必须提供 symbol。"}
+        return 200, app.market_valuation(params["symbol"], int(params.get("years", "10")))
+    if method == "GET" and normalized == "/market/financials":
+        if "symbol" not in params:
+            return 400, {"error": "必须提供 symbol。"}
+        return 200, app.market_financials(params["symbol"], int(params.get("periods", "5")))
     if method == "GET" and normalized == "/market/fx":
         if "base" not in params or "quote" not in params:
             return 400, {"error": "必须提供 base、quote（如 base=USD&quote=CNY）。"}
