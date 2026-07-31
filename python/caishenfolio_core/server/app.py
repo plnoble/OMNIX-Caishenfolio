@@ -20,6 +20,7 @@ from caishenfolio_core.market.symbol_index import fuzzy_search_a_share
 from caishenfolio_core.research.backtest import cost_model_from_dict, ma_cross_backtest
 from caishenfolio_core.research.evaluation import evaluate, out_of_sample_report
 from caishenfolio_core.research.fx_carry import build_panel as build_carry_panel
+from caishenfolio_core.research.interpretation import read_metric
 from caishenfolio_core.research.valuation import position_from_history
 from caishenfolio_core.research.compare import compare_normalized_closes
 from caishenfolio_core.research.grid import grid_backtest, suggest_grid_from_bars
@@ -251,15 +252,56 @@ class AnalyticsApp:
                 "error": result.error or f"未取得 {symbol} 的估值历史。",
             }
 
-        position = position_from_history(symbol, list(result.data), result.provider)
+        history = list(result.data)
+        position = position_from_history(symbol, history, result.provider)
+
+        # Closes aligned to the same dates turn "PE is at the 8th percentile" into "here is what
+        # happened next, historically, from a comparable starting point".
+        closes = self._closes_for(symbol, history)
+        readings = [
+            read_metric(
+                metric.name,
+                metric.current,
+                metric.percentile,
+                _metric_series(history, metric.name) if closes else None,
+                closes,
+            ).to_dict()
+            for metric in position.metrics
+        ]
+
         return {
             "ok": True,
             "provider": result.provider,
             "data": position.to_dict(),
-            "history": [point.to_dict() for point in result.data],
+            "readings": readings,
+            "history": [point.to_dict() for point in history],
             "warnings": list(result.warnings),
             "error": None,
         }
+
+    def _closes_for(self, symbol: str, history: list[Any]) -> list[float]:
+        """Closes matching the valuation dates, or empty when they cannot be aligned."""
+        if not history:
+            return []
+
+        bars = self.market_bars(
+            symbol, history[0].as_of.isoformat(), history[-1].as_of.isoformat()
+        )
+        if not bars.get("ok") or not bars.get("data"):
+            return []
+
+        by_day = {
+            str(bar["timestamp_utc"])[:10]: float(bar["close"]) for bar in bars["data"]
+        }
+        closes: list[float] = []
+        last = 0.0
+        for point in history:
+            # Carry the previous close over a non-trading valuation date rather than dropping
+            # the row, which would misalign the two series.
+            last = by_day.get(point.as_of.isoformat(), last)
+            closes.append(last)
+
+        return closes if all(c > 0 for c in closes) else []
 
     def market_financials(self, symbol: str, periods: int = 5) -> dict[str, object]:
         return self._capability_payload(
@@ -682,6 +724,16 @@ class AnalyticsApp:
             "disclaimer": RESEARCH_DISCLAIMER,
             "error": None,
         }
+
+
+def _metric_series(history: list[Any], metric_name: str) -> list[float | None]:
+    """Pulls one metric out of the valuation history, keeping date alignment."""
+    field = {
+        "市盈率 PE": "pe",
+        "市净率 PB": "pb",
+        "股息率": "dividend_yield",
+    }.get(metric_name)
+    return [] if field is None else [getattr(point, field) for point in history]
 
 
 def health_payload() -> dict[str, object]:
