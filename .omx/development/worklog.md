@@ -115,3 +115,16 @@
 - `PortfolioReportExporter`：持仓/配置/流水三张 CSV。未定价持仓导出空单元格而不是 0，
   避免表格 SUM 把「取不到价」算成「值 0」；流水导出可被导入器原样读回（已测往返一致）。
 - 验证：C# 测试 157 → 175 全过。
+
+## 2026-07-31 - R4 桌面双主线导航
+
+- 左栏分组：「我的资产」（总览 / 持仓 / 账本）与「研究」（行情 / 计划 / 网格 / 回测 / 对比）+ 系统；启动默认落总览。
+- `PortfolioWorkspace`（Host，UI 无关门面）：刷新估值、记账、导入、导出、迁入旧成交台账——
+  放在 Host 而非桌面层，使整条理财工作流不开窗口即可单测。
+- 新增 `Desktop/Wealth`：`PortfolioViewModel`（INotifyPropertyChanged + ObservableCollection）与三个视图。
+  总览含 5 个 KPI 与四维配置条；持仓表按盈亏着色、未定价行灰显并标「缺价格」；
+  账本含账户管理、按类型联动的记账表单、CSV 预览导入、流水删除与导出。
+- 核心未就绪时账本照常打开（现金仍精确，持仓标记缺价格）；核心起来后自动挂上取价源并重估。
+- 事故：`Setter Property="Resources"` 编译期无错但启动即崩（详见 error-ledger）；改为应用级隐式样式。
+- 验证：`dotnet build` 0 错 0 警；C# 183 全过；Python 82 全过；**启动冒烟通过**（窗口标题 v0.10.0）。
+- 未做：旧研究页 1225 行 code-behind 未 MVVM 化（改动风险高于收益，已列入 handoff 的 Next）。

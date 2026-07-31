@@ -49,9 +49,26 @@ Follow `agent-dev-protocol` under `.claude/skills/agent-dev-protocol/SKILL.md`.
 
 ## Current Phase
 
-**R0 — 数据语义重构（市场/品种分离、Money、交易所注册表）**
+**R0~R5 — 个人多市场多资产理财软件重构（已完成，v0.10.0）**
 
-重构路线：R0 数据语义 → R1 账本内核 → R2 估值与收益 → R3 行情通道 → R4 桌面双主线 UI → R5 CSV 导入与报表。
+- R0 数据语义（市场/品种分离、Money、交易所注册表）
+- R1 账本内核（账户/流水/持仓/SQLite 迁移）
+- R2 估值与收益（多币种折算、XIRR/TWR、资产配置）
+- R3 行情通道（quote/nav/fx；日股、场外基金、债券、汇率）
+- R4 桌面双主线（我的资产 + 研究）
+- R5 CSV 导入与报表导出
+
+## Portfolio Rules
+
+- 成本法：移动加权平均；买入费税计入成本；分红/票息计入收益，不冲减成本。
+- 超卖 fail-closed，用 `OpeningPosition` 建账，不要放宽校验。
+- **未取到价格或汇率的持仓不得按 0 计入合计**，必须标记未定价并让估值报告为不完整。
+- 换汇按回单两边金额入账，不要用汇率反推（decimal 无精确表示会留残差）。
+- CSV 导入先预览校验再提交；行 id 取内容哈希以保证幂等。
+
+## UI Verification Rule
+
+XAML / 资源字典改动后，`dotnet build` 与单测通过**不足以**声明完成：必须启动一次应用确认 BAML 能加载。
 
 Completed earlier:
 

@@ -29,3 +29,18 @@
 - Fix: rename namespace/folder to `Caishenfolio.Host.MarketData`; qualify enum as `Data.Market`.
 - Prevention rule: avoid namespace names that match domain type names (Market, Task, Data alone).
 - Skill candidate: no
+
+## 2026-07-31 - R4：Setter Property="Resources" 导致启动即崩
+
+- 症状：`dotnet build` 零错误零警告、183 个单测全过，但启动时 `XamlParseException`：
+  “设置属性 System.Windows.Setter.Property 时引发了异常”，内层 `ArgumentNullException (Parameter 'property')`。
+- 错误假设：以为可以在 `Style` 里用 `<Setter Property="Resources">` 给 DataGrid 挂一套表头/单元格样式，
+  从而避免在每个视图里重复那段样式。
+- 根因：`Setter.Property` 只接受**依赖属性**；`FrameworkElement.Resources` 是普通 CLR 属性，
+  解析时 Property 为 null。BAML 在运行时才加载，编译期完全看不出来。
+- 定位方式：`Start-Process` 启动应用并把 stderr 重定向到文件；进程秒退，读首 6 行拿到内层异常。
+- 修复：把 `DataGridColumnHeader` / `DataGridCell` 改为 App.xaml 里的应用级隐式样式，
+  `WealthGrid` 只保留真正的依赖属性设置。
+- 预防规则：**XAML 改动必须真正启动一次应用**，构建通过不代表 BAML 能加载；
+  写 `Setter Property="X"` 前先确认 X 是 DependencyProperty。
+- 是否值得沉淀为 skill：是——「WPF 改动的验证必须包含一次启动冒烟」应进入交付门禁。

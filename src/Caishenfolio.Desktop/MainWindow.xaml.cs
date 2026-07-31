@@ -4,7 +4,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using Caishenfolio.Host;
+using Caishenfolio.Desktop.Wealth;
 using Caishenfolio.Host.MarketData;
+using Caishenfolio.Host.Portfolio;
 using Caishenfolio.Host.Python;
 using Caishenfolio.Host.Security;
 using Caishenfolio.Host.Tasks;
@@ -21,6 +23,8 @@ public partial class MainWindow : Window
     private readonly MarketCredentialsStore _credentials;
     private readonly WatchlistStore _watchlist;
     private readonly PricePlanStore _pricePlan;
+    private readonly PortfolioStore _portfolio;
+    private readonly PortfolioViewModel _portfolioModel;
     private AnalyticsCoreClient? _client;
     private IReadOnlyList<MarketBarDto> _lastBars = Array.Empty<MarketBarDto>();
     private string _lastName = "";
@@ -56,6 +60,19 @@ public partial class MainWindow : Window
         _credentials = new MarketCredentialsStore(_pathRoots.GetRoot(PathRootKind.State));
         _watchlist = new WatchlistStore(_pathRoots.GetRoot(PathRootKind.State));
         _pricePlan = new PricePlanStore(_pathRoots.GetRoot(PathRootKind.State));
+        _portfolio = PortfolioStore.UnderStateRoot(_pathRoots.GetRoot(PathRootKind.State));
+
+        // The pricing source is attached once the Analytics Core is up; until then the ledger
+        // still opens and values cash, with holdings shown as "缺价格" rather than as zero.
+        _portfolioModel = new PortfolioViewModel(new PortfolioWorkspace(_portfolio));
+        var artifactRoot = _pathRoots.GetRoot(PathRootKind.Artifact);
+        OverviewView.Bind(_portfolioModel);
+        HoldingsPage.Bind(_portfolioModel);
+        HoldingsPage.ExportDirectory = artifactRoot;
+        LedgerPage.Bind(_portfolioModel);
+        LedgerPage.ExportDirectory = artifactRoot;
+        HoldingsPage.Exported += message => StatusText.Text = message;
+        LedgerPage.Notified += message => StatusText.Text = message;
 
         _chart = new CandleChartPainter(ChartCanvas, CrosshairLabel);
         _chart.PricePicked += OnChartPricePicked;
@@ -70,11 +87,14 @@ public partial class MainWindow : Window
         ApplyDefaultDateRange("daily");
         UpdateChartPeriodHint();
         RefreshWatchListUi();
-        ShowPage("market");
+        ShowPage("overview");
 
         Loaded += async (_, _) =>
         {
+            await _portfolioModel.RefreshAsync().ConfigureAwait(true);
             await EnsureCoreReadyAsync(auto: true).ConfigureAwait(true);
+            AttachPortfolioPricing();
+            await _portfolioModel.RefreshAsync().ConfigureAwait(true);
             await SyncWatchlistCacheQuietAsync().ConfigureAwait(true);
         };
 
@@ -83,9 +103,17 @@ public partial class MainWindow : Window
             _client?.Dispose();
             _broker.Dispose();
             _taskStore.Dispose();
+            _portfolio.Dispose();
         };
     }
 
+    /// <summary>Lets the ledger price itself through the core once the core is actually reachable.</summary>
+    private void AttachPortfolioPricing() =>
+        _portfolioModel.UsePricingSource(_client is null ? null : new AnalyticsCorePricingSource(_client));
+
+    private void NavOverview_OnClick(object sender, RoutedEventArgs e) => ShowPage("overview");
+    private void NavHoldings_OnClick(object sender, RoutedEventArgs e) => ShowPage("holdings");
+    private void NavLedger_OnClick(object sender, RoutedEventArgs e) => ShowPage("ledger");
     private void NavMarket_OnClick(object sender, RoutedEventArgs e) => ShowPage("market");
     private void NavPlan_OnClick(object sender, RoutedEventArgs e) => ShowPage("plan");
     private void NavGrid_OnClick(object sender, RoutedEventArgs e) => ShowPage("grid");
@@ -96,6 +124,9 @@ public partial class MainWindow : Window
     private void ShowPage(string page)
     {
         _currentPage = page;
+        PageOverview.Visibility = page == "overview" ? Visibility.Visible : Visibility.Collapsed;
+        PageHoldings.Visibility = page == "holdings" ? Visibility.Visible : Visibility.Collapsed;
+        PageLedger.Visibility = page == "ledger" ? Visibility.Visible : Visibility.Collapsed;
         PageMarket.Visibility = page == "market" ? Visibility.Visible : Visibility.Collapsed;
         PagePlan.Visibility = page == "plan" ? Visibility.Visible : Visibility.Collapsed;
         PageGrid.Visibility = page == "grid" ? Visibility.Visible : Visibility.Collapsed;
@@ -103,6 +134,9 @@ public partial class MainWindow : Window
         PageCompare.Visibility = page == "compare" ? Visibility.Visible : Visibility.Collapsed;
         PageSystem.Visibility = page == "system" ? Visibility.Visible : Visibility.Collapsed;
 
+        SetNavStyle(NavOverview, page == "overview");
+        SetNavStyle(NavHoldings, page == "holdings");
+        SetNavStyle(NavLedger, page == "ledger");
         SetNavStyle(NavMarket, page == "market");
         SetNavStyle(NavPlan, page == "plan");
         SetNavStyle(NavGrid, page == "grid");

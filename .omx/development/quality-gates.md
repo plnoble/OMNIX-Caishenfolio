@@ -91,3 +91,19 @@ Open issues:
 Open issues:
 
 - Manual Desktop smoke against system Python still pending.
+
+### 2026-07-31 - R0~R5 理财重构交付
+
+| Category | Status | Evidence | Notes |
+| --- | --- | --- | --- |
+| Security and privacy | Pass | 账本 SQLite 落在 State root；CSV 导入只读文件不执行；导出走 Artifact root | 未引入任何下单/凭证通道 |
+| Data, API, and consistency | Pass | 金额全 decimal + 货币标签，跨币种运算抛错；SQLite decimal 存 TEXT；`PRAGMA user_version` 迁移 v1→v2 | 交易日按 DateOnly 存，避免时区漂移 |
+| Code quality and maintainability | Pass | 语义单一来源（交易所注册表 / 阶段号常量）；替换两处重复的 CN 代码启发式 | MainWindow 旧研究页仍为 code-behind，见下方开放问题 |
+| Testing and verification | Pass | C# 42→183；Python 47(6红)→82；`dotnet build` 0 错 0 警 | 真实行情联网路径仍未覆盖（需 network） |
+| Frontend, accessibility, and UX | Warn | 启动冒烟通过（窗口标题 v0.10.0，默认落总览页）；未定价持仓在表格与导出中均显式标记 | 未做键盘导航与对比度专项检查 |
+| Operations, dependencies, and release | Pass | 无新增第三方依赖；README/AGENTS/docs 已更新 | 安装包仍未做 |
+
+Open issues:
+
+- 旧研究页（行情/计划/网格/回测/对比）仍是 1225 行 code-behind，未 MVVM 化；新增的理财页已是 ViewModel + 绑定。
+- akshare 的 `fx_spot_quote` 与债券接口未在联网环境验证，仅保证缺接口时 fail-closed 并给出可读提示。

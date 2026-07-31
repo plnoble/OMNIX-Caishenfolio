@@ -1,0 +1,80 @@
+<UserControl x:Class="Caishenfolio.Desktop.Wealth.HoldingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="Transparent">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" Margin="0,0,0,12">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="ExportButton" Content="导出持仓 CSV" Padding="12,6" Margin="0,0,8,0"
+                        Click="ExportButton_OnClick" />
+                <Button x:Name="RefreshButton" Content="刷新估值" Padding="12,6" Click="RefreshButton_OnClick" />
+            </StackPanel>
+            <StackPanel>
+                <TextBlock Text="持仓明细" FontSize="18" FontWeight="SemiBold"
+                           Foreground="{StaticResource BrushAccent}" />
+                <TextBlock x:Name="StatusText" Text="尚未加载账本。" Margin="0,4,0,0"
+                           Foreground="{StaticResource BrushFgMuted}" TextWrapping="Wrap" />
+            </StackPanel>
+        </DockPanel>
+
+        <Border Grid.Row="1" Background="{StaticResource BrushBgPanel}" CornerRadius="10"
+                BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="12">
+            <DataGrid x:Name="PositionsGrid" Style="{StaticResource WealthGrid}">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="150"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="代码" Binding="{Binding Symbol}" Width="120"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="市场" Binding="{Binding Market}" Width="70"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="品种" Binding="{Binding AssetClass}" Width="80"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="数量" Binding="{Binding Quantity}" Width="90"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="成本价" Binding="{Binding AverageCost}" Width="90"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="现价" Binding="{Binding LastPrice}" Width="90"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="币种" Binding="{Binding Currency}" Width="60"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="市值(原币)" Binding="{Binding MarketValue}" Width="110"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="市值(本位币)" Binding="{Binding MarketValueBase}" Width="120"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTemplateColumn Header="浮动盈亏" Width="130">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding UnrealizedPnl}" VerticalAlignment="Center" Margin="6,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{StaticResource BrushDanger}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsGain}" Value="True">
+                                                    <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Priced}" Value="False">
+                                                    <Setter Property="Foreground" Value="{StaticResource BrushFgMuted}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="收益率" Binding="{Binding ReturnPct}" Width="80"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="占比" Binding="{Binding Weight}" Width="70"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="*"
+                                        ElementStyle="{StaticResource WealthCellText}" />
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+    </Grid>
+</UserControl>
