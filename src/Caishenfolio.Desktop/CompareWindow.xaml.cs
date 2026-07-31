@@ -37,10 +37,11 @@ public partial class CompareWindow : Window
 
         if (!result.TryGetProperty("ok", out var ok) || !ok.GetBoolean())
         {
+            // The core can answer with a JSON null or an empty error; either way the user needs
+            // to see something, so fall back rather than showing a blank failure message.
+            var error = result.TryGetProperty("error", out var err) ? err.GetString() : null;
             TitleBlock.Text = "对比失败";
-            SummaryText.Text = result.TryGetProperty("error", out var err)
-                ? err.GetString()
-                : "未知错误";
+            SummaryText.Text = string.IsNullOrWhiteSpace(error) ? "未知错误" : error;
             _summaryForReport = SummaryText.Text;
             return;
         }
