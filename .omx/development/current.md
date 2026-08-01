@@ -1,7 +1,7 @@
 # Current Development
 
 - Project: **OMNIX-Caishenfolio**
-- Status: **R0~R5 + V1~V4 + A1~A4 + S1~S2 + F1~F5 + G1~G4 + H1~H4 完成 (v0.11.1 / R5)**
+- Status: **R0~R5 + V1~V4 + A1~A4 + S1~S2 + F1~F5 + G1~G4 + H1~H4 完成 (v0.12.0 / R5)**
 - 覆盖: A股 / 港股 / 美股 / 日股；股票 / ETF / 场外基金 / 债券 / 可转债 / 外汇 / 现金
 
 ## 已交付
@@ -29,7 +29,7 @@
 ```powershell
 dotnet build Caishenfolio.slnx; if ($?) { dotnet test Caishenfolio.slnx }   # 338 通过 / 0 警告
 $env:PYTHONPATH="$PWD\python"; $env:CAISHENFOLIO_MARKET_PROVIDER="fixture"
-python -m unittest discover -s tests/python -p "test_*.py"                  # 290 通过
+python -m unittest discover -s tests/python -p "test_*.py"                  # 316 通过
 scripts\ui_smoke.ps1                             # XAML 改动必跑；含设置窗口加载检查
 dotnet build packaging\windows\Omnix.Installer.wixproj -c Release           # 出 MSI
 ```
