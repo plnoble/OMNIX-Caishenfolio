@@ -44,3 +44,16 @@
 - 预防规则：**XAML 改动必须真正启动一次应用**，构建通过不代表 BAML 能加载；
   写 `Setter Property="X"` 前先确认 X 是 DependencyProperty。
 - 是否值得沉淀为 skill：是——「WPF 改动的验证必须包含一次启动冒烟」应进入交付门禁。
+
+## 2026-08-01 - 用 PowerShell Set-Content 改中文文件，把整份文档写成乱码
+
+- 症状：`current.md` 里每个中文字符都变成乱码（`瀹屾垚`、`楠岃瘉`），全文报废。
+- 错误假设：以为 `(Get-Content x -Raw) -replace ... | Set-Content x -Encoding utf8` 是安全的原地替换。
+- 根因：Windows PowerShell 5.1 的 `Set-Content` 默认按系统 ANSI 代码页（936）写出；
+  即使显式给 `-Encoding utf8`，读入那一侧 `Get-Content` 已按 ANSI 解码，往返一次即损坏。
+  本项目此前已记录过 BOM 相关的编码坑，这次是同一类问题的另一个入口。
+- 定位方式：写完后文件内容直接肉眼可见乱码；`git checkout <上一提交> -- <file>` 可完整恢复。
+- 修复：从上一个提交恢复原文件，改用 Edit 工具做精确替换（保留原编码，不整体重写）。
+- 预防规则：**不要用 PowerShell 字符串替换重写任何含中文的文本文件**。
+  改文件一律走 Edit 工具；确需脚本写入时用 `[System.IO.File]::WriteAllText($p,$s,(New-Object System.Text.UTF8Encoding($false)))`。
+- 是否值得沉淀为 skill：是——「Windows 上改文本文件只用 Edit，不用 shell 重写」应与既有的 BOM 规则合并。
