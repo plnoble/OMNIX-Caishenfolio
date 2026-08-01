@@ -280,6 +280,53 @@ def cn_exchange_for_code(code: str) -> str:
     return "SZSE"
 
 
+def is_st_name(name: str | None) -> bool:
+    """ST / *ST names carry a tighter daily limit and signal financial distress."""
+    return "ST" in (name or "").upper()
+
+
+def price_limit_pct(symbol: str, name: str | None = None) -> float | None:
+    """Daily price limit for an instrument, or None where no limit exists.
+
+    Getting this wrong distorts a backtest in both directions: a 10% cap on a ChiNext stock
+    invents limit days that never happened, and applying any cap to a US or HK listing skips
+    signals that were perfectly tradable.
+
+    Rules as of 2026:
+      主板 ±10%; 创业板/科创板 ±20%; 北交所 ±30%; ST ±5% (但创业板/科创板 ST 仍为 ±20%);
+      港股/美股/日股 无个股涨跌停。
+    """
+    exchange, _, code = str(symbol or "").partition(":")
+    info = resolve_exchange(exchange)
+    if info is None:
+        return None
+
+    if info.region is not MarketRegion.CN:
+        # Only the CN market applies a per-instrument daily cap.
+        return None
+
+    if info.code == CN_FUND_EXCHANGE:
+        return None
+
+    digits = "".join(ch for ch in code if ch.isdigit())
+    if not digits:
+        return None
+
+    if info.code == "BSE" or digits.startswith(("92", "43", "83", "87", "88")):
+        return 0.30
+
+    asset = classify_cn_code(digits, info.code)
+    if asset in {AssetClass.BOND, AssetClass.CONVERTIBLE_BOND}:
+        # Convertible bonds trade under circuit breakers rather than a fixed daily cap.
+        return None
+
+    is_growth_board = digits.startswith(("300", "301", "688", "689"))
+    if is_growth_board:
+        return 0.20
+
+    return 0.05 if is_st_name(name) else 0.10
+
+
 def classify_cn_code(code: str, exchange: str | None = None) -> AssetClass:
     """Best-effort asset class for a CN listed code."""
     digits = "".join(ch for ch in str(code or "") if ch.isdigit()).zfill(6)

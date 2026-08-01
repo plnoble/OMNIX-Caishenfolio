@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
+
+from caishenfolio_core.data.markets import price_limit_pct
 
 
 @dataclass
@@ -79,6 +81,23 @@ class BacktestResult:
         }
 
 
+def _apply_instrument_limits(costs: CostModel, symbol: str, name: str | None) -> CostModel:
+    """Replaces the generic limit with the one this instrument actually has.
+
+    A fixed 10% is wrong twice over: ChiNext and STAR trade at 20% and Beijing at 30%, so the
+    cap invents limit days that never happened; and HK, US and JP listings have no per-stock
+    daily cap at all, so enforcing one skips signals that were perfectly tradable.
+    """
+    if not costs.enforce_limit:
+        return costs
+
+    limit = price_limit_pct(symbol, name)
+    if limit is None:
+        return replace(costs, enforce_limit=False)
+
+    return replace(costs, limit_up_pct=limit, limit_down_pct=limit)
+
+
 def _is_limit_up(close: float, prev_close: float, pct: float) -> bool:
     if prev_close <= 0:
         return False
@@ -99,9 +118,11 @@ def ma_cross_backtest(
     fast: int = 5,
     slow: int = 20,
     costs: CostModel | None = None,
+    name: str | None = None,
 ) -> BacktestResult:
     """Long-only MA crossover with optional fees/slippage/limit rules."""
     costs = costs or CostModel()
+    costs = _apply_instrument_limits(costs, symbol, name)
     warnings = [
         "simulation_only",
         "not_for_investment_decisions",
