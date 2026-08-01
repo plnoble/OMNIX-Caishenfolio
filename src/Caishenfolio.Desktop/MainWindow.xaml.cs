@@ -36,6 +36,7 @@ public partial class MainWindow : Window
     private string _currentPage = "market";
     private string? _latestReleaseUrl;
     private string? _pendingUpdateVersion;
+    private UpdateCheckResult? _pendingUpdate;
     private readonly UpdatePreferenceStore _updatePreferences;
     private readonly string? _coreRoot;
 
@@ -193,10 +194,86 @@ public partial class MainWindow : Window
     private void ShowUpdateBanner(UpdateCheckResult result)
     {
         _pendingUpdateVersion = result.LatestVersion;
-        UpdateBannerText.Text =
-            $"发现新版本 v{result.LatestVersion}（当前 v{result.CurrentVersion}）。" +
-            "下载后运行 MSI 即可原地升级，账本数据不受影响。";
+        _pendingUpdate = result;
+
+        // Releases published before the installer was attached can only be had from the page.
+        InstallUpdateButton.Visibility = result.CanInstallInPlace
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        UpdateBannerText.Text = result.CanInstallInPlace
+            ? $"发现新版本 v{result.LatestVersion}（当前 v{result.CurrentVersion}）。"
+              + "点「立即更新」自动下载、校验并安装，账本数据不受影响。"
+            : $"发现新版本 v{result.LatestVersion}（当前 v{result.CurrentVersion}）。"
+              + "该版本没有附带安装包，请到发布页下载。";
         UpdateBanner.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// Downloads, verifies and runs the installer, then closes the app.
+    ///
+    /// Closing is not optional: an MSI cannot replace files the running process holds open, so
+    /// staying alive would leave the upgrade half-applied.
+    /// </summary>
+    private async void InstallUpdateButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_pendingUpdate is not { } update || !update.CanInstallInPlace)
+        {
+            return;
+        }
+
+        InstallUpdateButton.IsEnabled = false;
+        var original = UpdateBannerText.Text;
+        UpdateBannerText.Text = $"正在下载 v{update.LatestVersion}… 0%";
+
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+            var progress = new Progress<double>(fraction =>
+                UpdateBannerText.Text = $"正在下载 v{update.LatestVersion}… {fraction:P0}");
+
+            var download = await new UpdateInstaller(http)
+                .DownloadAsync(update, progress)
+                .ConfigureAwait(true);
+
+            if (!download.Ok)
+            {
+                // Verification failed and the file is already deleted; say why rather than
+                // offering to run it anyway.
+                UpdateBannerText.Text = download.Message;
+                InstallUpdateButton.IsEnabled = true;
+                return;
+            }
+
+            var confirm = MessageBox.Show(
+                this,
+                $"{download.Message}\n\n现在安装 v{update.LatestVersion}？\n"
+                + "软件会关闭，安装完成后请重新打开。账本数据不受影响。",
+                "安装更新",
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Question);
+
+            if (confirm != MessageBoxResult.OK)
+            {
+                UpdateBannerText.Text = original;
+                InstallUpdateButton.IsEnabled = true;
+                return;
+            }
+
+            if (UpdateInstaller.Launch(download.InstallerPath!))
+            {
+                Close();
+                return;
+            }
+
+            UpdateBannerText.Text = "无法启动安装程序，请到发布页手动安装。";
+            InstallUpdateButton.IsEnabled = true;
+        }
+        catch (Exception ex)
+        {
+            UpdateBannerText.Text = $"更新失败：{ex.Message}";
+            InstallUpdateButton.IsEnabled = true;
+        }
     }
 
     private void DismissUpdateBanner_OnClick(object sender, RoutedEventArgs e) =>

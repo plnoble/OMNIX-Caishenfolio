@@ -59,6 +59,31 @@ jobs:
           (Get-FileHash $msi.FullName -Algorithm SHA256).Hash + "  " + $msi.Name |
             Out-File -FilePath packaging/windows/bin/x64/Release/checksums.sha256 -Encoding utf8
 
+      # A checksum only proves the download arrived intact — it sits next to the file, so anyone
+      # who can replace one can replace the other. The signature is what the in-app updater
+      # actually trusts. Skipped (with a warning) until the release key secret exists.
+      - name: Sign the installer
+        shell: pwsh
+        env:
+          OMNIX_RELEASE_PRIVATE_KEY: ${{ secrets.OMNIX_RELEASE_PRIVATE_KEY }}
+        run: |
+          if (-not $env:OMNIX_RELEASE_PRIVATE_KEY) {
+            Write-Warning "OMNIX_RELEASE_PRIVATE_KEY 未配置：本次发布不带签名，应用内更新只做校验和验证。"
+            exit 0
+          }
+          $msi = Get-ChildItem packaging/windows/bin/x64/Release/*.msi | Select-Object -First 1
+          $ecdsa = [System.Security.Cryptography.ECDsa]::Create()
+          $ecdsa.ImportPkcs8PrivateKey([Convert]::FromBase64String($env:OMNIX_RELEASE_PRIVATE_KEY), [ref]0)
+          $stream = [System.IO.File]::OpenRead($msi.FullName)
+          try {
+            $signature = $ecdsa.SignData($stream, [System.Security.Cryptography.HashAlgorithmName]::SHA256)
+          } finally {
+            $stream.Dispose()
+          }
+          [Convert]::ToBase64String($signature) |
+            Out-File -FilePath "packaging/windows/bin/x64/Release/$($msi.Name).sig" -Encoding ascii -NoNewline
+          Write-Host "已签名 $($msi.Name)"
+
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
@@ -68,6 +93,7 @@ jobs:
           files: |
             packaging/windows/bin/x64/Release/*.msi
             packaging/windows/bin/x64/Release/checksums.sha256
+            packaging/windows/bin/x64/Release/*.sig
           body: |
             个人多市场多资产理财工作台。
 

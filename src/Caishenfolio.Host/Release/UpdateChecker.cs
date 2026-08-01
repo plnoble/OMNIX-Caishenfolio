@@ -24,11 +24,35 @@ public sealed record UpdateCheckResult
     public string? Notes { get; init; }
     public required string Message { get; init; }
 
+    /// <summary>Files published with the release, so the installer can be fetched in-app.</summary>
+    public IReadOnlyList<ReleaseAsset> Assets { get; init; } = [];
+
     public bool HasUpdate => Status == UpdateStatus.UpdateAvailable;
+
+    /// <summary>True when the release carries everything needed to update without a browser.</summary>
+    public bool CanInstallInPlace =>
+        HasUpdate && ReleaseAsset.FindInstaller(Assets) is not null;
+}
+
+/// <summary>One downloadable file attached to a release.</summary>
+public sealed record ReleaseAsset(string Name, string DownloadUrl, long Size)
+{
+    public static ReleaseAsset? FindInstaller(IEnumerable<ReleaseAsset> assets) =>
+        assets.FirstOrDefault(a => a.Name.EndsWith(".msi", StringComparison.OrdinalIgnoreCase));
+
+    public static ReleaseAsset? FindChecksums(IEnumerable<ReleaseAsset> assets) =>
+        assets.FirstOrDefault(a => a.Name.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase));
+
+    public static ReleaseAsset? FindSignature(IEnumerable<ReleaseAsset> assets) =>
+        assets.FirstOrDefault(a => a.Name.EndsWith(".sig", StringComparison.OrdinalIgnoreCase));
 }
 
 /// <summary>The published release the app compares itself against.</summary>
-public sealed record ReleaseInfo(string TagName, string HtmlUrl, string? Body);
+public sealed record ReleaseInfo(
+    string TagName,
+    string HtmlUrl,
+    string? Body,
+    IReadOnlyList<ReleaseAsset>? Assets = null);
 
 /// <summary>Source of published releases, so the comparison can be tested without network.</summary>
 public interface IReleaseFeed
@@ -65,9 +89,17 @@ public sealed class GitHubReleaseFeed : IReleaseFeed
         var payload = await response.Content
             .ReadFromJsonAsync<GitHubRelease>(cancellationToken)
             .ConfigureAwait(false);
-        return string.IsNullOrWhiteSpace(payload?.TagName)
-            ? null
-            : new ReleaseInfo(payload!.TagName, payload.HtmlUrl ?? "", payload.Body);
+        if (string.IsNullOrWhiteSpace(payload?.TagName))
+        {
+            return null;
+        }
+
+        var assets = (payload!.Assets ?? [])
+            .Where(a => !string.IsNullOrWhiteSpace(a.Name) && !string.IsNullOrWhiteSpace(a.DownloadUrl))
+            .Select(a => new ReleaseAsset(a.Name!, a.DownloadUrl!, a.Size))
+            .ToList();
+
+        return new ReleaseInfo(payload.TagName, payload.HtmlUrl ?? "", payload.Body, assets);
     }
 
     private sealed class GitHubRelease
@@ -80,6 +112,21 @@ public sealed class GitHubReleaseFeed : IReleaseFeed
 
         [JsonPropertyName("body")]
         public string? Body { get; set; }
+
+        [JsonPropertyName("assets")]
+        public List<GitHubAsset>? Assets { get; set; }
+    }
+
+    private sealed class GitHubAsset
+    {
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("browser_download_url")]
+        public string? DownloadUrl { get; set; }
+
+        [JsonPropertyName("size")]
+        public long Size { get; set; }
     }
 }
 
@@ -146,7 +193,8 @@ public sealed class UpdateChecker(IReleaseFeed feed)
                 LatestVersion = latestText,
                 ReleaseUrl = latest.HtmlUrl,
                 Notes = latest.Body,
-                Message = $"有新版本 v{latestText}（当前 v{current}）。下载后运行 MSI 即可原地升级，账本数据不受影响。",
+                Assets = latest.Assets ?? [],
+                Message = $"有新版本 v{latestText}（当前 v{current}）。可直接在应用内更新，账本数据不受影响。",
             },
             > 0 => new UpdateCheckResult
             {
