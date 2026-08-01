@@ -14,6 +14,8 @@ market = [
   "pandas>=2.0",
   "yfinance>=0.2.40",
   "tushare>=1.4.0",
+  # Free A-share history with no API key; the second source for CN daily bars.
+  "baostock>=0.8.8",
 ]
 # Optional high-performance export (P4)
 parquet = ["pyarrow>=14.0"]

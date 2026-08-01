@@ -74,8 +74,28 @@
                                         ElementStyle="{StaticResource WealthCellText}" />
                     <DataGridTextColumn Header="汇率历史分位" Binding="{Binding PercentileText}" Width="120"
                                         ElementStyle="{StaticResource WealthCellText}" />
-                    <DataGridTextColumn Header="一年区间" Binding="{Binding RangeText}" Width="*"
+                    <DataGridTextColumn Header="一年区间" Binding="{Binding RangeText}" Width="140"
                                         ElementStyle="{StaticResource WealthCellText}" />
+                    <DataGridTemplateColumn Header="利率来源与日期" Width="*">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding RateSourceText}" TextWrapping="Wrap"
+                                           VerticalAlignment="Center" Margin="6,2" FontSize="11">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{StaticResource BrushFgSecondary}" />
+                                            <Style.Triggers>
+                                                <!-- A rate that could not be refreshed must not look current. -->
+                                                <DataTrigger Binding="{Binding RatesStale}" Value="True">
+                                                    <Setter Property="Foreground" Value="{StaticResource BrushDanger}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
                 </DataGrid.Columns>
             </DataGrid>
         </Border>

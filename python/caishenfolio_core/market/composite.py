@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import time
 from datetime import date
 from typing import Any, Callable
+
+from caishenfolio_core.market.errors import classify
 
 from caishenfolio_core.data.bar_interval import BarInterval
 from caishenfolio_core.data.models import (
@@ -48,8 +51,20 @@ class CompositeMarketDataProvider:
 
     PROVIDER_CODE = "auto"
 
-    def __init__(self, providers: list[Any]) -> None:
+    def __init__(
+        self,
+        providers: list[Any],
+        rate_limit_retries: int = 2,
+        base_backoff_seconds: float = 0.5,
+        max_backoff_seconds: float = 5.0,
+        sleep: Callable[[float], None] | None = None,
+    ) -> None:
         self._providers = list(providers)
+        self._rate_limit_retries = max(0, rate_limit_retries)
+        self._base_backoff_seconds = base_backoff_seconds
+        self._max_backoff_seconds = max_backoff_seconds
+        # Injectable so tests exercise the backoff logic without actually waiting.
+        self._sleep = sleep or time.sleep
 
     @property
     def ready(self) -> bool:
@@ -266,7 +281,12 @@ class CompositeMarketDataProvider:
         call: Callable[[Any], ProviderResult[Any]],
         failure_summary: str,
     ) -> ProviderResult[Any]:
-        """Tries each provider that implements the capability; reports every failure, invents nothing."""
+        """Tries each provider that implements the capability; reports every failure, invents nothing.
+
+        A rate-limited source is retried with a short backoff before moving on: it would have
+        answered, it just needed a moment. Anything else fails straight through to the next
+        source, because retrying a broken or unreachable one only wastes time.
+        """
         errors: list[str] = []
         for provider in self._providers:
             code = getattr(provider, "PROVIDER_CODE", type(provider).__name__)
@@ -275,18 +295,15 @@ class CompositeMarketDataProvider:
             if hasattr(provider, "ready") and not provider.ready:
                 errors.append(f"{code}: not_ready")
                 continue
-            try:
-                result = call(provider)
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{code}: {exc}")
-                continue
-            if result.ok and result.data:
+
+            result, failure = self._call_with_backoff(provider, call, code)
+            if result is not None:
                 return ProviderResult.success(
                     code,
                     result.data,
                     warnings=tuple(result.warnings) + (f"resolved_by:{code}",),
                 )
-            errors.append(f"{code}: {result.error or 'empty'}")
+            errors.append(failure)
 
         detail = " | ".join(errors) if errors else f"无数据源实现 {capability}"
         return ProviderResult.failure(
@@ -294,3 +311,39 @@ class CompositeMarketDataProvider:
             f"{failure_summary}（fail-closed，未生成数据）：{detail}",
             warnings=("all_providers_failed", "fail_closed"),
         )
+
+    def _call_with_backoff(
+        self,
+        provider: Any,
+        call: Callable[[Any], ProviderResult[Any]],
+        code: str,
+    ) -> tuple[ProviderResult[Any] | None, str]:
+        """Calls one provider, waiting out a rate limit before conceding."""
+        last = ""
+        for attempt in range(self._rate_limit_retries + 1):
+            try:
+                result = call(provider)
+            except Exception as exc:  # noqa: BLE001
+                error = classify(exc)
+                last = f"{code}: [{error.code}] {error}"
+                if not error.retryable or attempt == self._rate_limit_retries:
+                    return None, last
+                self._sleep(self._backoff_seconds(error, attempt))
+                continue
+
+            if result.ok and result.data:
+                return result, ""
+
+            last = f"{code}: {result.error or 'empty'}"
+            # A provider can report a rate limit through the result rather than an exception.
+            if "rate_limited" not in (result.warnings or ()) or attempt == self._rate_limit_retries:
+                return None, last
+            self._sleep(self._backoff_seconds(None, attempt))
+
+        return None, last
+
+    def _backoff_seconds(self, error: Any, attempt: int) -> float:
+        hinted = getattr(error, "retry_after_seconds", None)
+        if hinted:
+            return min(float(hinted), self._max_backoff_seconds)
+        return min(self._base_backoff_seconds * (2 ** attempt), self._max_backoff_seconds)

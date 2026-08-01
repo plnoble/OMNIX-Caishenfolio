@@ -18,6 +18,8 @@ public sealed record CarryRow
     public required bool CarryIsPositive { get; init; }
     public required string PercentileText { get; init; }
     public required string RangeText { get; init; }
+    public required string RateSourceText { get; init; }
+    public required bool RatesStale { get; init; }
 
     public static CarryRow From(CarryLegDto leg, string baseCurrency)
     {
@@ -28,6 +30,8 @@ public sealed record CarryRow
             RateText = Number(leg.Rate),
             BaseRateText = Percent(leg.BaseRate),
             QuoteRateText = Percent(leg.QuoteRate),
+            RateSourceText = RateSource(leg),
+            RatesStale = leg.RatesStale,
             CarryText = carry is null
                 ? "—"
                 : (carry.Value * 100m).ToString("+0.##;-0.##", CultureInfo.InvariantCulture) + "%",
@@ -44,6 +48,25 @@ public sealed record CarryRow
                 ? $"{Number(low)} ~ {Number(high)}"
                 : "—",
         };
+    }
+
+    /// <summary>Names the rate and when it was published, so a stale gap is visible as stale.</summary>
+    private static string RateSource(CarryLegDto leg)
+    {
+        var parts = new[] { leg.BaseRateInfo, leg.QuoteRateInfo }
+            .Where(info => info is not null)
+            .Select(info => Describe(info!))
+            .ToArray();
+        return parts.Length == 0 ? "—" : string.Join("；", parts);
+    }
+
+    private static string Describe(PolicyRateDto info)
+    {
+        var name = string.IsNullOrWhiteSpace(info.Name) ? info.Currency : info.Name;
+        var stamp = string.IsNullOrWhiteSpace(info.AsOf) ? "日期未知" : info.AsOf;
+        return info.Stale
+            ? $"{name}（{stamp} 内置值，未刷新）"
+            : $"{name}（{stamp}）";
     }
 
     private static string Number(decimal? value) =>

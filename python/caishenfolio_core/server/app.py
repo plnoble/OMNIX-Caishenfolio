@@ -16,6 +16,7 @@ from caishenfolio_core.market.fixture import FixtureMarketDataProvider
 from caishenfolio_core.market.network import trust_env_enabled
 from caishenfolio_core.market.fund_catalog import search_funds
 from caishenfolio_core.market.parquet_store import export_bars_parquet, parquet_available
+from caishenfolio_core.market.policy_rates import PolicyRateService
 from caishenfolio_core.market.symbol_index import fuzzy_search_a_share
 from caishenfolio_core.research.backtest import cost_model_from_dict, ma_cross_backtest
 from caishenfolio_core.research.evaluation import evaluate, out_of_sample_report
@@ -48,8 +49,13 @@ class AnalyticsApp:
         tasks: InMemoryTaskStore | None = None,
         cache: BarsSqliteCache | None = None,
         grid_ledger: GridLedgerStore | None = None,
+        policy_rates: PolicyRateService | None = None,
     ) -> None:
         self.market = market if market is not None else create_market_provider()
+        # Demo mode must not reach the network, so there it serves the labelled built-ins.
+        self.policy_rates = policy_rates or PolicyRateService(
+            fetchers={} if isinstance(self.market, FixtureMarketDataProvider) else None
+        )
         self.tasks = tasks or InMemoryTaskStore()
         self.cache = cache
         if self.cache is None and isinstance(self.market, CachingMarketFacade):
@@ -344,14 +350,20 @@ class AnalyticsApp:
             if bars.get("ok") and bars.get("data"):
                 history[currency] = [float(bar["close"]) for bar in bars["data"]]
 
+        # Rates come from the central banks that set them. A source being down leaves the
+        # built-in value in place, flagged stale, rather than blanking the panel.
+        policy = self.policy_rates.rates([base_currency, *rates])
+
         panel = build_carry_panel(
             base_currency=base_currency,
             rates=rates,
             rate_history=history,
+            policy_rates=policy,
             exposures=None,
         )
         payload = panel.to_dict()
         payload["ok"] = bool(panel.legs)
+        payload["policy_rates"] = {k: v.to_dict() for k, v in sorted(policy.items())}
         payload["warnings"] = warnings
         return payload
 

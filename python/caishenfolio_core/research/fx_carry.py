@@ -11,19 +11,18 @@ So this module reports positions and differentials, and says nothing about what 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
-from typing import Any
+from typing import Any, Mapping
 
+from caishenfolio_core.data.policy_rate import FALLBACK_POLICY_RATES, PolicyRate
 from caishenfolio_core.research.indicators import percentile_rank
 
-#: Policy rates as annual decimals. Supplied by the caller in production; these are only the
-#: fallback so the panel renders before any rate feed is configured, and they are labelled stale.
+#: Plain-number view of the built-in rates, kept so callers that only want numbers still work.
+#: These are the last-resort values; :mod:`caishenfolio_core.market.policy_rates` fetches the
+#: real ones. Anything served from here is reported as stale.
 DEFAULT_POLICY_RATES: dict[str, float] = {
-    "CNY": 0.030,
-    "USD": 0.045,
-    "HKD": 0.045,
-    "JPY": 0.005,
+    currency: item.rate for currency, item in FALLBACK_POLICY_RATES.items()
 }
 
 
@@ -40,6 +39,9 @@ class CarryLeg:
     low: float | None
     high: float | None
     sample_size: int
+    #: Where each rate came from and when, so a stale differential can be labelled as such.
+    base_rate_info: PolicyRate | None = None
+    quote_rate_info: PolicyRate | None = None
 
     @property
     def carry(self) -> float | None:
@@ -48,6 +50,11 @@ class CarryLeg:
             return None
         return self.base_rate - self.quote_rate
 
+    @property
+    def rates_stale(self) -> bool:
+        """True when either side could not be refreshed, so the gap may not be today's."""
+        return any(item.stale for item in (self.base_rate_info, self.quote_rate_info) if item)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "pair": f"{self.base_currency}/{self.quote_currency}",
@@ -55,6 +62,9 @@ class CarryLeg:
             "quote_currency": self.quote_currency,
             "base_rate": self.base_rate,
             "quote_rate": self.quote_rate,
+            "base_rate_info": self.base_rate_info.to_dict() if self.base_rate_info else None,
+            "quote_rate_info": self.quote_rate_info.to_dict() if self.quote_rate_info else None,
+            "rates_stale": self.rates_stale,
             "carry": self.carry,
             "rate": self.rate,
             "percentile": self.percentile,
@@ -105,21 +115,23 @@ def build_panel(
     base_currency: str,
     rates: dict[str, float | None],
     rate_history: dict[str, list[float]] | None = None,
-    policy_rates: dict[str, float] | None = None,
+    policy_rates: Mapping[str, float | None | PolicyRate] | None = None,
     exposures: dict[str, float] | None = None,
     as_of: date | None = None,
 ) -> CarryPanel:
     """Assembles the panel.
 
     ``rates`` maps a currency to units of ``base_currency`` per unit of it; ``rate_history``
-    holds past values of the same quote so today's can be placed within it.
+    holds past values of the same quote so today's can be placed within it. ``policy_rates``
+    accepts either bare numbers or :class:`PolicyRate` records; the records carry the source and
+    the as-of date, which is what lets the panel say when a differential is out of date.
     """
     base = base_currency.upper()
-    policy = dict(DEFAULT_POLICY_RATES)
-    policy.update(policy_rates or {})
+    policy = _normalize_policy_rates(policy_rates)
     history = rate_history or {}
     notes: list[str] = []
 
+    base_info = policy.get(base)
     legs: list[CarryLeg] = []
     for currency in sorted(rates):
         currency = currency.upper()
@@ -128,28 +140,37 @@ def build_panel(
 
         series = [v for v in history.get(currency, []) if v is not None]
         current = rates.get(currency)
+        leg_info = policy.get(currency)
         legs.append(
             CarryLeg(
                 base_currency=currency,
                 quote_currency=base,
-                base_rate=policy.get(currency),
-                quote_rate=policy.get(base),
+                base_rate=leg_info.rate if leg_info else None,
+                quote_rate=base_info.rate if base_info else None,
                 rate=current,
                 percentile=percentile_rank(series, current) if series and current else None,
                 low=min(series) if series else None,
                 high=max(series) if series else None,
                 sample_size=len(series),
+                base_rate_info=leg_info,
+                quote_rate_info=base_info,
             )
         )
 
-        if policy.get(currency) is None:
+        if leg_info is None:
             notes.append(f"{currency}：缺少利率数据，无法计算利差。")
         elif not series:
             notes.append(f"{currency}/{base}：缺少历史汇率，无法定位当前水平。")
 
-    if policy_rates is None:
+    stale = sorted({
+        item.currency
+        for item in policy.values()
+        if item.stale and (item.currency == base or item.currency in {leg.base_currency for leg in legs})
+    })
+    if stale:
         notes.append(
-            "利率使用内置默认值，可能已过期；接入利率数据源后此项会自动更新。"
+            f"{'、'.join(stale)} 的利率未能从数据源刷新，使用内置值，可能已过期，"
+            "利差仅供参考。"
         )
 
     return CarryPanel(
@@ -159,6 +180,26 @@ def build_panel(
         exposures=_exposures(base, exposures or {}, rates),
         notes=notes,
     )
+
+
+def _normalize_policy_rates(
+    supplied: Mapping[str, float | None | PolicyRate] | None,
+) -> dict[str, PolicyRate]:
+    """Accepts numbers or records, and fills the gaps from the built-ins marked stale.
+
+    A currency explicitly supplied as ``None`` stays absent: the caller is saying it has no rate,
+    and substituting the built-in would present a guess as an answer.
+    """
+    out: dict[str, PolicyRate] = dict(FALLBACK_POLICY_RATES)
+    for currency, value in (supplied or {}).items():
+        key = currency.upper()
+        if value is None:
+            out.pop(key, None)
+        elif isinstance(value, PolicyRate):
+            out[key] = value
+        else:
+            out[key] = PolicyRate(key, float(value), "利率", "调用方提供", None, False)
+    return out
 
 
 def _exposures(

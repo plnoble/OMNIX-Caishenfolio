@@ -682,6 +682,41 @@ public sealed class CarryLegDto
 
     [JsonPropertyName("high")]
     public decimal? High { get; set; }
+
+    [JsonPropertyName("base_rate_info")]
+    public PolicyRateDto? BaseRateInfo { get; set; }
+
+    [JsonPropertyName("quote_rate_info")]
+    public PolicyRateDto? QuoteRateInfo { get; set; }
+
+    /// <summary>True when either rate could not be refreshed, so the gap may not be today's.</summary>
+    [JsonPropertyName("rates_stale")]
+    public bool RatesStale { get; set; }
+}
+
+/// <summary>A central-bank rate with the source and date it came from.</summary>
+public sealed class PolicyRateDto
+{
+    [JsonPropertyName("currency")]
+    public string Currency { get; set; } = "";
+
+    [JsonPropertyName("rate")]
+    public decimal Rate { get; set; }
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("source")]
+    public string Source { get; set; } = "";
+
+    [JsonPropertyName("as_of")]
+    public string? AsOf { get; set; }
+
+    [JsonPropertyName("stale")]
+    public bool Stale { get; set; }
+
+    [JsonPropertyName("note")]
+    public string Note { get; set; } = "";
 }
 
 public sealed class MarketQuoteResponse

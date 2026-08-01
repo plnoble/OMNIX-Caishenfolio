@@ -5,10 +5,12 @@ from typing import Any
 
 from caishenfolio_core.market.akshare_provider import AkshareMarketDataProvider
 from caishenfolio_core.market.alphavantage_provider import AlphaVantageMarketDataProvider
+from caishenfolio_core.market.baostock_provider import BaostockMarketDataProvider
 from caishenfolio_core.market.cached_market import CachingMarketFacade
 from caishenfolio_core.market.catalog import PROVIDER_CATALOG
 from caishenfolio_core.market.composite import CompositeMarketDataProvider
 from caishenfolio_core.market.credentials import public_secret_status
+from caishenfolio_core.market.eastmoney_fund_provider import EastmoneyFundNavProvider
 from caishenfolio_core.market.fixture import FixtureMarketDataProvider
 from caishenfolio_core.market.network import trust_env_enabled
 from caishenfolio_core.market.tencent_provider import TencentQuoteProvider
@@ -35,6 +37,10 @@ def create_market_provider(name: str | None = None, *, use_cache: bool | None = 
         inner = YFinanceMarketDataProvider()
     elif selected in {"tencent", "qt"}:
         inner = TencentQuoteProvider()
+    elif selected in {"baostock", "bao"}:
+        inner = BaostockMarketDataProvider()
+    elif selected in {"eastmoney_fund", "ttjj"}:
+        inner = EastmoneyFundNavProvider()
     elif selected in {"tushare"}:
         inner = TushareMarketDataProvider()
     elif selected in {"alphavantage", "alpha_vantage", "av"}:
@@ -43,7 +49,9 @@ def create_market_provider(name: str | None = None, *, use_cache: bool | None = 
         inner = CompositeMarketDataProvider(_real_providers_in_priority())
     else:
         raise ValueError(
-            f"未知行情数据源 '{selected}'。支持: auto, akshare, yfinance, tencent, tushare, alphavantage, fixture。"
+            f"未知行情数据源 '{selected}'。"
+            "支持: auto, akshare, yfinance, tencent, baostock, eastmoney_fund, "
+            "tushare, alphavantage, fixture。"
         )
 
     if use_cache and selected not in {"fixture", "synthetic", "demo"}:
@@ -59,6 +67,12 @@ def _real_providers_in_priority() -> list[Any]:
         AkshareMarketDataProvider(),
         YFinanceMarketDataProvider(),
         TencentQuoteProvider(),
+        # Free, no key, complete A-share history — the second opinion on CN daily bars, which
+        # otherwise rested on akshare alone.
+        BaostockMarketDataProvider(),
+        # Same reasoning for off-exchange fund NAV: one akshare endpoint was the only way to
+        # price a FUND: holding. Also standard library only.
+        EastmoneyFundNavProvider(),
         TushareMarketDataProvider(),
         AlphaVantageMarketDataProvider(),
     ]
