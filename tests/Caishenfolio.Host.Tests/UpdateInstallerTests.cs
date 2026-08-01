@@ -31,6 +31,21 @@ internal sealed class StubHttpHandler : HttpMessageHandler
     }
 }
 
+/// <summary>Throwaway key pairs, so both the accept and reject paths can be exercised.</summary>
+internal static class TestKeys
+{
+    /// <summary>An empty key means "no release key", which selects checksum-only verification.</summary>
+    public const string Unconfigured = "";
+
+    public static (string PublicKey, byte[] Signature) Sign(byte[] content)
+    {
+        using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        return (
+            Convert.ToBase64String(ecdsa.ExportSubjectPublicKeyInfo()),
+            ecdsa.SignData(content, HashAlgorithmName.SHA256));
+    }
+}
+
 public class UpdateInstallerTests : IDisposable
 {
     private const string MsiUrl = "https://example.test/OMNIX-Caishenfolio.msi";
@@ -69,10 +84,14 @@ public class UpdateInstallerTests : IDisposable
         };
     }
 
-    private async Task<UpdateDownload> RunAsync(StubHttpHandler handler, UpdateCheckResult update)
+    private async Task<UpdateDownload> RunAsync(
+        StubHttpHandler handler, UpdateCheckResult update, string? publicKey = null)
     {
         using var http = new HttpClient(handler);
-        var result = await new UpdateInstaller(http).DownloadAsync(update);
+        // Without an override the compiled-in release key applies, and a fixture MSI signed by
+        // nobody would be refused — correctly, but that would only ever test the reject path.
+        var result = await new UpdateInstaller(http, publicKey ?? TestKeys.Unconfigured)
+            .DownloadAsync(update);
         if (result.InstallerPath is not null)
         {
             _tempRoots.Add(Path.GetDirectoryName(result.InstallerPath)!);
@@ -93,6 +112,55 @@ public class UpdateInstallerTests : IDisposable
         Assert.True(result.Ok, result.Message);
         Assert.True(File.Exists(result.InstallerPath));
         Assert.Equal(Installer.Length, new FileInfo(result.InstallerPath!).Length);
+    }
+
+    [Fact]
+    public async Task ACorrectlySignedInstallerIsAccepted()
+    {
+        var (publicKey, signature) = TestKeys.Sign(Installer);
+        var handler = new StubHttpHandler()
+            .Serve(MsiUrl, Installer)
+            .Serve(SumUrl, $"{Sha256Of(Installer)}  OMNIX-Caishenfolio.msi")
+            .Serve(SigUrl, Convert.ToBase64String(signature));
+
+        var result = await RunAsync(handler, Update(withSignature: true), publicKey);
+
+        Assert.True(result.Ok, result.Message);
+        Assert.Equal(SignatureStatus.Valid, result.Signature);
+        Assert.Contains("签名", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnInstallerSignedByTheWrongKeyIsRefused()
+    {
+        // Correct bytes, correct checksum, signature from somebody else's key. This is the case
+        // a checksum cannot catch, because whoever replaces the MSI also replaces the checksum.
+        var (_, foreignSignature) = TestKeys.Sign(Installer);
+        var (ourPublicKey, _) = TestKeys.Sign(Installer);
+        var handler = new StubHttpHandler()
+            .Serve(MsiUrl, Installer)
+            .Serve(SumUrl, $"{Sha256Of(Installer)}  OMNIX-Caishenfolio.msi")
+            .Serve(SigUrl, Convert.ToBase64String(foreignSignature));
+
+        var result = await RunAsync(handler, Update(withSignature: true), ourPublicKey);
+
+        Assert.Equal(UpdateDownloadStatus.SignatureInvalid, result.Status);
+        Assert.Null(result.InstallerPath);
+    }
+
+    [Fact]
+    public async Task AnUnsignedInstallerIsRefusedOnceAKeyIsConfigured()
+    {
+        var (publicKey, _) = TestKeys.Sign(Installer);
+        var handler = new StubHttpHandler()
+            .Serve(MsiUrl, Installer)
+            .Serve(SumUrl, $"{Sha256Of(Installer)}  OMNIX-Caishenfolio.msi");
+
+        // No .sig asset at all: a project that signs must not accept an unsigned build.
+        var result = await RunAsync(handler, Update(), publicKey);
+
+        Assert.Equal(UpdateDownloadStatus.SignatureMissing, result.Status);
+        Assert.Null(result.InstallerPath);
     }
 
     [Fact]
@@ -229,53 +297,98 @@ public class UpdateInstallerTests : IDisposable
     }
 }
 
-public class ReleaseSignatureTests
+public class ReleaseSignatureTests : IDisposable
 {
-    private static (string PublicKey, byte[] Signature) SignSample(byte[] content)
+    private readonly string _file = Path.Combine(
+        Path.GetTempPath(), $"omnix_sig_{Guid.NewGuid():N}.bin");
+
+    private static readonly byte[] Content = Encoding.UTF8.GetBytes("installer bytes");
+
+    public ReleaseSignatureTests() => File.WriteAllBytes(_file, Content);
+
+    [Fact]
+    public void TheProjectShipsAReleaseKey()
     {
-        using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        return (
-            Convert.ToBase64String(ecdsa.ExportSubjectPublicKeyInfo()),
-            ecdsa.SignData(content, HashAlgorithmName.SHA256));
+        // Losing this constant would silently downgrade every future update to checksum-only.
+        Assert.True(ReleaseSignature.IsConfigured);
     }
 
     [Fact]
-    public void WithNoKeyConfiguredVerificationIsSkippedRatherThanFailing()
+    public void TheProductionKeyIsAWellFormedP256PublicKey()
     {
-        // Until a release key exists, checksum verification stands alone; the updater must not
-        // be bricked by a check that cannot yet be performed.
-        Assert.Equal(SignatureStatus.NotConfigured, ReleaseSignature.Verify("anything.msi", null));
-        Assert.False(ReleaseSignature.IsConfigured);
-    }
-
-    [Fact]
-    public void TheProductionKeyConstantIsWellFormedIfPresent()
-    {
-        if (!ReleaseSignature.IsConfigured)
-        {
-            return;
-        }
-
-        // A malformed key would silently turn every update into "signature invalid".
         using var ecdsa = ECDsa.Create();
         var exception = Record.Exception(() =>
             ecdsa.ImportSubjectPublicKeyInfo(
                 Convert.FromBase64String(ReleaseSignature.PublicKeyBase64), out _));
+
+        // A malformed key would turn every update into "signature invalid" with no other clue.
         Assert.Null(exception);
+        Assert.Equal(256, ecdsa.KeySize);
+        // Publishing a private key here would let anyone sign an accepted installer.
+        Assert.Null(ecdsa.ExportParameters(false).D);
     }
 
     [Fact]
-    public void AValidSignatureVerifiesAndATamperedFileDoesNot()
+    public void AValidSignatureIsAccepted()
     {
-        // Exercises the same primitives the release key uses, without needing that key here.
-        var content = Encoding.UTF8.GetBytes("installer bytes");
-        var (publicKey, signature) = SignSample(content);
+        var (publicKey, signature) = TestKeys.Sign(Content);
 
-        using var ecdsa = ECDsa.Create();
-        ecdsa.ImportSubjectPublicKeyInfo(Convert.FromBase64String(publicKey), out _);
+        Assert.Equal(SignatureStatus.Valid, ReleaseSignature.Verify(_file, signature, publicKey));
+    }
 
-        Assert.True(ecdsa.VerifyData(content, signature, HashAlgorithmName.SHA256));
-        Assert.False(ecdsa.VerifyData(
-            Encoding.UTF8.GetBytes("installer bytes!"), signature, HashAlgorithmName.SHA256));
+    [Fact]
+    public void ASignatureOverDifferentBytesIsRejected()
+    {
+        var (publicKey, signature) = TestKeys.Sign(Encoding.UTF8.GetBytes("other bytes"));
+
+        Assert.Equal(SignatureStatus.Invalid, ReleaseSignature.Verify(_file, signature, publicKey));
+    }
+
+    [Fact]
+    public void AnotherKeysSignatureIsRejected()
+    {
+        var (_, foreign) = TestKeys.Sign(Content);
+        var (ours, _) = TestKeys.Sign(Content);
+
+        Assert.Equal(SignatureStatus.Invalid, ReleaseSignature.Verify(_file, foreign, ours));
+    }
+
+    [Fact]
+    public void AMissingSignatureIsDistinctFromAnInvalidOne()
+    {
+        var (publicKey, _) = TestKeys.Sign(Content);
+
+        // The two mean different things to the user: "not signed" versus "signed by someone else".
+        Assert.Equal(SignatureStatus.Missing, ReleaseSignature.Verify(_file, null, publicKey));
+        Assert.Equal(SignatureStatus.Missing, ReleaseSignature.Verify(_file, [], publicKey));
+    }
+
+    [Fact]
+    public void GarbageInsteadOfAKeyFailsClosedRatherThanThrowing()
+    {
+        var (_, signature) = TestKeys.Sign(Content);
+
+        Assert.Equal(SignatureStatus.Invalid, ReleaseSignature.Verify(_file, signature, "not base64"));
+    }
+
+    [Fact]
+    public void WithNoKeyVerificationIsSkippedRatherThanFailing()
+    {
+        // The state this project was in before a key existed: checksum verification stands
+        // alone, and the updater is not bricked by a check that cannot be performed.
+        Assert.Equal(SignatureStatus.NotConfigured, ReleaseSignature.Verify(_file, null, ""));
+    }
+
+    public void Dispose()
+    {
+        GC.SuppressFinalize(this);
+        try
+        {
+            File.Delete(_file);
+        }
+        catch (IOException)
+        {
+            // A locked temp file is not a test failure.
+        }
     }
 }

@@ -21,19 +21,33 @@ public static class ReleaseSignature
     /// Base64 SubjectPublicKeyInfo for the release key, or empty until one is configured.
     ///
     /// While empty, <see cref="Verify"/> reports <see cref="SignatureStatus.NotConfigured"/> and
-    /// the updater falls back to checksum-only verification, which is what the manual download
-    /// path already offered. Setting this raises the bar for every future release.
+    /// the updater falls back to checksum-only verification. With a key set, an installer that
+    /// is unsigned or signed by anything else is refused outright.
+    ///
+    /// Changing this invalidates every signature made with the previous key, so releases built
+    /// before the change can no longer be installed through the in-app updater.
     /// </summary>
-    public const string PublicKeyBase64 = "";
+    public const string PublicKeyBase64 =
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEY3yGe443GUIAKUaEITFmIwfkspHxNz3nUO9UG7KbksM+"
+        + "PcXL52BpRmM9JSKirfmnfYkAAMI6DbdhTQfkplnM/A==";
 
     public static bool IsConfigured => !string.IsNullOrWhiteSpace(PublicKeyBase64);
 
-    /// <summary>Checks <paramref name="signature"/> over the bytes of the file at <paramref name="filePath"/>.</summary>
-    public static SignatureStatus Verify(string filePath, byte[]? signature)
+    /// <summary>
+    /// Checks <paramref name="signature"/> over the bytes of the file at <paramref name="filePath"/>.
+    ///
+    /// <paramref name="publicKeyBase64"/> exists so the accept and reject paths can be exercised
+    /// with a throwaway key pair. Production passes nothing and gets the compiled-in key; the
+    /// release private key is not available to tests, so without this seam only the failure
+    /// cases would ever be covered.
+    /// </summary>
+    public static SignatureStatus Verify(
+        string filePath, byte[]? signature, string? publicKeyBase64 = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
 
-        if (!IsConfigured)
+        var key = publicKeyBase64 ?? PublicKeyBase64;
+        if (string.IsNullOrWhiteSpace(key))
         {
             return SignatureStatus.NotConfigured;
         }
@@ -47,7 +61,7 @@ public static class ReleaseSignature
         try
         {
             using var ecdsa = ECDsa.Create();
-            ecdsa.ImportSubjectPublicKeyInfo(Convert.FromBase64String(PublicKeyBase64), out _);
+            ecdsa.ImportSubjectPublicKeyInfo(Convert.FromBase64String(key), out _);
 
             using var stream = File.OpenRead(filePath);
             return ecdsa.VerifyData(stream, signature, HashAlgorithmName.SHA256)

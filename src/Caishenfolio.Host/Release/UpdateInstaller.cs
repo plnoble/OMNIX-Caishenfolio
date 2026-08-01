@@ -42,10 +42,16 @@ public sealed record UpdateDownload
 public sealed class UpdateInstaller
 {
     private readonly HttpClient _http;
+    private readonly string? _publicKeyBase64;
 
-    public UpdateInstaller(HttpClient http)
+    /// <param name="publicKeyBase64">
+    /// Overrides the compiled-in release key. Only tests pass this — see
+    /// <see cref="ReleaseSignature.Verify"/> for why the seam exists.
+    /// </param>
+    public UpdateInstaller(HttpClient http, string? publicKeyBase64 = null)
     {
         _http = http ?? throw new ArgumentNullException(nameof(http));
+        _publicKeyBase64 = publicKeyBase64;
     }
 
     public async Task<UpdateDownload> DownloadAsync(
@@ -122,7 +128,7 @@ public sealed class UpdateInstaller
         }
 
         var signature = await TryReadSignatureAsync(update, cancellationToken).ConfigureAwait(false);
-        var status = ReleaseSignature.Verify(path, signature);
+        var status = ReleaseSignature.Verify(path, signature, _publicKeyBase64);
         return status switch
         {
             SignatureStatus.Invalid => new UpdateDownload
