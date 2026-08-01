@@ -652,6 +652,53 @@ public sealed class PortfolioStore : IDisposable
         return validated;
     }
 
+    /// <summary>
+    /// Reads one raw setting. Used for values that are not part of <see cref="PortfolioSettings"/>
+    /// — notification credentials in particular, which are stored already encrypted and must not
+    /// pass through the preference record that the settings UI round-trips.
+    /// </summary>
+    public string? LoadRawSetting(string key)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT value FROM settings WHERE key = $key;";
+            command.Parameters.AddWithValue("$key", key);
+            return command.ExecuteScalar() as string;
+        }
+    }
+
+    /// <summary>Writes one raw setting; an empty value removes the row rather than storing "".</summary>
+    public void SaveRawSetting(string key, string? value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            if (string.IsNullOrEmpty(value))
+            {
+                command.CommandText = "DELETE FROM settings WHERE key = $key;";
+                command.Parameters.AddWithValue("$key", key);
+            }
+            else
+            {
+                command.CommandText = """
+                    INSERT INTO settings (key, value) VALUES ($key, $value)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+                    """;
+                command.Parameters.AddWithValue("$key", key);
+                command.Parameters.AddWithValue("$value", value);
+            }
+
+            command.ExecuteNonQuery();
+        }
+    }
+
     // --- valuation history ---------------------------------------------------------
 
     /// <summary>

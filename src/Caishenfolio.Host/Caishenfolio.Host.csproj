@@ -8,6 +8,13 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Lets the tests reach the pure payload/message builders without widening the public API
+         just to make them testable. -->
+    <InternalsVisibleTo Include="Caishenfolio.Host.Tests" />
   </ItemGroup>
 
 </Project>

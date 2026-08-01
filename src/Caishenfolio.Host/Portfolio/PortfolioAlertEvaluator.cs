@@ -157,7 +157,7 @@ public static class PortfolioAlertEvaluator
             }
         }
 
-        alerts.AddRange(IpoAlerts(ipoSubscriptions ?? [], today));
+        alerts.AddRange(IpoDeadlines(ipoSubscriptions ?? [], today));
 
         foreach (var finding in risk?.Findings ?? [])
         {
@@ -182,7 +182,18 @@ public static class PortfolioAlertEvaluator
     /// Deadlines an IPO record implies. Missing a payment date forfeits the allotment outright
     /// and, on A-shares, bars further applications for months — so an unpaid allotment is the
     /// loudest thing this app can tell you about.
+    ///
+    /// Public and independent of any valuation on purpose: these come from dates in the ledger,
+    /// not from prices, so the headless notifier can check them with no market data and no
+    /// analytics core running.
     /// </summary>
+    public static IReadOnlyList<PortfolioAlert> IpoDeadlines(
+        IReadOnlyList<IpoSubscription> subscriptions, DateOnly today)
+    {
+        ArgumentNullException.ThrowIfNull(subscriptions);
+        return IpoAlerts(subscriptions, today).ToArray();
+    }
+
     private static IEnumerable<PortfolioAlert> IpoAlerts(
         IReadOnlyList<IpoSubscription> subscriptions, DateOnly today)
     {

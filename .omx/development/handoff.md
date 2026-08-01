@@ -27,10 +27,18 @@ R0~R5 已交付：OMNIX-Caishenfolio 从单标的研究工作台重构为个人�
 
 ```powershell
 dotnet build Caishenfolio.slnx
-dotnet test Caishenfolio.slnx                     # 183 pass
+dotnet test Caishenfolio.slnx                     # 338 pass
 $env:PYTHONPATH="$PWD\python"; $env:CAISHENFOLIO_MARKET_PROVIDER="fixture"
-python -m unittest discover -s tests/python -p "test_*.py"   # 82 pass
+python -m unittest discover -s tests/python -p "test_*.py"   # 290 pass
 ```
+
+## 通知推送（H4）
+
+设置在「理财偏好设置」窗口底部。填机器人 Webhook 地址 → 「发送测试通知」确认能收到 →
+「注册每日后台检查」写一个 Windows 计划任务，每天 09:00 跑 `Caishenfolio.Desktop.exe --notify`。
+凭据用 DPAPI（当前 Windows 账户）加密后存进账本的 `settings` 表，明文不落盘。
+后台模式只查打新时限——它不需要行情，所以不会因为取不到价格而静默什么都不报。
+每次运行都会往 `%LOCALAPPDATA%\Caishenfolio\logs\notify.log` 写一行，失败也写。
 
 XAML 有改动时**必须**再启动一次应用冒烟（见 error-ledger 2026-07-31）。
 

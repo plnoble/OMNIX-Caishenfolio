@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using Caishenfolio.Host.Data;
 using Caishenfolio.Host.MarketData;
+using Caishenfolio.Host.Notifications;
 using Caishenfolio.Host.Portfolio;
 
 namespace Caishenfolio.Desktop.Wealth;
@@ -34,17 +35,20 @@ public partial class PortfolioSettingsWindow : Window
     private readonly PortfolioWorkspace _workspace;
     private readonly PricePlanStore? _planStore;
     private readonly ObservableCollection<TargetRow> _targets = [];
+    private readonly NotificationSettingsStore _notifications;
 
     public PortfolioSettingsWindow(PortfolioWorkspace workspace, PricePlanStore? planStore = null)
     {
         InitializeComponent();
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _planStore = planStore;
+        _notifications = new NotificationSettingsStore(workspace.Store);
 
         Load(workspace.Settings);
         TargetList.ItemsSource = _targets;
         UpdateTargetTotal();
         LoadAccounts();
+        LoadNotifications();
     }
 
     /// <summary>True when settings were saved, so the caller knows to refresh.</summary>
@@ -177,6 +181,10 @@ public partial class PortfolioSettingsWindow : Window
                 PriceTolerancePercent = ReadNumber(PriceToleranceBox, "价格容差"),
             });
 
+            // Kept out of PortfolioSettings on purpose — it carries credentials, which the
+            // preference record is not built to protect.
+            _notifications.Save(ReadNotificationForm());
+
             Saved = true;
             DialogResult = true;
             Close();
@@ -192,6 +200,104 @@ public partial class PortfolioSettingsWindow : Window
     {
         DialogResult = false;
         Close();
+    }
+
+    // --- notifications ---------------------------------------------------------------
+
+    private void LoadNotifications()
+    {
+        foreach (var flavor in Enum.GetValues<WebhookFlavor>())
+        {
+            NotifyFlavorCombo.Items.Add(new ComboBoxItem
+            {
+                Content = WebhookNotificationChannel.DisplayName(flavor),
+                Tag = flavor,
+            });
+        }
+
+        var settings = _notifications.Load();
+        NotifyEnabledBox.IsChecked = settings.Enabled;
+        NotifyRoutineBox.IsChecked = settings.IncludeRoutineAlerts;
+
+        var target = settings.Webhooks.FirstOrDefault();
+        NotifyFlavorCombo.SelectedIndex = target is null ? 0 : (int)target.Flavor;
+        NotifyWebhookBox.Text = target?.Secret ?? "";
+        NotifyChatIdBox.Text = target?.ChatId ?? "";
+
+        NotifyStatusText.Text = ScheduledCheckInstaller.IsInstalled()
+            ? "每日后台检查已注册。"
+            : "尚未注册后台检查——软件关着时不会提醒。";
+    }
+
+    /// <summary>Reads the form. Saved on its own, not with the preference record: it holds credentials.</summary>
+    private NotificationSettings ReadNotificationForm()
+    {
+        var flavor = (NotifyFlavorCombo.SelectedItem as ComboBoxItem)?.Tag as WebhookFlavor?
+                     ?? WebhookFlavor.WeCom;
+        var secret = NotifyWebhookBox.Text.Trim();
+
+        return _notifications.Load() with
+        {
+            Enabled = NotifyEnabledBox.IsChecked == true,
+            IncludeRoutineAlerts = NotifyRoutineBox.IsChecked == true,
+            Webhooks = string.IsNullOrWhiteSpace(secret)
+                ? []
+                : [new WebhookTarget
+                {
+                    Flavor = flavor,
+                    Secret = secret,
+                    ChatId = NotifyChatIdBox.Text.Trim(),
+                }],
+        };
+    }
+
+    private async void TestNotifyButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var settings = _notifications.Save(ReadNotificationForm());
+        if (!settings.HasUsableChannel)
+        {
+            NotifyStatusText.Text = "还没有可用的渠道：请勾选「启用通知推送」并填写机器人地址。";
+            return;
+        }
+
+        NotifyStatusText.Text = "正在发送测试消息…";
+        try
+        {
+            var report = await NotificationDispatcher.From(settings).SendTestAsync().ConfigureAwait(true);
+            NotifyStatusText.Text = report.AllDelivered
+                ? "测试消息已发出，请到对应的群或应用里确认收到。"
+                : report.Describe();
+        }
+        catch (Exception ex)
+        {
+            NotifyStatusText.Text = $"发送失败：{ex.Message}";
+        }
+    }
+
+    private void ScheduleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var executable = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(executable))
+        {
+            NotifyStatusText.Text = "找不到程序路径，无法注册后台检查。";
+            return;
+        }
+
+        // Registering a scheduled task changes what the machine does while the app is closed,
+        // so it happens only on this click, and the exact command is shown either way.
+        var runAt = new TimeOnly(9, 0);
+        var result = ScheduledCheckInstaller.Install(executable, runAt);
+        NotifyStatusText.Text = result.Ok
+            ? $"已注册：每天 {runAt:HH\\:mm} 检查一次打新时限。命令：{result.Command}"
+            : $"注册失败：{result.Output}。可手动执行：{result.Command}";
+    }
+
+    private void UnscheduleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var result = ScheduledCheckInstaller.Uninstall();
+        NotifyStatusText.Text = result.Ok
+            ? "已取消每日后台检查。"
+            : $"取消失败：{result.Output}";
     }
 
     private void ImportLegacyButton_OnClick(object sender, RoutedEventArgs e)

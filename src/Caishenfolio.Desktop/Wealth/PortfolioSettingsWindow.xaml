@@ -107,6 +107,52 @@
                 </ItemsControl>
                 <TextBlock x:Name="TargetTotalText" Margin="0,8,0,18" FontWeight="SemiBold" Text="合计 0%" />
 
+                <!-- Notifications -->
+                <TextBlock Text="通知推送（软件关着也能收到）" Style="{StaticResource SectionTitle}" />
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12"
+                           Margin="0,0,0,8">
+                    打新中签后必须在规定日期前缴款，逾期作废，一年内三次还会被暂停申购半年。
+                    这类时限不会等你打开软件，所以可以让它推到手机上。<LineBreak />
+                    机器人地址和邮箱密码属于凭据，保存时会用 Windows 账户加密后再写入账本文件。
+                </TextBlock>
+
+                <CheckBox x:Name="NotifyEnabledBox" Content="启用通知推送" Margin="0,0,0,8" />
+
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110" />
+                        <ColumnDefinition Width="140" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="渠道" VerticalAlignment="Center" />
+                    <ComboBox Grid.Column="1" x:Name="NotifyFlavorCombo" Margin="0,0,8,0" />
+                    <TextBox Grid.Column="2" x:Name="NotifyWebhookBox"
+                             ToolTip="群机器人 Webhook 地址；Telegram 填 Bot Token" />
+                </Grid>
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Telegram Chat ID" VerticalAlignment="Center"
+                               FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                    <TextBox Grid.Column="1" x:Name="NotifyChatIdBox"
+                             ToolTip="仅 Telegram 需要；其他渠道留空" />
+                </Grid>
+
+                <CheckBox x:Name="NotifyRoutineBox" Content="同时推送价格与集中度提醒（关掉则只推有时限的事项）"
+                          Margin="0,0,0,10" />
+
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <Button Content="发送测试通知" Padding="12,4" Margin="0,0,8,0"
+                            Click="TestNotifyButton_OnClick" />
+                    <Button x:Name="ScheduleButton" Content="注册每日后台检查" Padding="12,4" Margin="0,0,8,0"
+                            Click="ScheduleButton_OnClick" />
+                    <Button Content="取消后台检查" Padding="12,4" Click="UnscheduleButton_OnClick" />
+                </StackPanel>
+                <TextBlock x:Name="NotifyStatusText" TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}"
+                           FontSize="12" Margin="0,0,0,18" />
+
                 <!-- Legacy import -->
                 <TextBlock Text="导入旧版成交台账" Style="{StaticResource SectionTitle}" />
                 <TextBlock Text="把 P4.3 时期记在「计划」页的真实成交搬进账本。可重复点击，已导入的不会重复。"
