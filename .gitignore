@@ -24,3 +24,9 @@ Thumbs.db
 **/bars_cache.db
 **/symbol_name_index.json
 **/watchlist.json
+
+# Release signing key. Committing this would let anyone sign an installer the
+# updater then accepts as genuine — it belongs only in the GitHub Actions secret.
+release-private-key.txt
+*.pem
+*.pfx

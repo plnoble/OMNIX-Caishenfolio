@@ -81,8 +81,46 @@ git tag v0.11.0 → push
 - 「忽略此版本」记在 `%LocalAppData%\Caishenfolio\update.json`，**只忽略那一个版本**，
   更新的版本仍会提示。系统页手动点「检查更新」会**无视忽略**照常显示。
 - 比较是**数值比较**（`0.9.0` < `0.10.0`），不是字符串比较。
-- 应用**不会**自动下载或安装任何东西；「去下载」只是在浏览器里打开发布页。
+- 提示条上的「立即更新」会下载 MSI、校验、询问后安装，然后关闭应用
+  （MSI 无法替换正在运行的进程占用的文件）。「发布页」仍保留为手动路径。
 - MSI 配了 `MajorUpgrade`，新版本直接覆盖安装即可原地升级。
+
+## 发布签名
+
+应用内更新在执行安装包之前会做两层验证：
+
+| 层 | 防什么 |
+|---|---|
+| SHA-256 校验和 | 下载损坏、传输被改 |
+| ECDSA P-256 签名 | **发布本身被替换** |
+
+校验和单独用是弱的——它和 MSI 一起发布，能换掉其一的人也能换掉另一个。
+签名不行：私钥只存在于 GitHub Actions secret，公钥编译进程序
+（运行时去取公钥没有意义，能换安装包的人也能换公钥）。
+
+任一层不通过就**删除已下载的文件**，不会把未经验证的安装包留在临时目录里。
+
+### 生成密钥（一次性）
+
+```powershell
+dotnet run scripts\new_release_key.cs
+```
+
+私钥写入 `release-private-key.txt`（已 gitignore），**不打印到屏幕**；只有公钥会显示。
+脚本会先用发布流程完全相同的 API 做一次签名/验签自检，不通过就不写文件。
+
+```powershell
+gh secret set OMNIX_RELEASE_PRIVATE_KEY < release-private-key.txt
+Remove-Item release-private-key.txt        # secret 里那份才是长期存放处
+```
+
+再把公钥填进 `ReleaseSignature.PublicKeyBase64` 并发一版。
+
+配置之前：`release.yml` 的签名步骤会**警告并跳过**，应用只做校验和验证
+（`SignatureStatus.NotConfigured`）。
+配置之后：没有签名或签名不符的安装包会被**直接拒绝**，不是降级成警告。
+
+> 换密钥会让所有旧签名失效。密钥丢失只能重新生成并重发一版。
 
 推送到 `main` **不会**产生任何客户端可见的更新——CI 只产出制品，不建 Release。
 
