@@ -282,6 +282,9 @@ class AnalyticsApp:
             "readings": readings,
             "history": [point.to_dict() for point in history],
             "warnings": list(result.warnings),
+            # A multiple this app computed must never be mistaken for one a vendor published.
+            "method": _tagged_warning(result.warnings, "valuation_method:"),
+            "reconstructed": "valuation_reconstructed" in result.warnings,
             "error": None,
         }
 
@@ -736,6 +739,15 @@ class AnalyticsApp:
             "disclaimer": RESEARCH_DISCLAIMER,
             "error": None,
         }
+
+
+def _tagged_warning(warnings: Any, prefix: str) -> str:
+    """Pulls a ``prefix:payload`` warning back out as plain text for the UI."""
+    for warning in warnings or ():
+        text = str(warning)
+        if text.startswith(prefix):
+            return text[len(prefix) :]
+    return ""
 
 
 def _metric_series(history: list[Any], metric_name: str) -> list[float | None]:

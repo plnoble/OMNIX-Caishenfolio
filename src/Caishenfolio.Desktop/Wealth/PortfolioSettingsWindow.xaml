@@ -118,26 +118,43 @@
 
                 <CheckBox x:Name="NotifyEnabledBox" Content="启用通知推送" Margin="0,0,0,8" />
 
+                <!-- Configured channels. Several can be on at once; each is tried independently. -->
+                <DataGrid x:Name="ChannelGrid" Style="{StaticResource WealthGrid}" MaxHeight="140"
+                          Margin="0,0,0,8" IsReadOnly="False">
+                    <DataGrid.Columns>
+                        <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled}" Width="50" />
+                        <DataGridTextColumn Header="渠道" Binding="{Binding FlavorName}" Width="110"
+                                            IsReadOnly="True"
+                                            ElementStyle="{StaticResource WealthCellText}" />
+                        <DataGridTextColumn Header="地址 / Token（已隐藏）" Binding="{Binding MaskedSecret}"
+                                            Width="*" IsReadOnly="True"
+                                            ElementStyle="{StaticResource WealthCellText}" />
+                        <DataGridTextColumn Header="Chat ID" Binding="{Binding ChatId}" Width="90"
+                                            IsReadOnly="True"
+                                            ElementStyle="{StaticResource WealthCellText}" />
+                    </DataGrid.Columns>
+                </DataGrid>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                    <Button Content="删除选中渠道" Padding="10,3" Click="RemoveChannelButton_OnClick" />
+                    <TextBlock Text="勾选「启用」可临时停用某个渠道而不删除它。" VerticalAlignment="Center"
+                               Margin="10,0,0,0" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                </StackPanel>
+
+                <TextBlock Text="添加渠道" FontWeight="SemiBold" Margin="0,0,0,6"
+                           Foreground="{StaticResource BrushFgSecondary}" />
                 <Grid Margin="0,0,0,8">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="110" />
                         <ColumnDefinition Width="140" />
                         <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="渠道" VerticalAlignment="Center" />
-                    <ComboBox Grid.Column="1" x:Name="NotifyFlavorCombo" Margin="0,0,8,0" />
-                    <TextBox Grid.Column="2" x:Name="NotifyWebhookBox"
-                             ToolTip="群机器人 Webhook 地址；Telegram 填 Bot Token" />
-                </Grid>
-                <Grid Margin="0,0,0,8">
-                    <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="110" />
-                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Telegram Chat ID" VerticalAlignment="Center"
-                               FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
-                    <TextBox Grid.Column="1" x:Name="NotifyChatIdBox"
+                    <ComboBox Grid.Column="0" x:Name="NotifyFlavorCombo" Margin="0,0,8,0" />
+                    <TextBox Grid.Column="1" x:Name="NotifyWebhookBox" Margin="0,0,8,0"
+                             ToolTip="群机器人 Webhook 地址；Telegram 填 Bot Token" />
+                    <TextBox Grid.Column="2" x:Name="NotifyChatIdBox" Margin="0,0,8,0"
                              ToolTip="仅 Telegram 需要；其他渠道留空" />
+                    <Button Grid.Column="3" Content="添加" Padding="14,4" Click="AddChannelButton_OnClick" />
                 </Grid>
 
                 <CheckBox x:Name="NotifyRoutineBox" Content="同时推送价格与集中度提醒（关掉则只推有时限的事项）"

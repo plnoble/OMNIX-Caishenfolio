@@ -17,6 +17,39 @@ public sealed class TargetRow
     public string Percent { get; set; } = "";
 }
 
+/// <summary>
+/// One configured notification channel as the grid shows it.
+///
+/// The secret is held but never displayed: the grid binds to the masked form, so a screenshot
+/// or a shared screen cannot leak a webhook that would let anyone post into the user's group.
+/// </summary>
+public sealed class ChannelRow
+{
+    public required WebhookFlavor Flavor { get; init; }
+    public required string Secret { get; init; }
+    public string ChatId { get; init; } = "";
+    public bool Enabled { get; set; } = true;
+
+    public string FlavorName => WebhookNotificationChannel.DisplayName(Flavor);
+    public string MaskedSecret => SecretProtector.Mask(Secret);
+
+    public static ChannelRow From(WebhookTarget target) => new()
+    {
+        Flavor = target.Flavor,
+        Secret = target.Secret,
+        ChatId = target.ChatId,
+        Enabled = target.Enabled,
+    };
+
+    public WebhookTarget ToTarget() => new()
+    {
+        Flavor = Flavor,
+        Secret = Secret,
+        ChatId = ChatId,
+        Enabled = Enabled,
+    };
+}
+
 public partial class PortfolioSettingsWindow : Window
 {
     /// <summary>Classes offered as rebalance targets; the rest are too niche to plan against.</summary>
@@ -35,6 +68,7 @@ public partial class PortfolioSettingsWindow : Window
     private readonly PortfolioWorkspace _workspace;
     private readonly PricePlanStore? _planStore;
     private readonly ObservableCollection<TargetRow> _targets = [];
+    private readonly ObservableCollection<ChannelRow> _channels = [];
     private readonly NotificationSettingsStore _notifications;
 
     public PortfolioSettingsWindow(PortfolioWorkspace workspace, PricePlanStore? planStore = null)
@@ -215,41 +249,74 @@ public partial class PortfolioSettingsWindow : Window
             });
         }
 
+        NotifyFlavorCombo.SelectedIndex = 0;
+        ChannelGrid.ItemsSource = _channels;
+
         var settings = _notifications.Load();
         NotifyEnabledBox.IsChecked = settings.Enabled;
         NotifyRoutineBox.IsChecked = settings.IncludeRoutineAlerts;
-
-        var target = settings.Webhooks.FirstOrDefault();
-        NotifyFlavorCombo.SelectedIndex = target is null ? 0 : (int)target.Flavor;
-        NotifyWebhookBox.Text = target?.Secret ?? "";
-        NotifyChatIdBox.Text = target?.ChatId ?? "";
+        foreach (var target in settings.Webhooks)
+        {
+            _channels.Add(ChannelRow.From(target));
+        }
 
         NotifyStatusText.Text = ScheduledCheckInstaller.IsInstalled()
             ? "每日后台检查已注册。"
             : "尚未注册后台检查——软件关着时不会提醒。";
     }
 
-    /// <summary>Reads the form. Saved on its own, not with the preference record: it holds credentials.</summary>
-    private NotificationSettings ReadNotificationForm()
+    private void AddChannelButton_OnClick(object sender, RoutedEventArgs e)
     {
         var flavor = (NotifyFlavorCombo.SelectedItem as ComboBoxItem)?.Tag as WebhookFlavor?
                      ?? WebhookFlavor.WeCom;
         var secret = NotifyWebhookBox.Text.Trim();
+        var chatId = NotifyChatIdBox.Text.Trim();
 
-        return _notifications.Load() with
+        if (string.IsNullOrWhiteSpace(secret))
         {
-            Enabled = NotifyEnabledBox.IsChecked == true,
-            IncludeRoutineAlerts = NotifyRoutineBox.IsChecked == true,
-            Webhooks = string.IsNullOrWhiteSpace(secret)
-                ? []
-                : [new WebhookTarget
-                {
-                    Flavor = flavor,
-                    Secret = secret,
-                    ChatId = NotifyChatIdBox.Text.Trim(),
-                }],
-        };
+            NotifyStatusText.Text = "请先填写机器人地址（Telegram 填 Bot Token）。";
+            return;
+        }
+
+        if (flavor == WebhookFlavor.Telegram && string.IsNullOrWhiteSpace(chatId))
+        {
+            // Without a chat id there is nowhere to post, so this would fail silently later.
+            NotifyStatusText.Text = "Telegram 还需要填 Chat ID，否则不知道发到哪个对话。";
+            return;
+        }
+
+        _channels.Add(ChannelRow.From(new WebhookTarget
+        {
+            Flavor = flavor,
+            Secret = secret,
+            ChatId = chatId,
+        }));
+
+        NotifyWebhookBox.Text = "";
+        NotifyChatIdBox.Text = "";
+        NotifyStatusText.Text = $"已添加 {WebhookNotificationChannel.DisplayName(flavor)}，"
+                                + "共 " + _channels.Count + " 个渠道。记得点「保存」。";
     }
+
+    private void RemoveChannelButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (ChannelGrid.SelectedItem is not ChannelRow row)
+        {
+            NotifyStatusText.Text = "请先在上面的列表里选中要删除的渠道。";
+            return;
+        }
+
+        _channels.Remove(row);
+        NotifyStatusText.Text = $"已移除 {row.FlavorName}。记得点「保存」。";
+    }
+
+    /// <summary>Reads the form. Saved on its own, not with the preference record: it holds credentials.</summary>
+    private NotificationSettings ReadNotificationForm() => _notifications.Load() with
+    {
+        Enabled = NotifyEnabledBox.IsChecked == true,
+        IncludeRoutineAlerts = NotifyRoutineBox.IsChecked == true,
+        Webhooks = _channels.Select(row => row.ToTarget()).ToList(),
+    };
 
     private async void TestNotifyButton_OnClick(object sender, RoutedEventArgs e)
     {

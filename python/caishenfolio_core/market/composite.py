@@ -66,6 +66,13 @@ class CompositeMarketDataProvider:
         # Injectable so tests exercise the backoff logic without actually waiting.
         self._sleep = sleep or time.sleep
 
+        # A child that derives one series from another (reconstructed US/HK valuation needs
+        # prices) should reach for the whole chain, not just its own feed: the source holding
+        # the fundamentals is often not the one that can reach the prices.
+        for provider in self._providers:
+            if hasattr(provider, "bar_source"):
+                provider.bar_source = self
+
     @property
     def ready(self) -> bool:
         return any(getattr(p, "ready", True) for p in self._providers)

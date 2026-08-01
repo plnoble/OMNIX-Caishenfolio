@@ -128,9 +128,16 @@ public partial class ValuationView : UserControl
                 _rows.Add(ValuationRow.From(reading));
             }
 
+            // A multiple this app computed must say so; a percentile built on an assumed
+            // announcement date is not the same claim as one from a published series.
+            var method = string.IsNullOrWhiteSpace(response.Method)
+                ? ""
+                : Environment.NewLine + response.Method;
+
             StatusText.Text = _rows.Count == 0
                 ? "该标的没有可用的估值指标。"
-                : $"{symbol} · 回溯 {years} 年 · 数据源 {response.Provider}。以下为历史位置，不是买卖依据。";
+                : $"{symbol} · 回溯 {years} 年 · 数据源 {response.Provider}。以下为历史位置，不是买卖依据。"
+                  + method;
         }
         catch (Exception ex)
         {

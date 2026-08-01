@@ -602,6 +602,14 @@ public sealed class ValuationResponse
     [JsonPropertyName("readings")]
     public List<MetricReadingDto> Readings { get; set; } = new();
 
+    /// <summary>How the multiples were obtained — empty when they came from a vendor series.</summary>
+    [JsonPropertyName("method")]
+    public string Method { get; set; } = "";
+
+    /// <summary>True when PE/PB were computed here from price and per-share fundamentals.</summary>
+    [JsonPropertyName("reconstructed")]
+    public bool Reconstructed { get; set; }
+
     [JsonPropertyName("error")]
     public string? Error { get; set; }
 }

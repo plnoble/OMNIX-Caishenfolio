@@ -24,7 +24,15 @@ from caishenfolio_core.data.models import (
     SymbolId,
     ValuationPoint,
 )
+from caishenfolio_core.market.em_fundamentals import (
+    fetch_hk as fetch_hk_fundamentals,
+    fetch_us as fetch_us_fundamentals,
+)
 from caishenfolio_core.market.fixture import SymbolHit
+from caishenfolio_core.market.valuation_series import (
+    describe_method as describe_valuation_method,
+    reconstruct_valuation,
+)
 from caishenfolio_core.market.network import (
     apply_requests_trust_env,
     call_with_direct_fallback,
@@ -58,6 +66,10 @@ class AkshareMarketDataProvider:
     def __init__(self) -> None:
         apply_requests_trust_env()
         self._ak = _try_import_akshare()
+        #: Optional wider bar channel, set by the composite. Reconstructed US/HK valuation needs
+        #: prices, and the source that has the fundamentals is not always the one that can
+        #: reach the prices.
+        self.bar_source: Any | None = None
 
     @property
     def ready(self) -> bool:
@@ -802,20 +814,21 @@ class AkshareMarketDataProvider:
             return ak  # type: ignore[return-value]
 
         parsed = SymbolId.try_parse(symbol)
-        if parsed is None or parsed.normalized().exchange not in {"SSE", "SZSE", "BSE"}:
+        if parsed is None:
             return ProviderResult.failure(
-                self.PROVIDER_CODE,
-                f"估值历史当前仅支持 A 股（收到 '{symbol}'）。",
-                warnings=("unsupported_symbol", "fail_closed"),
-            )
+                self.PROVIDER_CODE, f"无效标的 '{symbol}'。", warnings=("fail_closed",))
+
+        exchange = parsed.normalized().exchange
+        if exchange not in {"SSE", "SZSE", "BSE"}:
+            # No free source publishes a ready-made PE/PB series for US and HK, so those are
+            # computed from price and per-share fundamentals instead.
+            return self._reconstructed_valuation(parsed.normalized(), years)
 
         fn = getattr(ak, "stock_a_indicator_lg", None)
         if fn is None:
-            return ProviderResult.failure(
-                self.PROVIDER_CODE,
-                "当前 akshare 缺少估值指标接口 stock_a_indicator_lg。",
-                warnings=("unsupported_api", "fail_closed"),
-            )
+            # stock_a_indicator_lg was dropped from akshare, which silently took the A-share
+            # valuation percentile — the feature this whole page rests on — with it.
+            return self._baidu_valuation(parsed.normalized(), years)
 
         code = parsed.normalized().code
         try:
@@ -869,6 +882,137 @@ class AkshareMarketDataProvider:
             self.PROVIDER_CODE,
             points,
             warnings=("real_market_data", "not_for_investment_decisions"),
+        )
+
+    #: Baidu serves fixed windows rather than an arbitrary number of years.
+    _BAIDU_PERIODS = ((1, "近一年"), (3, "近三年"), (5, "近五年"), (10, "近十年"))
+
+    def _baidu_valuation(
+        self, parsed: SymbolId, years: int
+    ) -> ProviderResult[list[ValuationPoint]]:
+        """A-share PE/PB from Baidu, the replacement for the retired akshare endpoint.
+
+        PE and PB come from separate calls and are merged by date; a date present in only one of
+        them keeps that metric and leaves the other empty rather than dropping the day.
+        """
+        period = next(
+            (label for limit, label in self._BAIDU_PERIODS if years <= limit), "全部")
+
+        merged: dict[date, dict[str, float]] = {}
+        errors: list[str] = []
+        for indicator, field in (("市盈率(TTM)", "pe"), ("市净率", "pb")):
+            rows = self._baidu_series(parsed.code, indicator, period)
+            if rows is None:
+                errors.append(indicator)
+                continue
+            for day, value in rows:
+                merged.setdefault(day, {})[field] = value
+
+        if not merged:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"未取得估值历史：{parsed.value}（{'、'.join(errors) or '上游无数据'}）",
+                warnings=("empty_upstream", "fail_closed"),
+            )
+
+        points = [
+            ValuationPoint(as_of=day, pe=values.get("pe"), pb=values.get("pb"))
+            for day, values in sorted(merged.items())
+        ]
+
+        warnings = ["real_market_data", "not_for_investment_decisions", "valuation_source:baidu"]
+        if errors:
+            # Say which metric is missing rather than showing a page that looks complete.
+            warnings.append("valuation_partial:" + ",".join(errors))
+
+        return ProviderResult.success(self.PROVIDER_CODE, points, warnings=tuple(warnings))
+
+    def _baidu_series(
+        self, code: str, indicator: str, period: str
+    ) -> list[tuple[date, float]] | None:
+        fn = getattr(self._ak, "stock_zh_valuation_baidu", None)
+        if fn is None:
+            return None
+
+        try:
+            df = call_with_direct_fallback(
+                lambda: fn(symbol=code, indicator=indicator, period=period))
+        except Exception:  # noqa: BLE001
+            return None
+        if df is None or getattr(df, "empty", True):
+            return None
+
+        out: list[tuple[date, float]] = []
+        for _, row in df.iterrows():
+            day = _parse_day(row.get("date"))
+            value = _optional_float(row, "value")
+            # A zero or negative multiple is not a valuation; it corrupts the percentile.
+            if day is not None and value is not None and value > 0:
+                out.append((day, value))
+        return out or None
+
+    def _reconstructed_valuation(
+        self, parsed: SymbolId, years: int
+    ) -> ProviderResult[list[ValuationPoint]]:
+        """PE/PB for US and HK names, computed from prices and published per-share figures.
+
+        Marked as reconstructed in the warnings so no layer above can present it as a vendor
+        series — the method and its limits belong on screen next to the number.
+        """
+        if parsed.exchange == "HKEX":
+            fundamentals = fetch_hk_fundamentals(parsed.code)
+            market = "港股"
+        elif parsed.exchange in {"NASDAQ", "NYSE", "AMEX"}:
+            fundamentals = fetch_us_fundamentals(parsed.code)
+            market = "美股"
+        else:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"估值历史暂不支持 {parsed.exchange}（当前支持 A 股 / 港股 / 美股）。",
+                warnings=("unsupported_symbol", "fail_closed"),
+            )
+
+        if not fundamentals:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"未取得 {parsed.value} 的每股财务数据，无法推算估值历史。",
+                warnings=("empty_upstream", "fail_closed"),
+            )
+
+        end = date.today()
+        start = end - timedelta(days=int(years * 365.25))
+        # Prices may well come from a different source than the fundamentals — akshare's HK bar
+        # endpoint is commonly blocked where yfinance is not — so ask the whole chain when one
+        # has been wired in.
+        bar_source = self.bar_source or self
+        bars = bar_source.historical_bars(parsed.value, start, end)
+        if not bars.ok or not bars.data:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"未取得 {parsed.value} 的历史价格，无法推算估值历史。",
+                warnings=("empty_upstream", "fail_closed"),
+            )
+
+        points = reconstruct_valuation(bars.data, fundamentals)
+        if not points:
+            return ProviderResult.failure(
+                self.PROVIDER_CODE,
+                f"{parsed.value} 的价格区间早于最早一期财报，无法推算估值历史。",
+                warnings=("empty_window", "fail_closed"),
+            )
+
+        estimated = any(item.effective_date_estimated for item in fundamentals)
+        return ProviderResult.success(
+            self.PROVIDER_CODE,
+            points,
+            warnings=(
+                "real_market_data",
+                "not_for_investment_decisions",
+                "valuation_reconstructed",
+                f"valuation_market:{market}",
+                f"valuation_method:{describe_valuation_method(fundamentals)}",
+            )
+            + (("valuation_announcement_date_estimated",) if estimated else ()),
         )
 
     def financial_summary(self, symbol: str, periods: int = 5) -> ProviderResult[list[FinancialPeriod]]:
