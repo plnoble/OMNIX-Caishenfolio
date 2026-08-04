@@ -16,6 +16,13 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- Icon on the .exe itself: Explorer, the taskbar and Alt-Tab read it from here. -->
+    <ApplicationIcon>Assets\caishenfolio.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <!-- The window icon is loaded as a resource, so it must ship inside the assembly too. -->
+  <ItemGroup>
+    <Resource Include="Assets\caishenfolio.ico" />
+  </ItemGroup>
 
 </Project>

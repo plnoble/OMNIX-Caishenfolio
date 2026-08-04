@@ -14,7 +14,9 @@
     <!-- Harvest from a staged copy: WiX's Files element has no Exclude, and __pycache__ or a
          stale egg-info on a developer machine must not end up inside the MSI. -->
     <PythonSource>$(MSBuildProjectDirectory)\obj\$(Configuration)\PythonStage\</PythonSource>
-    <DefineConstants>DesktopPublishOutput=$(DesktopPublishOutput);PythonSource=$(PythonSource);ProductVersion=$(OmnixVersion)</DefineConstants>
+    <!-- One icon file for the exe, the shortcuts and the uninstall entry, so they cannot drift. -->
+    <ProductIcon>$(MSBuildProjectDirectory)\..\..\src\Caishenfolio.Desktop\Assets\caishenfolio.ico</ProductIcon>
+    <DefineConstants>DesktopPublishOutput=$(DesktopPublishOutput);PythonSource=$(PythonSource);ProductVersion=$(OmnixVersion);ProductIcon=$(ProductIcon)</DefineConstants>
     <PackageVersion>$(OmnixVersion)</PackageVersion>
     <!-- Chinese wizard to match the app's own language. -->
     <Cultures>zh-CN</Cultures>

@@ -4,6 +4,7 @@
         xmlns:local="clr-namespace:Caishenfolio.Desktop"
         xmlns:wealth="clr-namespace:Caishenfolio.Desktop.Wealth"
         Title="OMNIX-Caishenfolio"
+        Icon="Assets/caishenfolio.ico"
         Height="860"
         Width="1280"
         MinHeight="680"

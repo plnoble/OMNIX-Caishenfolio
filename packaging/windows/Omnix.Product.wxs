@@ -17,6 +17,11 @@
     <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 OMNIX-Caishenfolio，无法降级安装。" />
     <MediaTemplate EmbedCab="yes" />
 
+    <!-- The product icon, used by both shortcuts and by 控制面板/应用 (Add-Remove Programs).
+         Without ARPPRODUCTICON the uninstall entry falls back to a generic MSI package icon. -->
+    <Icon Id="CaishenfolioIcon" SourceFile="$(var.ProductIcon)" />
+    <Property Id="ARPPRODUCTICON" Value="CaishenfolioIcon" />
+
     <!-- Installer policy:
          - Ships the WPF desktop binaries only.
          - .NET 8 Windows Desktop runtime is verified/bootstrapped outside this MSI.
@@ -85,7 +90,8 @@
                 Name="OMNIX-Caishenfolio"
                 Description="个人理财工作台"
                 Target="[INSTALLFOLDER]Caishenfolio.Desktop.exe"
-                WorkingDirectory="INSTALLFOLDER" />
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="CaishenfolioIcon" />
       <RemoveFolder Id="RemoveApplicationProgramsFolder"
                     Directory="ApplicationProgramsFolder"
                     On="uninstall" />
@@ -104,7 +110,8 @@
                 Name="OMNIX-Caishenfolio"
                 Description="个人理财工作台"
                 Target="[INSTALLFOLDER]Caishenfolio.Desktop.exe"
-                WorkingDirectory="INSTALLFOLDER" />
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="CaishenfolioIcon" />
       <RegistryValue Root="HKCU"
                      Key="Software\OMNIX\Caishenfolio"
                      Name="DesktopShortcut"
