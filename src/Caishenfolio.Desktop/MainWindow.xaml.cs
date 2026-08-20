@@ -187,6 +187,14 @@ public partial class MainWindow : Window
         OpenReleaseButton.Visibility = string.IsNullOrEmpty(_latestReleaseUrl)
             ? Visibility.Collapsed
             : Visibility.Visible;
+
+        // The System page is where someone goes looking for updates, so the action belongs
+        // there and not only on a banner they may have dismissed or scrolled past.
+        _pendingUpdate = result;
+        InstallUpdateNowButton.Visibility = result.CanInstallInPlace
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
         _updatePreferences.RecordCheck(DateTimeOffset.UtcNow);
         return result;
     }
@@ -209,6 +217,20 @@ public partial class MainWindow : Window
         UpdateBanner.Visibility = Visibility.Visible;
     }
 
+    /// <summary>Mirrors update progress to both places it can be started from.</summary>
+    private void ReportUpdateProgress(string message)
+    {
+        UpdateBannerText.Text = message;
+        UpdateStatusText.Text = message;
+    }
+
+    private void SetUpdateActionsEnabled(bool enabled)
+    {
+        InstallUpdateButton.IsEnabled = enabled;
+        InstallUpdateNowButton.IsEnabled = enabled;
+        CheckUpdateButton.IsEnabled = enabled;
+    }
+
     /// <summary>
     /// Downloads, verifies and runs the installer, then closes the app.
     ///
@@ -222,15 +244,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        InstallUpdateButton.IsEnabled = false;
+        // Either entry point can start this — the banner or the System page — so both are
+        // disabled for the duration and both report, whichever one the user is looking at.
+        SetUpdateActionsEnabled(false);
         var original = UpdateBannerText.Text;
-        UpdateBannerText.Text = $"正在下载 v{update.LatestVersion}… 0%";
+        ReportUpdateProgress($"正在下载 v{update.LatestVersion}… 0%");
 
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
             var progress = new Progress<double>(fraction =>
-                UpdateBannerText.Text = $"正在下载 v{update.LatestVersion}… {fraction:P0}");
+                ReportUpdateProgress($"正在下载 v{update.LatestVersion}… {fraction:P0}"));
 
             var download = await new UpdateInstaller(http)
                 .DownloadAsync(update, progress)
@@ -240,8 +264,8 @@ public partial class MainWindow : Window
             {
                 // Verification failed and the file is already deleted; say why rather than
                 // offering to run it anyway.
-                UpdateBannerText.Text = download.Message;
-                InstallUpdateButton.IsEnabled = true;
+                ReportUpdateProgress(download.Message);
+                SetUpdateActionsEnabled(true);
                 return;
             }
 
@@ -256,7 +280,8 @@ public partial class MainWindow : Window
             if (confirm != MessageBoxResult.OK)
             {
                 UpdateBannerText.Text = original;
-                InstallUpdateButton.IsEnabled = true;
+                UpdateStatusText.Text = "已取消安装。";
+                SetUpdateActionsEnabled(true);
                 return;
             }
 
@@ -266,13 +291,13 @@ public partial class MainWindow : Window
                 return;
             }
 
-            UpdateBannerText.Text = "无法启动安装程序，请到发布页手动安装。";
-            InstallUpdateButton.IsEnabled = true;
+            ReportUpdateProgress("无法启动安装程序，请到发布页手动安装。");
+            SetUpdateActionsEnabled(true);
         }
         catch (Exception ex)
         {
-            UpdateBannerText.Text = $"更新失败：{ex.Message}";
-            InstallUpdateButton.IsEnabled = true;
+            ReportUpdateProgress($"更新失败：{ex.Message}");
+            SetUpdateActionsEnabled(true);
         }
     }
 

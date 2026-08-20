@@ -183,6 +183,10 @@ public sealed class UpdateChecker(IReleaseFeed feed)
 
         var comparison = currentParsed.CompareTo(latestVersion);
         var latestText = Format(latestVersion);
+        var assets = latest.Assets ?? [];
+        // Only promise an in-app update when the release actually carries an installer. Saying
+        // it unconditionally left the user reading "可直接在应用内更新" with nothing to click.
+        var installable = ReleaseAsset.FindInstaller(assets) is not null;
 
         return comparison switch
         {
@@ -193,8 +197,10 @@ public sealed class UpdateChecker(IReleaseFeed feed)
                 LatestVersion = latestText,
                 ReleaseUrl = latest.HtmlUrl,
                 Notes = latest.Body,
-                Assets = latest.Assets ?? [],
-                Message = $"有新版本 v{latestText}（当前 v{current}）。可直接在应用内更新，账本数据不受影响。",
+                Assets = assets,
+                Message = installable
+                    ? $"有新版本 v{latestText}（当前 v{current}）。点「立即更新」自动下载、校验并安装，账本数据不受影响。"
+                    : $"有新版本 v{latestText}（当前 v{current}），但这个版本没有附带安装包，请到发布页下载。",
             },
             > 0 => new UpdateCheckResult
             {

@@ -518,6 +518,11 @@
                             <WrapPanel Margin="0,0,0,8">
                                 <Button x:Name="CheckUpdateButton" Content="检查更新" Padding="12,6" Margin="0,0,8,8"
                                         Click="CheckUpdateButton_OnClick" />
+                                <!-- The banner is easy to miss, and this page is where someone
+                                     goes looking for updates; the action has to be here too. -->
+                                <Button x:Name="InstallUpdateNowButton" Content="立即更新" Padding="12,6" Margin="0,0,8,8"
+                                        Visibility="Collapsed" Click="InstallUpdateButton_OnClick"
+                                        Background="#1F6B4A" BorderBrush="#2F9A6A" />
                                 <Button x:Name="OpenReleaseButton" Content="打开发布页" Padding="12,6" Margin="0,0,8,8"
                                         Visibility="Collapsed" Click="OpenReleaseButton_OnClick" />
                             </WrapPanel>

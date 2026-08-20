@@ -22,7 +22,68 @@ public class UpdateCheckerTests
         Assert.True(result.HasUpdate);
         Assert.Equal("0.11.0", result.LatestVersion);
         Assert.Equal("https://example.invalid/releases/v0.11.0", result.ReleaseUrl);
+        // No installer attached to this release, so the message must not offer an in-app update.
+        Assert.False(result.CanInstallInPlace);
+        Assert.Contains("发布页", result.Message);
+    }
+
+    private static ReleaseInfo WithInstaller(string tag) => new(
+        tag,
+        "https://example.invalid/releases/" + tag,
+        null,
+        [
+            new ReleaseAsset("OMNIX-Caishenfolio.msi", "https://example.invalid/app.msi", 1600000),
+            new ReleaseAsset("checksums.sha256", "https://example.invalid/sums", 90),
+        ]);
+
+    [Fact]
+    public async Task AReleaseWithAnInstallerOffersAnInAppUpdate()
+    {
+        var checker = new UpdateChecker(new StubFeed(WithInstaller("v0.13.2")));
+
+        var result = await checker.CheckAsync("0.13.1");
+
+        Assert.True(result.CanInstallInPlace);
+        Assert.Contains("立即更新", result.Message);
         Assert.Contains("账本数据不受影响", result.Message);
+    }
+
+    [Fact]
+    public async Task AReleaseWithoutAnInstallerSendsTheUserToTheReleasePage()
+    {
+        // Promising an in-app update here left the user reading "可直接在应用内更新" with no
+        // button to press, because the UI only shows one when an installer actually exists.
+        var checker = new UpdateChecker(
+            new StubFeed(new ReleaseInfo("v0.13.2", "https://example.invalid", null, [])));
+
+        var result = await checker.CheckAsync("0.13.1");
+
+        Assert.False(result.CanInstallInPlace);
+        Assert.Contains("发布页", result.Message);
+        Assert.DoesNotContain("立即更新", result.Message);
+    }
+
+    [Fact]
+    public async Task AssetsAreCarriedThroughForTheInstaller()
+    {
+        var checker = new UpdateChecker(new StubFeed(WithInstaller("v0.13.2")));
+
+        var result = await checker.CheckAsync("0.13.1");
+
+        Assert.Equal(2, result.Assets.Count);
+        Assert.NotNull(ReleaseAsset.FindInstaller(result.Assets));
+        Assert.NotNull(ReleaseAsset.FindChecksums(result.Assets));
+    }
+
+    [Fact]
+    public async Task AnUpToDateCheckNeverOffersToInstall()
+    {
+        var checker = new UpdateChecker(new StubFeed(WithInstaller("v0.13.2")));
+
+        var result = await checker.CheckAsync("0.13.2");
+
+        Assert.Equal(UpdateStatus.UpToDate, result.Status);
+        Assert.False(result.CanInstallInPlace);
     }
 
     [Fact]
