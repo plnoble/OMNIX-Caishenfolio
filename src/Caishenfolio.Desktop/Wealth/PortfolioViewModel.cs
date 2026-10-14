@@ -20,6 +20,7 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
     private string _costText = "—";
     private string _cashText = "—";
     private string _xirrText = "—";
+    private string _twrText = "—";
     private string _asOfText = "—";
     private string _drawdownText = "—";
     private string _riskSummaryText = "";
@@ -43,6 +44,12 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
     public string BaseCurrency => _workspace.BaseCurrency;
     public WorkspaceSnapshot? Snapshot { get; private set; }
 
+    /// <summary>
+    /// The facade behind this view model, for pages that need store-level data the snapshot does
+    /// not carry (FX rate history for the contribution split, thresholds for simulations).
+    /// </summary>
+    public PortfolioWorkspace Workspace => _workspace;
+
     /// <summary>Attaches (or clears) the price feed once the Analytics Core comes up.</summary>
     public void UsePricingSource(IMarketPricingSource? source) => _workspace.PricingSource = source;
 
@@ -56,11 +63,20 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
     public string CostText { get => _costText; private set => Set(ref _costText, value); }
     public string CashText { get => _cashText; private set => Set(ref _cashText, value); }
     public string XirrText { get => _xirrText; private set => Set(ref _xirrText, value); }
+    public string TwrText { get => _twrText; private set => Set(ref _twrText, value); }
     public string AsOfText { get => _asOfText; private set => Set(ref _asOfText, value); }
     public string DrawdownText { get => _drawdownText; private set => Set(ref _drawdownText, value); }
     public string RiskSummaryText { get => _riskSummaryText; private set => Set(ref _riskSummaryText, value); }
     public bool IsComplete { get => _isComplete; private set => Set(ref _isComplete, value); }
     public bool IsBusy { get => _isBusy; private set => Set(ref _isBusy, value); }
+
+    /// <summary>True when part of the market value is missing — risk ratios are partial.</summary>
+    public bool RiskCoverageIncomplete =>
+        Snapshot is { } snap && snap.Risk.Coverage.State != CoverageState.Complete;
+
+    /// <summary>True when nothing priced at all — every ratio is unknown.</summary>
+    public bool RiskCoverageIsUnknown =>
+        Snapshot is { } snap && snap.Risk.Coverage.IsUnknown;
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
@@ -99,7 +115,12 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
     public int CommitImport(CsvImportPreview preview, bool skipInvalidRows) =>
         _workspace.CommitImport(preview, skipInvalidRows);
 
-    public bool RemoveTransaction(string id) => _workspace.Store.RemoveTransaction(id);
+    /// <summary>
+    /// Marks a recorded transaction as cancelled: a reversal row is written and both rows stay.
+    /// There is deliberately no remove — the ledger is append-only and corrects by pairing.
+    /// </summary>
+    public LedgerTransaction ReverseTransaction(string id, string reason = "") =>
+        _workspace.ReverseTransaction(id, reason);
 
     public string ExportPositionsCsv() =>
         Snapshot is null ? "" : _workspace.ExportPositionsCsv(Snapshot);
@@ -131,9 +152,10 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
 
         Transactions.Clear();
         var accountNames = snapshot.Accounts.ToDictionary(a => a.Id, a => a.Name, StringComparer.Ordinal);
+        var reversedIds = _workspace.Store.ReversedTransactionIds();
         foreach (var txn in snapshot.Transactions.OrderByDescending(t => t.TradeDate).ThenByDescending(t => t.RecordedAt))
         {
-            Transactions.Add(TransactionRow.From(txn, accountNames));
+            Transactions.Add(TransactionRow.From(txn, accountNames, reversedIds));
         }
 
         Accounts.Clear();
@@ -184,6 +206,9 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
         XirrText = snapshot.Xirr is { } xirr
             ? (xirr * 100).ToString("+0.00;-0.00", CultureInfo.InvariantCulture) + "%"
             : "—";
+        TwrText = snapshot.Twr is { } twr
+            ? (twr * 100).ToString("+0.00;-0.00", CultureInfo.InvariantCulture) + "%"
+            : "—";
         AsOfText = snapshot.AsOf.ToString("yyyy-MM-dd");
         IsComplete = valuation.IsComplete;
 
@@ -191,7 +216,9 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
             ? "账本还是空的。先在「账本」页新建账户，然后手工录入或导入 CSV。"
             : valuation.IsComplete
                 ? $"已估值 {Positions.Count} 个持仓，{snapshot.Accounts.Count} 个账户。"
-                : $"估值不完整：{snapshot.Warnings.Count} 项未计入合计（见下方提示）。";
+                : snapshot.Risk.Coverage.IsUnknown
+                    ? "估值不可用：所有持仓都未定价，集中度与收益均为未知（不会按 0 计算）。"
+                    : $"估值不完整：{snapshot.Warnings.Count} 项未计入合计，风险结论仅基于已定价部分（见下方提示）。";
     }
 
     private void AddSlices(string dimension, IReadOnlyList<AllocationSlice> slices)
@@ -297,9 +324,15 @@ public sealed record TransactionRow(
     string Currency,
     string Fee,
     string Amount,
-    string Note)
+    string Note,
+    bool IsReversal,
+    bool IsCancelled,
+    bool CanReverse)
 {
-    public static TransactionRow From(LedgerTransaction txn, IReadOnlyDictionary<string, string> accountNames) =>
+    public static TransactionRow From(
+        LedgerTransaction txn,
+        IReadOnlyDictionary<string, string> accountNames,
+        IReadOnlySet<string> reversedIds) =>
         new(
             txn.Id,
             txn.TradeDate.ToString("yyyy-MM-dd"),
@@ -310,8 +343,16 @@ public sealed record TransactionRow(
             txn.Price == 0m ? "" : PortfolioViewModel.Format(txn.Price),
             txn.Currency,
             txn.Fee + txn.Tax == 0m ? "" : PortfolioViewModel.Format(txn.Fee + txn.Tax),
-            txn.CashAmount == 0m ? "" : PortfolioViewModel.Format(txn.CashAmount),
-            txn.Note);
+            AmountLabel(txn),
+            txn.Note,
+            txn.IsReversal,
+            reversedIds.Contains(txn.Id),
+            !txn.IsReversal && !reversedIds.Contains(txn.Id));
+
+    /// <summary>An exchange shows both receipt amounts — either side alone is half the fact.</summary>
+    private static string AmountLabel(LedgerTransaction txn) => txn.Kind == TransactionKind.FxExchange
+        ? $"{PortfolioViewModel.Format(txn.CashAmount)} {txn.Currency} → {PortfolioViewModel.Format(txn.CounterAmount)} {txn.CounterCurrency}"
+        : txn.CashAmount == 0m ? "" : PortfolioViewModel.Format(txn.CashAmount);
 
     private static string KindLabel(TransactionKind kind) => kind switch
     {

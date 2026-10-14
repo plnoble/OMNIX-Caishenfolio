@@ -26,6 +26,9 @@ public static partial class SensitiveValueRedactor
 
         var redacted = CredentialAssignmentRegex().Replace(input, "$1=[REDACTED]");
         redacted = BearerRegex().Replace(redacted, "Bearer [REDACTED]");
+        // Notifications must not carry local filesystem paths either (plan §8) — they end up
+        // in chat logs and emails that outlive the machine's privacy boundary.
+        redacted = LocalPathRegex().Replace(redacted, "[路径已隐去]");
         return redacted;
     }
 
@@ -68,4 +71,8 @@ public static partial class SensitiveValueRedactor
 
     [GeneratedRegex(@"(?i)\bBearer\s+[A-Za-z0-9\-._~+/]+=*", RegexOptions.Compiled)]
     private static partial Regex BearerRegex();
+
+    /// <summary>A Windows drive-letter path, cut before the next separator-free boundary.</summary>
+    [GeneratedRegex(@"[A-Za-z]:\\[^\s；;，,）)\]}】>]+", RegexOptions.Compiled)]
+    private static partial Regex LocalPathRegex();
 }

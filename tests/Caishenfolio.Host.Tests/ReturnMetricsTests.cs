@@ -137,14 +137,96 @@ public class ReturnMetricsTests
         var d1 = new DateOnly(2026, 4, 1);
         var d2 = new DateOnly(2026, 7, 1);
 
+        // Snapshot convention (P1-03): d1's 11 000 already contains the 1 000 deposited that
+        // day, so the first sub-period returned 0% and the second 11 000 → 13 200 is +20%.
         ValuationPoint[] points = [new(d0, 10_000m), new(d1, 11_000m), new(d2, 13_200m)];
         DatedAmount[] flows = [new(d1, 1_000m)];
 
         var twr = ReturnMetrics.TimeWeighted(points, flows);
 
-        // Two 10% sub-periods link to 21%, regardless of the contribution in the middle.
         Assert.NotNull(twr);
-        Assert.Equal(0.21, twr!.Value, 10);
+        Assert.Equal(0.20, twr!.Value, 10);
+    }
+
+    [Fact]
+    public void ASameDayDepositOnTheSecondPointIsNotAppreciation()
+    {
+        // The review's minimal counterexample (P1-03): 100 000 then a 50 000 deposit on the
+        // second snapshot day → 150 000. The true return is 0%, not +50%.
+        var d0 = new DateOnly(2026, 1, 1);
+        var d1 = new DateOnly(2026, 6, 1);
+
+        ValuationPoint[] points = [new(d0, 100_000m), new(d1, 150_000m)];
+        DatedAmount[] flows = [new(d1, 50_000m)];
+
+        var twr = ReturnMetrics.TimeWeighted(points, flows);
+
+        Assert.NotNull(twr);
+        Assert.Equal(0.0, twr!.Value, 10);
+    }
+
+    [Fact]
+    public void ASameDayDepositOnTheFirstPointIsAlreadyInsideTheBase()
+    {
+        // Flows dated on the first point predate the measured window's base value.
+        var d0 = new DateOnly(2026, 1, 1);
+        var d1 = new DateOnly(2026, 6, 1);
+
+        ValuationPoint[] points = [new(d0, 100_000m), new(d1, 110_000m)];
+        DatedAmount[] flows = [new(d0, 50_000m)];
+
+        var twr = ReturnMetrics.TimeWeighted(points, flows);
+
+        Assert.NotNull(twr);
+        Assert.Equal(0.10, twr!.Value, 10);
+    }
+
+    [Fact]
+    public void ASameDayWithdrawalOnTheSecondPointIsNotALoss()
+    {
+        var d0 = new DateOnly(2026, 1, 1);
+        var d1 = new DateOnly(2026, 6, 1);
+
+        // 100 000, withdraw 50 000 on the snapshot day → 50 000 remains: 0%, not −50%.
+        ValuationPoint[] points = [new(d0, 100_000m), new(d1, 50_000m)];
+        DatedAmount[] flows = [new(d1, -50_000m)];
+
+        var twr = ReturnMetrics.TimeWeighted(points, flows);
+
+        Assert.NotNull(twr);
+        Assert.Equal(0.0, twr!.Value, 10);
+    }
+
+    [Fact]
+    public void InterimFlowsStillAdjustTheCostBase()
+    {
+        var d0 = new DateOnly(2026, 1, 1);
+        var mid = new DateOnly(2026, 4, 1);
+        var d1 = new DateOnly(2026, 7, 1);
+
+        // One sub-period only: base 100 000 + 10 000 deposited mid-window, end 132 000 → +20%.
+        ValuationPoint[] points = [new(d0, 100_000m), new(d1, 132_000m)];
+        DatedAmount[] flows = [new(mid, 10_000m)];
+
+        var twr = ReturnMetrics.TimeWeighted(points, flows);
+        Assert.NotNull(twr);
+        Assert.Equal(0.20, twr!.Value, 10);
+
+        // With a mid-window valuation point ON the flow date, the flow sits in that point's
+        // value (snapshot convention): leg 1 = 0%, leg 2 = 110 000 → 132 000 = +20%.
+        // A mid-point on a flow-free date is what lets two +10% legs link to 21%.
+        ValuationPoint[] threePoints = [new(d0, 100_000m), new(mid, 110_000m), new(d1, 132_000m)];
+        var linked = ReturnMetrics.TimeWeighted(threePoints, flows);
+        Assert.NotNull(linked);
+        Assert.Equal(0.20, linked!.Value, 10);
+
+        var flowFreeMid = new DateOnly(2026, 4, 2);
+        DatedAmount[] afterMidFlows = [new(flowFreeMid, 10_000m)];
+        ValuationPoint[] cleanLegs = [new(d0, 100_000m), new(mid, 110_000m), new(d1, 132_000m)];
+        // 100k→110k (+10%), then 110k+10k=120k →132k (+10%): links to 21%.
+        var twr21 = ReturnMetrics.TimeWeighted(cleanLegs, afterMidFlows);
+        Assert.NotNull(twr21);
+        Assert.Equal(0.21, twr21!.Value, 10);
     }
 
     [Fact]

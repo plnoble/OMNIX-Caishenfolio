@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -47,7 +48,7 @@ class GridLedgerStore:
 
     def _init(self) -> None:
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 conn.executescript(
                     """
                     CREATE TABLE IF NOT EXISTS plans (
@@ -92,7 +93,7 @@ class GridLedgerStore:
         pid = f"grid_{uuid.uuid4().hex[:12]}"
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 conn.execute(
                     """
                     INSERT INTO plans(id, symbol, name, lower, upper, grid_count, order_cash, note, created_at, active)
@@ -115,7 +116,7 @@ class GridLedgerStore:
 
     def list_plans(self, active_only: bool = True) -> list[dict[str, object]]:
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 if active_only:
                     rows = conn.execute(
                         "SELECT * FROM plans WHERE active=1 ORDER BY created_at DESC"
@@ -126,13 +127,13 @@ class GridLedgerStore:
 
     def get_plan(self, plan_id: str) -> dict[str, object] | None:
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 row = conn.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchone()
         return None if row is None else self._plan_row(row)
 
     def deactivate_plan(self, plan_id: str) -> dict[str, object]:
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 conn.execute("UPDATE plans SET active=0 WHERE id=?", (plan_id,))
                 conn.commit()
         p = self.get_plan(plan_id)
@@ -161,7 +162,7 @@ class GridLedgerStore:
         fid = f"fill_{uuid.uuid4().hex[:12]}"
         when = ts or datetime.now(timezone.utc).isoformat()
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 conn.execute(
                     """
                     INSERT INTO fills(id, plan_id, side, price, qty, fee, grid_level, ts, note)
@@ -174,7 +175,7 @@ class GridLedgerStore:
 
     def list_fills(self, plan_id: str) -> list[dict[str, object]]:
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 rows = conn.execute(
                     "SELECT * FROM fills WHERE plan_id=? ORDER BY ts ASC",
                     (plan_id,),

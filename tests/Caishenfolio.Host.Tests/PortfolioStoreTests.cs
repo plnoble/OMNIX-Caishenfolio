@@ -185,15 +185,18 @@ public class PortfolioStoreTests : IDisposable
     }
 
     [Fact]
-    public void RemovesASingleTransaction()
+    public void CorrectionReplacesPhysicalRemovalOfATransaction()
     {
         using var store = NewStore();
         var txn = store.AddTransaction(
             LedgerTransaction.Deposit("acct", new DateOnly(2026, 1, 2), 100m, "CNY"));
 
-        Assert.True(store.RemoveTransaction(txn.Id));
-        Assert.False(store.RemoveTransaction(txn.Id));
-        Assert.Empty(store.ListTransactions());
+        // The ledger has no remove: a correction writes a mirror row and replay skips the pair.
+        store.AddTransaction(LedgerTransaction.Reversal(txn, "金额录错"));
+
+        Assert.Equal(2, store.ListTransactions().Count);
+        Assert.Empty(store.LoadState().CashBalances);
+        Assert.Single(store.ReversedTransactionIds(), txn.Id);
     }
 
     [Fact]

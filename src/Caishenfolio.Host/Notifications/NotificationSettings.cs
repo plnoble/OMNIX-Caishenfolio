@@ -50,6 +50,23 @@ public sealed record NotificationSettings
     /// <summary>When false, only deadlines and warnings go out — no routine price alerts.</summary>
     public bool IncludeRoutineAlerts { get; init; } = true;
 
+    /// <summary>
+    /// Layer 2 of the background check (plan §8): also fetch prices and run the
+    /// concentration/data-quality rules with the app closed. This starts the analytics
+    /// core, which is slower and can fail — a failure there never blocks the
+    /// deadline layer, and is reported instead of hidden.
+    /// </summary>
+    public bool BackgroundExtendedChecks { get; init; }
+
+    /// <summary>
+    /// How long after a delivered notification the same event stays quiet. Hours; a daily
+    /// scheduled task wants roughly 20 so each run says each thing at most once a day.
+    /// </summary>
+    public int AlertCooldownHours { get; init; } = 20;
+
+    /// <summary>User-defined FX watch rules (plan §7 N2.4). No secrets, but they live in the encrypted blob anyway.</summary>
+    public IReadOnlyList<FxAlertRule> FxAlertRules { get; init; } = [];
+
     public static NotificationSettings Default => new();
 
     /// <summary>True when at least one channel is switched on and fully configured.</summary>

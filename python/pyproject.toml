@@ -16,6 +16,14 @@ market = [
   "tushare>=1.4.0",
   # Free A-share history with no API key; the second source for CN daily bars.
   "baostock>=0.8.8",
+  # Pinyin search over the A-share name index (plan N1); fixture tests use the seed table.
+  "pypinyin>=0.50",
+  # Remediation WP6: pin the requests chain to versions that satisfy requests' own
+  # compatibility ranges — an unpinned urllib3/chardet drift raised
+  # RequestsDependencyWarning in the field and the fix belongs in constraints, not filters.
+  "requests>=2.32",
+  "urllib3>=2.2,<3",
+  "charset-normalizer>=3.3,<4",
 ]
 # Optional high-performance export (P4)
 parquet = ["pyarrow>=14.0"]

@@ -123,7 +123,7 @@ public static class PortfolioReportExporter
             {
                 txn.TradeDate.ToString("yyyy-MM-dd"),
                 accountName,
-                KindLabel(txn.Kind),
+                KindLabel(txn),
                 txn.Symbol,
                 name,
                 txn.Quantity == 0m ? "" : Number(txn.Quantity),
@@ -132,6 +132,13 @@ public static class PortfolioReportExporter
                 txn.Fee == 0m ? "" : Number(txn.Fee),
                 txn.Tax == 0m ? "" : Number(txn.Tax),
                 txn.CashAmount == 0m ? "" : Number(txn.CashAmount),
+                txn.CounterCurrency,
+                txn.CounterAmount == 0m ? "" : Number(txn.CounterAmount),
+                string.IsNullOrEmpty(txn.CounterAccountId) || txn.CounterAccountId == txn.AccountId
+                    ? ""
+                    : accounts is not null && accounts.TryGetValue(txn.CounterAccountId, out var counter)
+                        ? counter.Name
+                        : txn.CounterAccountId,
                 txn.Note,
             });
         }
@@ -147,6 +154,10 @@ public static class PortfolioReportExporter
             rows.Add(new[] { dimension, slice.Label, Number(slice.Value.Amount), Percent(slice.Weight) });
         }
     }
+
+    /// <summary>Reversal rows are marked so a re-import refuses them instead of resurrecting the cancelled fact.</summary>
+    private static string KindLabel(LedgerTransaction txn) =>
+        (txn.IsReversal ? "冲正·" : "") + KindLabel(txn.Kind);
 
     private static string KindLabel(TransactionKind kind) => kind switch
     {

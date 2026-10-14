@@ -18,6 +18,14 @@ public enum AlertKind
     Unpriced,
     /// <summary>An IPO needs an action by a date — paying for an allotment, or a listing arriving.</summary>
     IpoDeadline,
+    /// <summary>An FX rate entered a band the user chose (N2.4). Facts only, no timing advice.</summary>
+    FxBand,
+    /// <summary>The held-currency path's gross advantage reached a threshold the user chose (N2.4).</summary>
+    FxAdvantage,
+    /// <summary>The net arrival of converting the held currency reached a target amount (N2.4).</summary>
+    FxNetArrival,
+    /// <summary>The held-currency path crossed its breakeven against fresh money (N2.4).</summary>
+    FxBreakeven,
 }
 
 public enum AlertSeverity
@@ -140,7 +148,14 @@ public static class PortfolioAlertEvaluator
         {
             foreach (var position in priced.Values)
             {
-                var age = today.DayNumber - position.Quote!.AsOf.DayNumber;
+                // Trading-day age in the instrument's own market calendar (weekends plus the
+                // fixed-date holidays MarketCalendar models; movable holidays are not — the
+                // message says "约" so the approximation stays visible). When the caller pins
+                // an asOf date (tests, backfills) it wins; otherwise each market's own clock
+                // decides "today", so a US close is not called stale by Beijing's calendar.
+                var zone = MarketCalendar.ZoneOf(position.Position.Symbol);
+                var marketToday = asOf ?? MarketClock.TodayOf(zone);
+                var age = MarketCalendar.TradingDaysBetween(position.Quote!.AsOf, marketToday, zone);
                 if (age <= stalePriceDays)
                 {
                     continue;
@@ -152,7 +167,8 @@ public static class PortfolioAlertEvaluator
                     Severity = AlertSeverity.Warning,
                     Symbol = position.Position.Symbol,
                     Title = "价格偏旧",
-                    Message = $"{position.Position.Symbol} 最新价来自 {position.Quote.AsOf:yyyy-MM-dd}（{age} 天前），估值可能滞后。",
+                    Message = $"{position.Position.Symbol} 最新价来自 {position.Quote.AsOf:yyyy-MM-dd}" +
+                              $"（约 {age} 个交易日未更新，按该市场日历），估值可能滞后。",
                 });
             }
         }

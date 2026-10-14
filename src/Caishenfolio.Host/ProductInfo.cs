@@ -9,10 +9,10 @@ namespace Caishenfolio.Host;
 /// </summary>
 public static class ProductInfo
 {
-    public const string Brand = "OMNIX";
-    public const string Name = "OMNIX-Caishenfolio";
+    public const string Brand = "Caishenfolio";
+    public const string Name = "Caishenfolio";
     public const string ResearchDisclaimer = "研究/模拟结论，非投资建议。";
-    public const string ScopeSummary = "OMNIX · 个人多市场多资产理财工作台（资产账本 + 研究）；不含券商自动挂单。";
+    public const string ScopeSummary = "Caishenfolio · 个人多市场多资产理财工作台（资产账本 + 研究）；不含券商自动挂单。";
 
     /// <summary>Repository the desktop checks for newer releases.</summary>
     public const string RepositoryUrl = "https://github.com/plnoble/OMNIX-Caishenfolio";

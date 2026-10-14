@@ -116,6 +116,15 @@
                     机器人地址和邮箱密码属于凭据，保存时会用 Windows 账户加密后再写入账本文件。
                 </TextBlock>
 
+                <!-- Capability statement: what the background run does and, just as important,
+                     what it does not do. Kept in code-behind because it changes with the
+                     extended-check switch below. -->
+                <Border Background="#121A24" CornerRadius="8" Padding="10,8" Margin="0,0,0,10"
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+                    <TextBlock x:Name="BackgroundScopeText" TextWrapping="Wrap" FontSize="12"
+                               Foreground="{StaticResource BrushFgSecondary}" />
+                </Border>
+
                 <CheckBox x:Name="NotifyEnabledBox" Content="启用通知推送" Margin="0,0,0,8" />
 
                 <!-- Configured channels. Several can be on at once; each is tried independently. -->
@@ -157,16 +166,127 @@
                     <Button Grid.Column="3" Content="添加" Padding="14,4" Click="AddChannelButton_OnClick" />
                 </Grid>
 
-                <CheckBox x:Name="NotifyRoutineBox" Content="同时推送价格与集中度提醒（关掉则只推有时限的事项）"
-                          Margin="0,0,0,10" />
+                <CheckBox x:Name="NotifyRoutineBox"
+                          Content="软件打开时也推送价格与集中度提醒（关掉则只推有时限的事项）"
+                          Margin="0,0,0,6" />
+                <TextBlock Text="勾选与否不影响后台检查的内容。"
+                           TextWrapping="Wrap" FontSize="11"
+                           Foreground="{StaticResource BrushFgMuted}" Margin="0,0,0,10" />
+
+                <!-- Layer 2: networked checks behind the deadline layer (plan §8). -->
+                <CheckBox x:Name="BackgroundExtendedBox"
+                           Content="后台扩展检查：软件关闭时也查价格与集中度"
+                           Margin="0,0,0,4"
+                           Checked="BackgroundExtendedBox_OnChanged" Unchecked="BackgroundExtendedBox_OnChanged" />
+                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource BrushFgMuted}"
+                           Margin="0,0,0,6"
+                           Text="会临时启动分析核心（较慢，首次可能要装依赖）。规则、阈值与打开软件时完全一致；启动或取价失败只记录原因，打新时限提醒不受影响。" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                    <TextBlock Text="同一提醒的冷却时间" VerticalAlignment="Center" Margin="0,0,6,0"
+                               FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                    <TextBox x:Name="AlertCooldownBox" Width="52" Padding="4" Margin="0,0,6,0"
+                             ToolTip="冷却期内同一事项不重复推送；条件消失后再次触发（重新进入区间）会立即重新推送。默认 20 小时 ≈ 每日任务每天最多提醒一次。" />
+                    <TextBlock Text="小时" VerticalAlignment="Center" FontSize="11"
+                               Foreground="{StaticResource BrushFgMuted}" />
+                </StackPanel>
+
+                <!-- N2.4: user-defined FX watch rules. Facts-only wording by construction. -->
+                <TextBlock Text="换汇提醒规则" FontWeight="SemiBold" Margin="0,0,0,4"
+                           Foreground="{StaticResource BrushFgSecondary}" />
+                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource BrushFgMuted}"
+                           Margin="0,0,0,6"
+                           Text="提醒只陈述「你设定的事实被触发」（如汇率进入区间、已持有路径优势达到阈值），不会说现在是换汇的好时机。优势为毛额口径，未计点差与手续费；需要账本里有该外币的持仓成本（先在「账本」页录入换汇）。" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <ComboBox x:Name="FxRuleKindCombo" Width="110" Margin="0,0,8,0" SelectedIndex="0"
+                              SelectionChanged="FxRuleKind_OnSelectionChanged">
+                        <ComboBoxItem Tag="RateBand" Content="汇率进入区间" />
+                        <ComboBoxItem Tag="HeldAdvantageAbove" Content="路径优势达阈值" />
+                        <ComboBoxItem Tag="NetArrivalAbove" Content="净到账达目标" />
+                        <ComboBoxItem Tag="BreakevenCrossed" Content="越过盈亏平衡" />
+                    </ComboBox>
+                    <!-- RateBand inputs -->
+                    <StackPanel x:Name="FxRuleBandPanel" Orientation="Horizontal">
+                        <TextBox x:Name="FxRulePairBox" Width="86" Padding="4" Margin="0,0,6,0"
+                                 ToolTip="货币对，如 USD/CNY（1 USD = x CNY）" />
+                        <TextBox x:Name="FxRuleLowerBox" Width="70" Padding="4" Margin="0,0,6,0"
+                                 ToolTip="区间下限（留空 = 无下限）" />
+                        <TextBlock Text="~" VerticalAlignment="Center" Margin="0,0,6,0"
+                                   Foreground="{StaticResource BrushFgMuted}" />
+                        <TextBox x:Name="FxRuleUpperBox" Width="70" Padding="4" Margin="0,0,6,0"
+                                 ToolTip="区间上限（留空 = 无上限）" />
+                    </StackPanel>
+                    <!-- Path-rule inputs: one base/held/target triple shared by all three kinds -->
+                    <StackPanel x:Name="FxRulePathPanel" Orientation="Horizontal" Visibility="Collapsed">
+                        <ComboBox x:Name="FxRuleBaseCombo" Width="60" Margin="0,0,4,0" SelectedIndex="0">
+                            <ComboBoxItem Content="CNY" /><ComboBoxItem Content="HKD" />
+                            <ComboBoxItem Content="USD" /><ComboBoxItem Content="JPY" />
+                        </ComboBox>
+                        <TextBlock Text="持" VerticalAlignment="Center" Margin="0,0,4,0"
+                                   Foreground="{StaticResource BrushFgMuted}" FontSize="11" />
+                        <ComboBox x:Name="FxRuleHeldCombo" Width="60" Margin="0,0,4,0" SelectedIndex="2">
+                            <ComboBoxItem Content="CNY" /><ComboBoxItem Content="HKD" />
+                            <ComboBoxItem Content="USD" /><ComboBoxItem Content="JPY" />
+                        </ComboBox>
+                        <TextBlock Text="换" VerticalAlignment="Center" Margin="0,0,4,0"
+                                   Foreground="{StaticResource BrushFgMuted}" FontSize="11" />
+                        <ComboBox x:Name="FxRuleTargetCombo" Width="60" Margin="0,0,6,0" SelectedIndex="2">
+                            <ComboBoxItem Content="CNY" /><ComboBoxItem Content="HKD" />
+                            <ComboBoxItem Content="USD" /><ComboBoxItem Content="JPY" />
+                        </ComboBox>
+                        <StackPanel x:Name="FxRuleThresholdPanel" Orientation="Horizontal">
+                            <TextBlock x:Name="FxRuleThresholdLabel" Text="优势≥" VerticalAlignment="Center" Margin="0,0,4,0"
+                                       Foreground="{StaticResource BrushFgMuted}" FontSize="11" />
+                            <TextBox x:Name="FxRuleThresholdBox" Width="52" Padding="4" Margin="0,0,3,0"
+                                     ToolTip="阈值（百分比），如 3 表示 +3%" />
+                            <TextBlock x:Name="FxRuleThresholdUnit" Text="%" VerticalAlignment="Center"
+                                       Foreground="{StaticResource BrushFgMuted}" FontSize="11" />
+                        </StackPanel>
+                        <!-- P1-06: net-arrival rules need the cost model they are evaluated against;
+                             without it the rule is reported as not evaluated, never priced as free. -->
+                        <StackPanel x:Name="FxRuleCostPanel" Orientation="Horizontal" Visibility="Collapsed">
+                            <TextBlock Text="点差" VerticalAlignment="Center" Margin="0,0,4,0"
+                                       Foreground="{StaticResource BrushFgMuted}" FontSize="11" />
+                            <TextBox x:Name="FxRuleSpreadBox" Width="44" Padding="4" Margin="0,0,3,0"
+                                     ToolTip="比例成本（点差等，百分比）。必须填写：填 0 表示确认无点差；留空=未知，规则不评估" />
+                            <TextBlock Text="%" VerticalAlignment="Center" Margin="0,0,8,0"
+                                       Foreground="{StaticResource BrushFgMuted}" FontSize="11" />
+                            <TextBlock Text="固定费" VerticalAlignment="Center" Margin="0,0,4,0"
+                                       Foreground="{StaticResource BrushFgMuted}" FontSize="11" />
+                            <TextBox x:Name="FxRuleFixedFeeBox" Width="56" Padding="4" Margin="0,0,3,0"
+                                     ToolTip="每次兑换的固定手续费（目标货币金额）。必须填写：填 0 表示确认无固定费；留空=未知" />
+                        </StackPanel>
+                    </StackPanel>
+                    <Button Content="添加规则" Padding="10,3" Margin="8,0,0,0" Click="AddFxRuleButton_OnClick" />
+                </StackPanel>
+                <DataGrid x:Name="FxRuleGrid" Style="{StaticResource WealthGrid}" MaxHeight="110"
+                          Margin="0,0,0,6" IsReadOnly="False" AutoGenerateColumns="False"
+                          CanUserAddRows="False">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="类型" Binding="{Binding KindLabel}" Width="110" IsReadOnly="True"
+                                            ElementStyle="{StaticResource WealthCellText}" />
+                        <DataGridTextColumn Header="内容" Binding="{Binding Describe}" Width="*" IsReadOnly="True"
+                                            ElementStyle="{StaticResource WealthCellText}" />
+                        <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled}" Width="46" />
+                    </DataGrid.Columns>
+                </DataGrid>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                    <Button Content="删除选中规则" Padding="10,3" Click="RemoveFxRuleButton_OnClick" />
+                    <TextBlock Text="「启用」列可直接勾选/取消勾选；删除后点「保存」生效。"
+                               VerticalAlignment="Center" Margin="10,0,0,0" FontSize="11"
+                               Foreground="{StaticResource BrushFgMuted}" />
+                </StackPanel>
 
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                     <Button Content="发送测试通知" Padding="12,4" Margin="0,0,8,0"
                             Click="TestNotifyButton_OnClick" />
                     <Button x:Name="ScheduleButton" Content="注册每日后台检查" Padding="12,4" Margin="0,0,8,0"
-                            Click="ScheduleButton_OnClick" />
+                            Click="ScheduleButton_OnClick"
+                            ToolTip="注册 Windows 计划任务，每天在设定时间运行一次后台检查（范围见上方说明）" />
                     <Button Content="取消后台检查" Padding="12,4" Click="UnscheduleButton_OnClick" />
                 </StackPanel>
+                <!-- Last run: the proof the background check actually fired, and what it found. -->
+                <TextBlock x:Name="BackgroundCheckText" TextWrapping="Wrap" FontSize="11"
+                           Foreground="{StaticResource BrushFgMuted}" Margin="0,0,0,4" />
                 <TextBlock x:Name="NotifyStatusText" TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}"
                            FontSize="12" Margin="0,0,0,18" />
 

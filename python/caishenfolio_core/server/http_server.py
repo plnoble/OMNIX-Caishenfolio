@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlparse
@@ -66,6 +67,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
                 "product": health.get("product"),
                 "phase": health.get("phase"),
                 "market_provider": health.get("market_provider"),
+                "market_provider_env": os.environ.get("CAISHENFOLIO_MARKET_PROVIDER") or "",
                 "market_provider_ready": health.get("market_provider_ready"),
                 "market_data_synthetic": health.get("market_data_synthetic"),
             },
@@ -84,7 +86,12 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Caishenfolio Analytics Core (stdlib HTTP)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--provider", default="")
     args = parser.parse_args(argv)
+    # A test harness can pin the provider on the command line. Process environment
+    # blocks have proven unreliable across the desktop -> launcher -> interpreter chain.
+    if args.provider:
+        os.environ["CAISHENFOLIO_MARKET_PROVIDER"] = args.provider
     serve(args.host, args.port)
 
 

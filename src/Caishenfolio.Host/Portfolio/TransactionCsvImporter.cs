@@ -45,7 +45,8 @@ public static class TransactionCsvImporter
     /// <summary>Header the export template writes and the importer always understands.</summary>
     public static IReadOnlyList<string> TemplateHeader { get; } =
     [
-        "日期", "账户", "类型", "标的", "名称", "数量", "价格", "货币", "手续费", "税费", "金额", "备注",
+        "日期", "账户", "类型", "标的", "名称", "数量", "价格", "货币", "手续费", "税费", "金额",
+        "对方货币", "对方金额", "对方账户", "备注",
     ];
 
     private static readonly Dictionary<string, string> ColumnAliases = new(StringComparer.OrdinalIgnoreCase)
@@ -67,6 +68,8 @@ public static class TransactionCsvImporter
         ["备注"] = "note", ["摘要"] = "note", ["note"] = "note", ["memo"] = "note", ["remark"] = "note",
         ["对方货币"] = "counter_currency", ["counter_currency"] = "counter_currency",
         ["对方金额"] = "counter_amount", ["counter_amount"] = "counter_amount",
+        ["对方账户"] = "counter_account", ["counter_account"] = "counter_account",
+        ["到账账户"] = "counter_account", ["目标账户"] = "counter_account",
     };
 
     private static readonly Dictionary<string, TransactionKind> KindAliases = new(StringComparer.OrdinalIgnoreCase)
@@ -104,12 +107,13 @@ public static class TransactionCsvImporter
     public static string BuildTemplate() => DelimitedText.Write(
     [
         TemplateHeader,
-        ["2026-01-05", "华泰证券", "买入", "SSE:600000", "浦发银行", "1000", "10.05", "CNY", "5", "0", "", "首建仓"],
-        ["2026-02-09", "华泰证券", "卖出", "SSE:600000", "浦发银行", "400", "12.00", "CNY", "4", "6", "", ""],
-        ["2026-03-10", "华泰证券", "分红", "SSE:600000", "浦发银行", "", "", "CNY", "", "20", "320", "每10股3元"],
-        ["2026-01-02", "华泰证券", "入金", "", "", "", "", "CNY", "", "", "50000", "银证转入"],
-        ["2026-01-05", "天天基金", "买入", "FUND:110022", "易方达消费行业", "1000.25", "3.5012", "CNY", "1.5", "", "", "定投"],
-        ["2026-01-06", "盈透证券", "期初持仓", "NASDAQ:AAPL", "Apple", "10", "180", "USD", "", "", "", "建账前持有"],
+        ["2026-01-05", "华泰证券", "买入", "SSE:600000", "浦发银行", "1000", "10.05", "CNY", "5", "0", "", "", "", "首建仓"],
+        ["2026-02-09", "华泰证券", "卖出", "SSE:600000", "浦发银行", "400", "12.00", "CNY", "4", "6", "", "", "", ""],
+        ["2026-03-10", "华泰证券", "分红", "SSE:600000", "浦发银行", "", "", "CNY", "", "20", "320", "", "", "每10股3元"],
+        ["2026-01-02", "华泰证券", "入金", "", "", "", "", "CNY", "", "", "50000", "", "", "银证转入"],
+        ["2026-01-05", "天天基金", "买入", "FUND:110022", "易方达消费行业", "1000.25", "3.5012", "CNY", "1.5", "", "", "", "", "定投"],
+        ["2026-01-06", "盈透证券", "期初持仓", "NASDAQ:AAPL", "Apple", "10", "180", "USD", "", "", "", "", "", "建账前持有"],
+        ["2026-01-20", "盈透证券", "换汇", "", "", "", "", "CNY", "2", "", "1000", "JPY", "155000", "", "按回单两边金额填写"],
     ]);
 
     /// <summary>
@@ -145,8 +149,22 @@ public static class TransactionCsvImporter
             };
         }
 
-        var existingIds = store?.ListTransactions().Select(t => t.Id).ToHashSet(StringComparer.Ordinal)
-                          ?? new HashSet<string>(StringComparer.Ordinal);
+        var stored = store?.ListTransactions() ?? [];
+        var existingIds = stored.Select(t => t.Id).ToHashSet(StringComparer.Ordinal);
+
+        // Idempotency across the export→import round trip: a manually recorded row carries a
+        // GUID id, but an imported rebuild of it derives a content-hash id. Matching on content,
+        // not just ids, is what makes re-importing an export a no-op instead of a doubled book.
+        var existingHashes = stored.Select(DeterministicId).ToHashSet(StringComparer.Ordinal);
+
+        // Rows already reversed are ineligible for import — the pair reads as never happened,
+        // but the rows still exist. Match by content hash: the exported row's derived id is not
+        // the stored row's GUID id.
+        var reversedIds = store?.ReversedTransactionIds() ?? new HashSet<string>(StringComparer.Ordinal);
+        var reversedHashes = stored.Where(t => reversedIds.Contains(t.Id))
+            .Select(DeterministicId)
+            .ToHashSet(StringComparer.Ordinal);
+
         var seenInFile = new HashSet<string>(StringComparer.Ordinal);
         var parsed = new List<CsvImportRow>();
 
@@ -163,7 +181,16 @@ public static class TransactionCsvImporter
             {
                 var transaction = BuildTransaction(
                     cells, columns, defaultAccountId, defaultCurrency, accountNameToId, batchId);
-                var duplicate = !existingIds.Add(transaction.Id) || !seenInFile.Add(transaction.Id);
+                if (reversedHashes.Contains(transaction.Id))
+                {
+                    throw new LedgerException(
+                        "该行对应一条已冲正的流水。冲正不能通过导入恢复；" +
+                        "如需恢复，请在「账本」页手工录入一条同内容的新流水。");
+                }
+
+                var duplicate = !existingIds.Add(transaction.Id)
+                                || !existingHashes.Add(transaction.Id)
+                                || !seenInFile.Add(transaction.Id);
                 parsed.Add(new CsvImportRow
                 {
                     LineNumber = lineNumber,
@@ -231,8 +258,16 @@ public static class TransactionCsvImporter
         IReadOnlyDictionary<string, string>? accountNameToId,
         string batchId)
     {
-        var kindText = Cell(cells, columns, "kind");
-        if (!KindAliases.TryGetValue(kindText.Trim(), out var kind))
+        var kindText = Cell(cells, columns, "kind").Trim();
+        if (kindText.StartsWith("冲正", StringComparison.Ordinal))
+        {
+            // A reversal is a pairing inside this ledger, not a standalone fact; importing the
+            // mirror row alone would resurrect the cancelled transaction.
+            throw new LedgerException(
+                "冲正记录不能通过 CSV 导入重建——冲正必须在「账本」页对原流水执行。请删除该行或在导入时跳过。");
+        }
+
+        if (!KindAliases.TryGetValue(kindText, out var kind))
         {
             throw new LedgerException($"无法识别的交易类型「{kindText}」。");
         }
@@ -282,7 +317,8 @@ public static class TransactionCsvImporter
                 LedgerTransaction.FxExchange(
                     accountId, date, RequireAmount(amount, kind), currency,
                     ParseDecimal(Cell(cells, columns, "counter_amount")),
-                    Cell(cells, columns, "counter_currency"), fee, note),
+                    Cell(cells, columns, "counter_currency"), fee, note,
+                    ResolveAccount(Cell(cells, columns, "counter_account"), accountId, accountNameToId)),
             _ => throw new LedgerException($"暂不支持导入 {kind} 类型。"),
         };
 
@@ -371,16 +407,25 @@ public static class TransactionCsvImporter
     {
         var seed = string.Join('|',
             txn.AccountId, txn.Kind, txn.TradeDate.ToString("yyyy-MM-dd"), txn.Symbol,
-            txn.Quantity.ToString(CultureInfo.InvariantCulture),
-            txn.Price.ToString(CultureInfo.InvariantCulture),
+            txn.CounterAccountId,
+            Norm(txn.Quantity),
+            Norm(txn.Price),
             txn.Currency,
-            txn.Fee.ToString(CultureInfo.InvariantCulture),
-            txn.Tax.ToString(CultureInfo.InvariantCulture),
-            txn.CashAmount.ToString(CultureInfo.InvariantCulture),
+            Norm(txn.Fee),
+            Norm(txn.Tax),
+            Norm(txn.CashAmount),
             txn.CounterCurrency,
-            txn.CounterAmount.ToString(CultureInfo.InvariantCulture),
+            Norm(txn.CounterAmount),
             txn.Note);
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(seed));
         return "txn_csv_" + Convert.ToHexString(hash)[..24].ToLowerInvariant();
     }
+
+    /// <summary>
+    /// Scale-insensitive decimal form: 1000, 1000.0 and 1000.00 are the same money. Rows re-read
+    /// from SQLite carry the writer's scale, while CSV rebuilds carry the parser's — the hash
+    /// must not see that difference.
+    /// </summary>
+    private static string Norm(decimal value) =>
+        value.ToString("0.############################", CultureInfo.InvariantCulture);
 }

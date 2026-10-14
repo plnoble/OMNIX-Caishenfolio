@@ -21,6 +21,13 @@ from caishenfolio_core.market.symbol_index import fuzzy_search_a_share
 from caishenfolio_core.research.backtest import cost_model_from_dict, ma_cross_backtest
 from caishenfolio_core.research.evaluation import evaluate, out_of_sample_report
 from caishenfolio_core.research.fx_carry import build_panel as build_carry_panel
+from caishenfolio_core.research.evidence_card import assemble_card
+from caishenfolio_core.research.fx_paths import (
+    HeldPosition,
+    MarketQuote,
+    PathCost,
+    compare_paths,
+)
 from caishenfolio_core.research.interpretation import read_metric
 from caishenfolio_core.research.valuation import position_from_history
 from caishenfolio_core.research.compare import compare_normalized_closes
@@ -77,6 +84,10 @@ class AnalyticsApp:
             "disclaimer": RESEARCH_DISCLAIMER,
             "live_trading_enabled": False,
             "grid_research_enabled": True,
+            # Lets a caller prove this response belongs to the process it just started,
+            # instead of an already-listening core on the same port.
+            "process_id": os.getpid(),
+            "market_provider_env": os.environ.get("CAISHENFOLIO_MARKET_PROVIDER") or "",
         }
         payload.update(status)
         if self.cache is not None:
@@ -376,6 +387,100 @@ class AnalyticsApp:
             lambda: self.market.fx_rate(base_currency, quote_currency),
             lambda quote: quote.to_dict(),
         )
+
+    def research_fx_paths(self, request: dict[str, Any]) -> dict[str, object]:
+        """Which pot of money converts into more target currency (plan §7 N2).
+
+        Quotes come from the market provider; the held position and its historical cost
+        come from the caller (the C# ledger owns that truth). A required quote that cannot
+        be fetched fails the whole comparison closed — no path is estimated from a guess.
+        """
+        base_currency = str(request.get("base_currency", "")).strip().upper()
+        target_currency = str(request.get("target_currency", "")).strip().upper()
+        if not base_currency or not target_currency:
+            return {"ok": False, "error": "必须提供 base_currency 与 target_currency。"}
+        if base_currency == target_currency:
+            return {"ok": False, "error": "基准货币与目标货币不能相同。"}
+
+        try:
+            base_amount = request.get("base_amount")
+            if base_amount is None or float(base_amount) <= 0:
+                return {"ok": False, "error": "base_amount 必须大于 0。"}
+
+            held_raw = request.get("held") or None
+            held: HeldPosition | None = None
+            if isinstance(held_raw, dict) and held_raw.get("amount") and held_raw.get("cost_in_base"):
+                held = HeldPosition(
+                    currency=str(held_raw.get("currency", "")),
+                    amount=str(held_raw["amount"]),
+                    cost_in_base=str(held_raw["cost_in_base"]),
+                )
+
+            costs_raw = request.get("costs")
+            costs: dict[str, PathCost] = {}
+            if isinstance(costs_raw, dict):
+                for key, value in costs_raw.items():
+                    if isinstance(value, dict):
+                        costs[str(key)] = PathCost(
+                            **{
+                                field: value[field]
+                                for field in ("spread_pct", "fixed_fee", "fee_currency", "fee_pct", "slippage_pct")
+                                if value.get(field) is not None
+                            }
+                        )
+
+            split_raw = request.get("split_fraction")
+            split_fraction = str(split_raw) if split_raw is not None else None
+        except (ValueError, KeyError) as exc:
+            return {"ok": False, "error": f"输入无法解析：{exc}"}
+
+        # Fetch the required quotes: TARGET/BASE, and TARGET/HELD when a held position is
+        # being compared. The provider convention is fx_rate(base, quote) = quote per base.
+        quotes: dict[str, MarketQuote] = {}
+        fetch_failures: list[str] = []
+        needed = [base_currency] + ([held.currency] if held else [])
+        for other in needed:
+            result = self.market.fx_rate(target_currency, other)
+            if result.ok and result.data is not None:
+                quote = result.data
+                quotes[f"{target_currency}/{other}"] = MarketQuote(
+                    base_currency=quote.base_currency,
+                    quote_currency=quote.quote_currency,
+                    rate=quote.rate,
+                    provider=quote.provider,
+                    as_of=quote.as_of.isoformat(),
+                    provenance=dict(quote.provenance),
+                )
+            else:
+                fetch_failures.append(f"{target_currency}/{other}：{result.error or '取汇率失败'}")
+
+        if fetch_failures:
+            return {
+                "ok": False,
+                "error": "缺少关键报价，比较已停止（fail-closed）：" + "；".join(fetch_failures),
+                "warnings": ["fail_closed"],
+            }
+
+        try:
+            panel = compare_paths(
+                base_amount=str(base_amount),
+                base_currency=base_currency,
+                target_currency=target_currency,
+                quotes=quotes,
+                held=held,
+                costs=costs,
+                split_fraction=split_fraction,
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        payload = panel.to_dict()
+        payload["ok"] = True
+        payload["notes"] = [
+            "行情为数据源参考价，未必是银行可成交报价；实际到手以银行回单为准。",
+            "相对优势只比较「历史实际成本」与「当前参考价」，不预测未来汇率。",
+        ]
+        return payload
 
     def _capability_payload(
         self,
@@ -741,6 +846,94 @@ class AnalyticsApp:
         }
 
 
+    def research_evidence_card(
+        self,
+        symbol: str,
+        request: dict[str, Any],
+    ) -> dict[str, object]:
+        """The N4 evidence card (plan §9): traceable facts, a status about the evidence,
+        never a trade instruction. Mapped to Task / Artifact / Audit like every research
+        output; each channel failure degrades its own section instead of the whole card."""
+        provider = getattr(self.market, "PROVIDER_CODE", "unknown")
+        years = int(request.get("years") or 2)
+        start = str(request.get("start") or (date.today() - timedelta(days=365 * years)).isoformat())
+        end = str(request.get("end") or date.today().isoformat())
+        adjustment = str(request.get("adjustment") or Adjustment.RAW.value)
+
+        task = self.tasks.create_task(
+            TaskKind.RESEARCH,
+            f"证据卡 {symbol}".strip(),
+            metadata={
+                "symbol": symbol,
+                "start": start,
+                "end": end,
+                "adjustment": adjustment,
+                "side": str(request.get("side") or "buy"),
+                "command": "evidence_card",
+                "provider": str(provider),
+            },
+        )
+        self.tasks.update_status(task.id, TaskStatus.RUNNING, "正在汇集行情、估值与财务证据…")
+
+        # Each channel degrades independently: a failed source shows up in the card's
+        # data-quality section as a missing item, never as fabricated content.
+        bars = self.market_bars(symbol, start, end, adjustment)
+        quote: dict[str, Any] | None = None
+        valuation: dict[str, Any] | None = None
+        financials: dict[str, Any] | None = None
+        try:
+            quote = self.market_quote(symbol, cross_check=True)
+        except Exception:  # noqa: BLE001
+            quote = None
+        try:
+            valuation = self.market_valuation(symbol)
+        except Exception:  # noqa: BLE001
+            valuation = None
+        try:
+            financials = self.market_financials(symbol)
+        except Exception:  # noqa: BLE001
+            financials = None
+
+        card = assemble_card(
+            symbol,
+            bars,
+            quote,
+            valuation,
+            financials,
+            adjustment,
+            portfolio=request.get("portfolio") or None,
+            as_of=end,
+            side="sell" if str(request.get("side") or "").lower() == "sell" else "buy",
+            price_tolerance_pct=float(request.get("price_tolerance_pct") or 2.0),
+        )
+        payload = card.to_dict()
+
+        artifact = self.tasks.add_artifact(
+            task.id,
+            kind="evidence_card",
+            title=f"{symbol} 证据卡",
+            uri_or_payload=json.dumps(payload, ensure_ascii=False),
+            content_type="application/json",
+        )
+        done = self.tasks.update_status(
+            task.id,
+            TaskStatus.SUCCEEDED,
+            f"结论状态：{payload['conclusion']['status']}；"
+            f"正面 {len(payload['evidence_for'])} 条 / 反面 {len(payload['evidence_against'])} 条 / "
+            f"未知 {len(payload['unknowns'])} 条",
+        )
+        audits = self.tasks.list_audit(task.id)
+        return {
+            "ok": True,
+            "task": done.to_dict(),
+            "artifact": artifact.to_dict(),
+            "card": payload,
+            "audit": [item.to_dict() for item in audits],
+            "disclaimer": payload["disclaimer"],
+            "error": None,
+        }
+
+
 def _tagged_warning(warnings: Any, prefix: str) -> str:
     """Pulls a ``prefix:payload`` warning back out as plain text for the UI."""
     for warning in warnings or ():
@@ -861,6 +1054,19 @@ def dispatch(app: AnalyticsApp, method: str, path: str, query: str = "", body: d
         if not symbol or not start or not end:
             return 400, {"error": "必须提供 symbol、start、end。"}
         result = app.research_symbol_snapshot(symbol, start, end, adjustment)
+        return (200 if result.get("ok") else 422), result
+    if method == "POST" and normalized == "/research/fx-paths":
+        if not isinstance(body, dict):
+            return 400, {"error": "请求体必须是 JSON 对象。"}
+        if not body.get("base_currency") or not body.get("target_currency") or body.get("base_amount") is None:
+            return 400, {"error": "必须提供 base_currency、target_currency、base_amount。"}
+        result = app.research_fx_paths(body)
+        return (200 if result.get("ok") else 422), result
+    if method == "POST" and normalized == "/research/evidence-card":
+        symbol = str(body.get("symbol", "")).strip()
+        if not symbol:
+            return 400, {"error": "必须提供 symbol。"}
+        result = app.research_evidence_card(symbol, body)
         return (200 if result.get("ok") else 422), result
     if method == "POST" and normalized == "/research/backtest-ma":
         symbol = str(body.get("symbol", "")).strip()

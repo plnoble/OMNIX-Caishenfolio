@@ -71,11 +71,17 @@
                     BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="12">
                 <StackPanel>
                     <TextBlock Text="记一笔" Style="{StaticResource SectionTitle}" />
+                    <TextBlock x:Name="EntryGuideText" TextWrapping="Wrap" Margin="0,0,0,8" FontSize="12"
+                               Foreground="{StaticResource BrushFgSecondary}"
+                               Text="银行存钱选「入金」，只填金额和币种。买股票才填代码、数量和价格。换汇选「换汇」，填写换出和换入两边金额。" />
                     <WrapPanel>
-                        <TextBlock Text="日期" VerticalAlignment="Center" Margin="0,0,4,6"
-                                   Foreground="{StaticResource BrushFgMuted}" />
-                        <TextBox x:Name="EntryDate" Width="92" Margin="0,0,8,6" />
-                        <ComboBox x:Name="EntryKind" Width="92" Margin="0,0,8,6" SelectedIndex="0"
+                        <StackPanel Width="116" Margin="0,0,8,6">
+                            <TextBlock Text="日期" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                            <TextBox x:Name="EntryDate" />
+                        </StackPanel>
+                        <StackPanel Width="116" Margin="0,0,8,6">
+                            <TextBlock Text="类型" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                        <ComboBox x:Name="EntryKind" SelectedIndex="0"
                                   SelectionChanged="EntryKind_OnSelectionChanged">
                             <ComboBoxItem Tag="Buy" Content="买入" IsSelected="True" />
                             <ComboBoxItem Tag="Sell" Content="卖出" />
@@ -85,23 +91,80 @@
                             <ComboBoxItem Tag="Withdraw" Content="出金" />
                             <ComboBoxItem Tag="OpeningPosition" Content="期初持仓" />
                             <ComboBoxItem Tag="OpeningCash" Content="期初现金" />
+                            <ComboBoxItem Tag="FxExchange" Content="换汇" />
                         </ComboBox>
-                        <TextBox x:Name="EntrySymbol" Width="110" Margin="0,0,8,6" ToolTip="标的，如 SSE:600000 / TSE:7203 / FUND:110022" />
-                        <TextBox x:Name="EntryName" Width="100" Margin="0,0,8,6" ToolTip="名称（可留空）" />
-                        <TextBox x:Name="EntryQuantity" Width="80" Margin="0,0,8,6" ToolTip="数量 / 份额" />
-                        <TextBox x:Name="EntryPrice" Width="80" Margin="0,0,8,6" ToolTip="价格 / 净值" />
-                        <TextBox x:Name="EntryAmount" Width="90" Margin="0,0,8,6" ToolTip="金额（分红/利息/出入金用）" />
-                        <ComboBox x:Name="EntryCurrency" Width="70" Margin="0,0,8,6" SelectedIndex="0">
+                        </StackPanel>
+                        <StackPanel x:Name="EntrySymbolField" Width="116" Margin="0,0,8,6">
+                            <TextBlock Text="代码或名称" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                            <TextBox x:Name="EntrySymbol" TextChanged="EntrySymbol_OnTextChanged"
+                                     ToolTip="股票、基金才填写。银行存取款不需要代码。" />
+                        </StackPanel>
+                        <StackPanel x:Name="EntryNameField" Width="116" Margin="0,0,8,6">
+                            <TextBlock Text="名称" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                            <TextBox x:Name="EntryName" ToolTip="可留空" />
+                        </StackPanel>
+                        <StackPanel x:Name="EntryQuantityField" Width="116" Margin="0,0,8,6">
+                            <TextBlock Text="数量" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                            <TextBox x:Name="EntryQuantity" ToolTip="股票股数或基金份额" />
+                        </StackPanel>
+                        <StackPanel x:Name="EntryPriceField" Width="116" Margin="0,0,8,6">
+                            <TextBlock Text="价格" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                            <TextBox x:Name="EntryPrice" ToolTip="每股价格或基金净值" />
+                        </StackPanel>
+                        <StackPanel x:Name="EntryAmountField" Width="116" Margin="0,0,8,6">
+                            <TextBlock Text="金额" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                            <TextBox x:Name="EntryAmount" TextChanged="FxField_OnChanged"
+                                     ToolTip="银行存取款填写这里。买入股票时可留空，由数量乘价格计算。" />
+                        </StackPanel>
+                        <StackPanel x:Name="EntryCounterAmountField" Width="116" Margin="0,0,8,6">
+                            <TextBlock Text="换入金额" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                            <TextBox x:Name="EntryCounterAmount" TextChanged="FxField_OnChanged" IsEnabled="False"
+                                 ToolTip="换汇：回单上的实际到账金额（换入币种）。不要用汇率反推——两边金额按回单如实填写。" />
+                        </StackPanel>
+                        <StackPanel x:Name="EntryCounterAccountField" Width="140" Margin="0,0,8,6">
+                            <TextBlock Text="换入账户" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                        <ComboBox x:Name="EntryCounterAccount" IsEnabled="False"
+                                  ToolTip="换汇：到账账户。默认同一账户；跨账户时选到账账户（如银行换美元入券商）" />
+                        </StackPanel>
+                        <StackPanel x:Name="EntryCounterCurrencyField" Width="116" Margin="0,0,8,6">
+                            <TextBlock Text="换入币种" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                        <ComboBox x:Name="EntryCounterCurrency" SelectedIndex="1"
+                                  SelectionChanged="FxField_OnChanged" IsEnabled="False"
+                                  ToolTip="换汇：换入的货币">
+                            <ComboBoxItem Content="CNY" />
+                            <ComboBoxItem Content="HKD" IsSelected="True" />
+                            <ComboBoxItem Content="USD" />
+                            <ComboBoxItem Content="JPY" />
+                        </ComboBox>
+                        </StackPanel>
+                        <StackPanel Width="116" Margin="0,0,8,6">
+                            <TextBlock x:Name="EntryCurrencyLabel" Text="币种" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                        <ComboBox x:Name="EntryCurrency" SelectedIndex="0"
+                                  SelectionChanged="FxField_OnChanged">
                             <ComboBoxItem Content="CNY" IsSelected="True" />
                             <ComboBoxItem Content="HKD" />
                             <ComboBoxItem Content="USD" />
                             <ComboBoxItem Content="JPY" />
                         </ComboBox>
-                        <TextBox x:Name="EntryFee" Width="70" Margin="0,0,8,6" ToolTip="手续费" />
-                        <TextBox x:Name="EntryTax" Width="70" Margin="0,0,8,6" ToolTip="税费" />
-                        <TextBox x:Name="EntryNote" Width="120" Margin="0,0,8,6" ToolTip="备注" />
+                        </StackPanel>
+                        <StackPanel Width="116" Margin="0,0,8,6">
+                            <TextBlock Text="手续费" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                            <TextBox x:Name="EntryFee" ToolTip="没有就留空" />
+                        </StackPanel>
+                        <StackPanel Width="116" Margin="0,0,8,6">
+                            <TextBlock Text="税费" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                            <TextBox x:Name="EntryTax" ToolTip="没有就留空" />
+                        </StackPanel>
+                        <StackPanel Width="140" Margin="0,0,8,6">
+                            <TextBlock Text="备注" FontSize="11" Foreground="{StaticResource BrushFgMuted}" />
+                            <TextBox x:Name="EntryNote" ToolTip="可留空" />
+                        </StackPanel>
                         <Button Content="记账" Padding="14,4" Margin="0,0,0,6" Click="RecordButton_OnClick" />
                     </WrapPanel>
+                    <TextBlock x:Name="EntrySymbolHint" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,6"
+                               Foreground="{StaticResource BrushFgSecondary}" Text="" />
+                    <TextBlock x:Name="FxRateHint" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,6"
+                               Foreground="{StaticResource BrushAccent}" Text="" Visibility="Collapsed" />
 
                     <Separator Margin="0,6" Background="{StaticResource BrushBorder}" />
 
@@ -129,9 +192,12 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <DockPanel Grid.Row="0">
+                    <Button DockPanel.Dock="Left" Content="撤销这笔" Padding="10,3" Margin="0,0,8,8"
+                            Click="ReverseTransactionButton_OnClick"
+                            ToolTip="保留原流水，新增一条反向冲正记录。现金、持仓与收益会回到记账前，历史不可抵赖。" />
+                    <TextBlock DockPanel.Dock="Left" Text="记错了选中该行，点「撤销这笔」。原记录保留，同时新增一笔相反记录。" VerticalAlignment="Center"
+                               Foreground="{StaticResource BrushFgMuted}" FontSize="11" Margin="0,0,0,8" />
                     <TextBlock DockPanel.Dock="Left" Text="交易流水" Style="{StaticResource SectionTitle}" />
-                    <Button DockPanel.Dock="Right" Content="删除选中" Padding="10,3" HorizontalAlignment="Right"
-                            Margin="0,0,0,8" Click="DeleteTransactionButton_OnClick" />
                 </DockPanel>
                 <DataGrid Grid.Row="1" x:Name="TransactionsGrid" Style="{StaticResource WealthGrid}" SelectionMode="Single">
                     <DataGrid.Columns>
@@ -155,6 +221,30 @@
                                             ElementStyle="{StaticResource WealthCellText}" />
                         <DataGridTextColumn Header="备注" Binding="{Binding Note}" Width="*"
                                             ElementStyle="{StaticResource WealthCellText}" />
+                        <DataGridTemplateColumn Header="状态" Width="70" IsReadOnly="True">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock VerticalAlignment="Center" Margin="6,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Text" Value="已入账" />
+                                                <Setter Property="Foreground" Value="{StaticResource BrushFgMuted}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsReversal}" Value="True">
+                                                        <Setter Property="Text" Value="冲正" />
+                                                        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsCancelled}" Value="True">
+                                                        <Setter Property="Text" Value="已冲正" />
+                                                        <Setter Property="Foreground" Value="{StaticResource BrushDanger}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                     </DataGrid.Columns>
                 </DataGrid>
             </Grid>

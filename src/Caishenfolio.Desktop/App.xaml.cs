@@ -1,7 +1,9 @@
 using System.IO;
 using System.Windows;
+using Caishenfolio.Host.MarketData;
 using Caishenfolio.Host.Notifications;
 using Caishenfolio.Host.Portfolio;
+using Caishenfolio.Host.Python;
 
 namespace Caishenfolio.Desktop;
 
@@ -41,10 +43,27 @@ public partial class App : Application
             var store = PortfolioStore.UnderStateRoot(stateRoot);
             var settings = new NotificationSettingsStore(store).Load();
 
+            // Layer 2 runs only when the user switched it on. Its failures are reported as
+            // limitations inside the result, never as an exception past the deadline layer.
+            Func<System.Threading.CancellationToken, Task<IReadOnlyList<PortfolioAlert>>>? extended = null;
+            if (settings.BackgroundExtendedChecks)
+            {
+                extended = ct => BackgroundExtendedCheck.RunAsync(
+                    store,
+                    FindCoreRoot(),
+                    stateRoot,
+                    new MarketCredentialsStore(stateRoot),
+                    fxRules: settings.FxAlertRules,
+                    cancellationToken: ct);
+            }
+
+            var stateStore = new AlertNotificationStateStore(
+                Path.Combine(stateRoot, "alert-state.json"));
+
             // Blocking rather than async void: the process must not exit while the HTTP posts
             // are still in flight.
             var result = HeadlessNotifier
-                .RunAsync(store, settings)
+                .RunAsync(store, settings, extendedCheck: extended, stateStore: stateStore)
                 .GetAwaiter()
                 .GetResult();
 
@@ -56,6 +75,22 @@ public partial class App : Application
             // the successful runs use, where the user can actually find it.
             TryLogFailure(ex);
         }
+    }
+
+    /// <summary>Walks up from the exe to find the repo's <c>python/</c> directory.</summary>
+    private static string? FindCoreRoot()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
+             directory is not null;
+             directory = directory.Parent)
+        {
+            if (Directory.Exists(Path.Combine(directory.FullName, "python")))
+            {
+                return directory.FullName;
+            }
+        }
+
+        return null;
     }
 
     private static void TryLogFailure(Exception ex)

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Caishenfolio.Desktop"
         xmlns:wealth="clr-namespace:Caishenfolio.Desktop.Wealth"
-        Title="OMNIX-Caishenfolio"
+        Title="Caishenfolio"
         Icon="Assets/caishenfolio.ico"
         Height="860"
         Width="1280"
@@ -79,13 +79,19 @@
         <Border Grid.Column="0" Background="{StaticResource BrushBgNav}" BorderBrush="{StaticResource BrushBorder}" BorderThickness="0,0,1,0">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Top" Margin="0,12,0,8">
-                    <TextBlock x:Name="NavBrand" Text="OMNIX" FontWeight="Bold" FontSize="14"
+                    <TextBlock x:Name="NavBrand" Text="Caishenfolio" FontWeight="Bold" FontSize="13"
                                Foreground="{StaticResource BrushAccent}" HorizontalAlignment="Center" Margin="0,0,0,4" />
                     <TextBlock x:Name="VersionBadge" Text="v" FontSize="11"
                                Foreground="{StaticResource BrushFgMuted}"
                                HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="4,0" />
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,10">
+                    <Button x:Name="NavModeToggle" Style="{StaticResource NavBtn}" Click="NavModeToggle_OnClick"
+                            ToolTip="小白模式以任务和解释为主；专业模式显示全部研究页面">
+                        <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
+                            <Run x:Name="NavModeToggleLabel" Text="专业模式" FontSize="12"/><LineBreak/><Run Text="🔁" FontSize="14"/>
+                        </TextBlock>
+                    </Button>
                     <Button x:Name="NavSystem" Style="{StaticResource NavBtn}" Click="NavSystem_OnClick"
                             ToolTip="系统：核心 / 数据源 / 导出">
                         <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
@@ -95,6 +101,13 @@
                 </StackPanel>
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
+                    <TextBlock Style="{StaticResource NavGroup}" Text="开始" />
+                    <Button x:Name="NavHome" Style="{StaticResource NavBtnActive}" Click="NavHome_OnClick"
+                            ToolTip="今天要做什么：资产状态 / 待办 / 模拟入口">
+                        <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
+                            <Run Text="首页" FontSize="13"/><LineBreak/><Run Text="🏠" FontSize="14"/>
+                        </TextBlock>
+                    </Button>
                     <TextBlock Style="{StaticResource NavGroup}" Text="我的资产" />
                     <Button x:Name="NavOverview" Style="{StaticResource NavBtnActive}" Click="NavOverview_OnClick"
                             ToolTip="总资产 / 收益 / 资产配置">
@@ -134,8 +147,20 @@
                             <Run Text="汇率" FontSize="13"/><LineBreak/><Run Text="💱" FontSize="14"/>
                         </TextBlock>
                     </Button>
+                    <Button x:Name="NavRiskLab" Style="{StaticResource NavBtn}" Click="NavRiskLab_OnClick"
+                            ToolTip="风险与模拟：盈亏拆分、操作前模拟、压力情景">
+                        <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
+                            <Run Text="风险" FontSize="13"/><LineBreak/><Run Text="🧪" FontSize="14"/>
+                        </TextBlock>
+                    </Button>
 
-                    <TextBlock Style="{StaticResource NavGroup}" Text="研究" />
+                    <TextBlock x:Name="ResearchNavGroup" Style="{StaticResource NavGroup}" Text="研究" />
+                    <Button x:Name="NavEvidenceCard" Style="{StaticResource NavBtn}" Click="NavEvidenceCard_OnClick"
+                            ToolTip="证据卡：正反证据、未知项与失效条件——不是买卖指令">
+                        <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
+                            <Run Text="证据卡" FontSize="13"/><LineBreak/><Run Text="🧾" FontSize="14"/>
+                        </TextBlock>
+                    </Button>
                     <Button x:Name="NavMarket" Style="{StaticResource NavBtn}" Click="NavMarket_OnClick"
                             ToolTip="行情 K 线">
                         <TextBlock Style="{StaticResource NavLabel}" LineHeight="18">
@@ -200,14 +225,14 @@
             </Border>
 
             <!-- Top context bar -->
-            <Border Grid.Row="0" Background="{StaticResource BrushBgPanel}" BorderBrush="{StaticResource BrushBorder}" BorderThickness="0,0,0,1" Padding="12,8">
+            <Border x:Name="ResearchContextBar" Grid.Row="0" Background="{StaticResource BrushBgPanel}" BorderBrush="{StaticResource BrushBorder}" BorderThickness="0,0,0,1" Padding="12,8">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <WrapPanel VerticalAlignment="Center">
-                        <TextBlock x:Name="TitleText" Text="OMNIX" FontWeight="SemiBold" FontSize="15"
+                        <TextBlock x:Name="TitleText" Text="Caishenfolio" FontWeight="SemiBold" FontSize="15"
                                    Foreground="{StaticResource BrushAccent}"
                                    VerticalAlignment="Center" Margin="0,0,12,4" />
                         <TextBlock Text="标的" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="0,0,4,4" />
@@ -243,18 +268,38 @@
                         <Button Content="3月" Style="{StaticResource ToolBtn}" Margin="0,0,4,4" Click="QuickRange3M_OnClick" />
                         <Button Content="1年" Style="{StaticResource ToolBtn}" Margin="0,0,4,4" Click="QuickRange1Y_OnClick" />
                     </WrapPanel>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    </Grid>
+            </Border>
+            <Border Grid.Row="1" Background="{StaticResource BrushBgPanel}" BorderBrush="{StaticResource BrushBorder}" BorderThickness="0,0,0,1" Padding="12,6">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                         <Border x:Name="CoreStatusDot" Width="10" Height="10" CornerRadius="5"
                                 Background="#8A93A0" Margin="0,0,8,0" VerticalAlignment="Center"
                                 ToolTip="分析核心状态" />
                         <TextBlock x:Name="CoreStatusText" Text="核心 · 未连接" VerticalAlignment="Center"
-                                   FontSize="12" Foreground="{StaticResource BrushFgSecondary}" Margin="0,0,8,0" />
+                                   FontSize="12" Foreground="{StaticResource BrushFgSecondary}" />
                     </StackPanel>
-                </Grid>
+                    <Border x:Name="PageContextBadge" CornerRadius="4" Padding="8,2" HorizontalAlignment="Left"
+                            VerticalAlignment="Center" Background="#1F6B4A"
+                            ToolTip="真实账本：本页数据直接来自你的记账，改动会写入账本。研究模拟页只读行情，历史回测页只算过去。">
+                        <TextBlock x:Name="PageContextText" Text="真实账本" FontSize="11" FontWeight="SemiBold"
+                                   Foreground="#FFFFFF" />
+                    </Border>
+                </DockPanel>
             </Border>
 
             <!-- Pages host -->
             <Grid Grid.Row="2" Margin="10">
+                <!-- ===== 开始 ===== -->
+                <Border x:Name="PageHome" Background="{StaticResource BrushBgApp}" CornerRadius="10"
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
+                    <wealth:NoviceHomeView x:Name="NoviceHomePage" />
+                </Border>
+                <!-- ===== N4 证据卡 ===== -->
+                <Border x:Name="PageEvidenceCard" Background="{StaticResource BrushBgApp}" CornerRadius="10"
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
+                    <wealth:EvidenceCardView x:Name="EvidenceCardPage" />
+                </Border>
                 <!-- ===== 我的资产 ===== -->
                 <Border x:Name="PageOverview" Background="{StaticResource BrushBgApp}" CornerRadius="10"
                         BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
@@ -279,6 +324,10 @@
                 <Border x:Name="PageFx" Background="{StaticResource BrushBgApp}" CornerRadius="10"
                         BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
                     <wealth:FxCarryView x:Name="FxPage" />
+                </Border>
+                <Border x:Name="PageRiskLab" Background="{StaticResource BrushBgApp}" CornerRadius="10"
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Visibility="Collapsed">
+                    <wealth:RiskLabView x:Name="RiskLabPage" />
                 </Border>
 
                 <!-- ===== MARKET ===== -->
@@ -446,28 +495,46 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <TextBlock Grid.Row="0" Text="快线 MA" VerticalAlignment="Center" Margin="0,0,0,8" />
                                 <TextBox x:Name="BtFastBox" Grid.Row="0" Grid.Column="1" Padding="6" Text="5" Margin="0,0,0,8" />
                                 <TextBlock Grid.Row="1" Text="慢线 MA" VerticalAlignment="Center" Margin="0,0,0,8" />
                                 <TextBox x:Name="BtSlowBox" Grid.Row="1" Grid.Column="1" Padding="6" Text="20" Margin="0,0,0,8" />
-                                <TextBlock Grid.Row="2" Text="佣金比例" VerticalAlignment="Center" Margin="0,0,0,8" />
-                                <TextBox x:Name="BtCommissionBox" Grid.Row="2" Grid.Column="1" Padding="6" Text="0.0003" Margin="0,0,0,8" />
-                                <TextBlock Grid.Row="3" Text="印花税(卖)" VerticalAlignment="Center" Margin="0,0,0,8" />
-                                <TextBox x:Name="BtStampBox" Grid.Row="3" Grid.Column="1" Padding="6" Text="0.0005" Margin="0,0,0,8" />
-                                <TextBlock Grid.Row="4" Text="滑点" VerticalAlignment="Center" Margin="0,0,0,8" />
-                                <TextBox x:Name="BtSlippageBox" Grid.Row="4" Grid.Column="1" Padding="6" Text="0.0005" Margin="0,0,0,8" />
-                                <TextBlock Grid.Row="5" Text="涨停幅度" VerticalAlignment="Center" Margin="0,0,0,8" />
-                                <TextBox x:Name="BtLimitUpBox" Grid.Row="5" Grid.Column="1" Padding="6" Text="0.10" Margin="0,0,0,8" />
-                                <TextBlock Grid.Row="6" Text="跌停幅度" VerticalAlignment="Center" Margin="0,0,0,8" />
-                                <TextBox x:Name="BtLimitDownBox" Grid.Row="6" Grid.Column="1" Padding="6" Text="0.10" Margin="0,0,0,8" />
-                                <CheckBox x:Name="BtEnforceLimitCheck" Grid.Row="7" Grid.ColumnSpan="2"
-                                          Content="启用涨跌停约束" IsChecked="True" Foreground="#E7ECF1" Margin="0,4,0,0" />
+                                <!-- Costs and price-limit constraints matter, but not before a first
+                                     backtest runs; folded so a novice starts with the two numbers above. -->
+                                <Expander Grid.Row="2" Grid.ColumnSpan="2" Header="高级：成本与涨跌停约束（默认值即可先用）"
+                                          IsExpanded="False" Margin="0,2,0,0">
+                                    <Grid Margin="0,8,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="120" />
+                                            <ColumnDefinition Width="200" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Grid.Row="0" Text="佣金比例" VerticalAlignment="Center" Margin="0,0,0,8"
+                                                   ToolTip="买卖双边各收，按成交金额的比例" />
+                                        <TextBox x:Name="BtCommissionBox" Grid.Row="0" Grid.Column="1" Padding="6" Text="0.0003" Margin="0,0,0,8" />
+                                        <TextBlock Grid.Row="1" Text="印花税(卖)" VerticalAlignment="Center" Margin="0,0,0,8"
+                                                   ToolTip="仅卖出时收取" />
+                                        <TextBox x:Name="BtStampBox" Grid.Row="1" Grid.Column="1" Padding="6" Text="0.0005" Margin="0,0,0,8" />
+                                        <TextBlock Grid.Row="2" Text="滑点" VerticalAlignment="Center" Margin="0,0,0,8"
+                                                   ToolTip="成交价与信号价的差，按比例计入成本" />
+                                        <TextBox x:Name="BtSlippageBox" Grid.Row="2" Grid.Column="1" Padding="6" Text="0.0005" Margin="0,0,0,8" />
+                                        <TextBlock Grid.Row="3" Text="涨停幅度" VerticalAlignment="Center" Margin="0,0,0,8"
+                                                   ToolTip="仅对 A 股生效；创业板/科创板/北交所有各自上限，软件按标的判定" />
+                                        <TextBox x:Name="BtLimitUpBox" Grid.Row="3" Grid.Column="1" Padding="6" Text="0.10" Margin="0,0,0,8" />
+                                        <TextBlock Grid.Row="4" Text="跌停幅度" VerticalAlignment="Center" Margin="0,0,0,8" />
+                                        <TextBox x:Name="BtLimitDownBox" Grid.Row="4" Grid.Column="1" Padding="6" Text="0.10" Margin="0,0,0,8" />
+                                        <CheckBox x:Name="BtEnforceLimitCheck" Grid.Row="5" Grid.ColumnSpan="2"
+                                                  Content="启用涨跌停约束" IsChecked="True" Foreground="#E7ECF1" Margin="0,4,0,0" />
+                                    </Grid>
+                                </Expander>
                             </Grid>
                             <Button Content="运行 MA 回测" Padding="14,8" HorizontalAlignment="Left" Click="MaBacktest_OnClick"
                                     Background="#1F6B4A" BorderBrush="#2F9A6A" />

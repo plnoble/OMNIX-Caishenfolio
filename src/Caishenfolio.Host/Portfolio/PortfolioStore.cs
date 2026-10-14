@@ -11,7 +11,7 @@ namespace Caishenfolio.Host.Portfolio;
 public sealed class PortfolioStore : IDisposable
 {
     /// <summary>Bump when the schema changes and add the matching step in <see cref="Migrate"/>.</summary>
-    public const int SchemaVersion = 5;
+    public const int SchemaVersion = 9;
 
     private readonly string _connectionString;
     private readonly object _gate = new();
@@ -37,7 +37,7 @@ public sealed class PortfolioStore : IDisposable
         lock (_gate)
         {
             using var connection = Open();
-            Migrate(connection);
+            Migrate(connection, DatabasePath);
         }
     }
 
@@ -227,6 +227,7 @@ public sealed class PortfolioStore : IDisposable
         {
             using var connection = Open();
             using var tx = connection.BeginTransaction();
+            ValidateReversals(connection, tx, transactions);
             var inserted = 0;
             foreach (var item in transactions)
             {
@@ -236,11 +237,11 @@ public sealed class PortfolioStore : IDisposable
                     INSERT INTO transactions (
                         id, account_id, kind, trade_date, symbol, quantity, price, currency,
                         fee, tax, cash_amount, counter_currency, counter_amount, fx_rate,
-                        note, import_batch_id, recorded_at)
+                        reverses_transaction_id, counter_account_id, note, import_batch_id, recorded_at)
                     VALUES (
                         $id, $account, $kind, $date, $symbol, $qty, $price, $currency,
                         $fee, $tax, $cash, $counterCcy, $counterAmt, $rate,
-                        $note, $batch, $recorded);
+                        $reverses, $counterAccount, $note, $batch, $recorded);
                     """;
                 command.Parameters.AddWithValue("$id", item.Id);
                 command.Parameters.AddWithValue("$account", item.AccountId);
@@ -256,6 +257,8 @@ public sealed class PortfolioStore : IDisposable
                 command.Parameters.AddWithValue("$counterCcy", item.CounterCurrency);
                 command.Parameters.AddWithValue("$counterAmt", item.CounterAmount);
                 command.Parameters.AddWithValue("$rate", item.FxRate);
+                command.Parameters.AddWithValue("$reverses", item.ReversesTransactionId);
+                command.Parameters.AddWithValue("$counterAccount", item.CounterAccountId);
                 command.Parameters.AddWithValue("$note", item.Note);
                 command.Parameters.AddWithValue("$batch", item.ImportBatchId);
                 command.Parameters.AddWithValue("$recorded", item.RecordedAt.ToString("O"));
@@ -264,6 +267,58 @@ public sealed class PortfolioStore : IDisposable
 
             tx.Commit();
             return inserted;
+        }
+    }
+
+    /// <summary>
+    /// Refuse links that would corrupt the correction chain: the referenced row must exist, must
+    /// not be a reversal itself, and must not already carry a reversal. Enforced at insert so no
+    /// writer — UI, importer, or future tool — can bypass it.
+    /// </summary>
+    private static void ValidateReversals(
+        SqliteConnection connection, SqliteTransaction tx, IEnumerable<LedgerTransaction> batch)
+    {
+        // Two reversals of the same original inside ONE batch would both pass the database
+        // checks (nothing is inserted yet); the chain must be validated batch-locally too.
+        var seenTargets = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in batch)
+        {
+            if (item.IsReversal && !seenTargets.Add(item.ReversesTransactionId))
+            {
+                throw new LedgerException($"流水 {item.ReversesTransactionId} 在本批次中出现两条冲正，拒绝整批写入。");
+            }
+        }
+
+        foreach (var item in batch.Where(t => t.IsReversal))
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = tx;
+            command.CommandText = """
+                SELECT reverses_transaction_id FROM transactions WHERE id = $id;
+                """;
+            command.Parameters.AddWithValue("$id", item.ReversesTransactionId);
+            var existing = command.ExecuteScalar() as string;
+
+            if (existing is null)
+            {
+                throw new LedgerException($"冲正目标流水 {item.ReversesTransactionId} 不存在。");
+            }
+
+            if (existing.Length > 0)
+            {
+                throw new LedgerException("冲正记录本身不能再被冲正。");
+            }
+
+            using var taken = connection.CreateCommand();
+            taken.Transaction = tx;
+            taken.CommandText = """
+                SELECT COUNT(*) FROM transactions WHERE reverses_transaction_id = $id;
+                """;
+            taken.Parameters.AddWithValue("$id", item.ReversesTransactionId);
+            if (Convert.ToInt64(taken.ExecuteScalar() ?? 0L) > 0)
+            {
+                throw new LedgerException($"流水 {item.ReversesTransactionId} 已有一条冲正记录，不能重复冲正。");
+            }
         }
     }
 
@@ -280,7 +335,7 @@ public sealed class PortfolioStore : IDisposable
             command.CommandText = """
                 SELECT id, account_id, kind, trade_date, symbol, quantity, price, currency,
                        fee, tax, cash_amount, counter_currency, counter_amount, fx_rate,
-                       note, import_batch_id, recorded_at
+                       reverses_transaction_id, counter_account_id, note, import_batch_id, recorded_at
                 FROM transactions
                 WHERE ($account IS NULL OR account_id = $account)
                   AND ($symbol IS NULL OR symbol = $symbol)
@@ -313,9 +368,11 @@ public sealed class PortfolioStore : IDisposable
                     CounterCurrency = reader.GetString(11),
                     CounterAmount = reader.GetDecimal(12),
                     FxRate = reader.GetDecimal(13),
-                    Note = reader.GetString(14),
-                    ImportBatchId = reader.GetString(15),
-                    RecordedAt = DateTimeOffset.Parse(reader.GetString(16)),
+                    ReversesTransactionId = reader.GetString(14),
+                    CounterAccountId = reader.GetString(15),
+                    Note = reader.GetString(16),
+                    ImportBatchId = reader.GetString(17),
+                    RecordedAt = DateTimeOffset.Parse(reader.GetString(18)),
                 });
             }
 
@@ -323,15 +380,25 @@ public sealed class PortfolioStore : IDisposable
         }
     }
 
-    public bool RemoveTransaction(string transactionId)
+    /// <summary>Ids of rows that already carry a reversal, so listings can mark them.</summary>
+    public IReadOnlySet<string> ReversedTransactionIds()
     {
         lock (_gate)
         {
             using var connection = Open();
             using var command = connection.CreateCommand();
-            command.CommandText = "DELETE FROM transactions WHERE id = $id;";
-            command.Parameters.AddWithValue("$id", transactionId);
-            return command.ExecuteNonQuery() > 0;
+            command.CommandText = """
+                SELECT reverses_transaction_id FROM transactions
+                WHERE reverses_transaction_id <> '';
+                """;
+            using var reader = command.ExecuteReader();
+            var results = new HashSet<string>(StringComparer.Ordinal);
+            while (reader.Read())
+            {
+                results.Add(reader.GetString(0));
+            }
+
+            return results;
         }
     }
 
@@ -702,9 +769,27 @@ public sealed class PortfolioStore : IDisposable
     // --- valuation history ---------------------------------------------------------
 
     /// <summary>
-    /// Records the portfolio value for a date. One row per date: refreshing repeatedly on the
-    /// same day corrects that day rather than piling up duplicate points on the equity curve.
-    /// An incomplete valuation is still stored but flagged, so drawdown can ignore it.
+    /// One holding's stored state on one valuation date. Unpriced rows keep their quantity and
+    /// cost but carry null market values — drawdown attribution must see the gap, not a zero.
+    /// </summary>
+    public sealed record PositionValuationSnapshot(
+        DateOnly AsOf,
+        string BaseCurrency,
+        string Symbol,
+        string AccountId,
+        string Currency,
+        decimal Quantity,
+        decimal? MarketValueLocal,
+        decimal? MarketValueBase,
+        decimal CostBasisBase,
+        bool Priced);
+
+    /// <summary>
+    /// Records the portfolio value for a date — the total for the equity curve plus one row per
+    /// open holding, so later analysis can explain a drawdown by asset and by currency instead
+    /// of only measuring it. One row-set per date: refreshing repeatedly on the same day
+    /// corrects that day rather than piling up duplicate points. An incomplete valuation is
+    /// still stored but flagged, so drawdown can ignore it.
     /// </summary>
     public void SaveValuationSnapshot(PortfolioValuation valuation)
     {
@@ -712,26 +797,107 @@ public sealed class PortfolioStore : IDisposable
         lock (_gate)
         {
             using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = tx;
+                command.CommandText = """
+                    INSERT INTO valuation_snapshots
+                        (as_of, base_currency, total_value, holdings_value, cash_value, cost_basis, complete)
+                    VALUES ($asOf, $currency, $total, $holdings, $cash, $cost, $complete)
+                    ON CONFLICT(as_of, base_currency) DO UPDATE SET
+                        total_value = excluded.total_value,
+                        holdings_value = excluded.holdings_value,
+                        cash_value = excluded.cash_value,
+                        cost_basis = excluded.cost_basis,
+                        complete = excluded.complete;
+                    """;
+                command.Parameters.AddWithValue("$asOf", valuation.AsOf.ToString("yyyy-MM-dd"));
+                command.Parameters.AddWithValue("$currency", valuation.BaseCurrency);
+                command.Parameters.AddWithValue("$total", valuation.TotalValue.Amount);
+                command.Parameters.AddWithValue("$holdings", valuation.HoldingsValue.Amount);
+                command.Parameters.AddWithValue("$cash", valuation.CashValue.Amount);
+                command.Parameters.AddWithValue("$cost", valuation.CostBasis.Amount);
+                command.Parameters.AddWithValue("$complete", valuation.IsComplete ? 1 : 0);
+                command.ExecuteNonQuery();
+            }
+
+            using (var clear = connection.CreateCommand())
+            {
+                clear.Transaction = tx;
+                clear.CommandText = """
+                    DELETE FROM valuation_position_snapshots
+                    WHERE as_of = $asOf AND base_currency = $currency;
+                    """;
+                clear.Parameters.AddWithValue("$asOf", valuation.AsOf.ToString("yyyy-MM-dd"));
+                clear.Parameters.AddWithValue("$currency", valuation.BaseCurrency);
+                clear.ExecuteNonQuery();
+            }
+
+            foreach (var item in valuation.Positions.Where(p => p.Position.IsOpen))
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = tx;
+                command.CommandText = """
+                    INSERT INTO valuation_position_snapshots
+                        (as_of, base_currency, symbol, account_id, currency, quantity,
+                         market_value_local, market_value_base, cost_basis_base, priced)
+                    VALUES ($asOf, $currency, $symbol, $account, $ccy, $qty,
+                            $mvLocal, $mvBase, $costBase, $priced);
+                    """;
+                command.Parameters.AddWithValue("$asOf", valuation.AsOf.ToString("yyyy-MM-dd"));
+                command.Parameters.AddWithValue("$currency", valuation.BaseCurrency);
+                command.Parameters.AddWithValue("$symbol", item.Position.Symbol);
+                command.Parameters.AddWithValue("$account", item.Position.AccountId);
+                command.Parameters.AddWithValue("$ccy", item.Position.Currency);
+                command.Parameters.AddWithValue("$qty", item.Position.Quantity);
+                command.Parameters.AddWithValue("$mvLocal",
+                    item.MarketValue is { } mv ? mv.Amount : DBNull.Value);
+                command.Parameters.AddWithValue("$mvBase",
+                    item.MarketValueBase is { } mvb ? mvb.Amount : DBNull.Value);
+                command.Parameters.AddWithValue("$costBase", item.CostBasisBase.Amount);
+                command.Parameters.AddWithValue("$priced", item.Priced ? 1 : 0);
+                command.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
+    }
+
+    /// <summary>Per-holding snapshots in <paramref name="baseCurrency"/>, oldest first.</summary>
+    public IReadOnlyList<PositionValuationSnapshot> ListPositionValuationHistory(string baseCurrency)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
             using var command = connection.CreateCommand();
             command.CommandText = """
-                INSERT INTO valuation_snapshots
-                    (as_of, base_currency, total_value, holdings_value, cash_value, cost_basis, complete)
-                VALUES ($asOf, $currency, $total, $holdings, $cash, $cost, $complete)
-                ON CONFLICT(as_of, base_currency) DO UPDATE SET
-                    total_value = excluded.total_value,
-                    holdings_value = excluded.holdings_value,
-                    cash_value = excluded.cash_value,
-                    cost_basis = excluded.cost_basis,
-                    complete = excluded.complete;
+                SELECT as_of, base_currency, symbol, account_id, currency, quantity,
+                       market_value_local, market_value_base, cost_basis_base, priced
+                FROM valuation_position_snapshots
+                WHERE base_currency = $currency
+                ORDER BY as_of, symbol, account_id;
                 """;
-            command.Parameters.AddWithValue("$asOf", valuation.AsOf.ToString("yyyy-MM-dd"));
-            command.Parameters.AddWithValue("$currency", valuation.BaseCurrency);
-            command.Parameters.AddWithValue("$total", valuation.TotalValue.Amount);
-            command.Parameters.AddWithValue("$holdings", valuation.HoldingsValue.Amount);
-            command.Parameters.AddWithValue("$cash", valuation.CashValue.Amount);
-            command.Parameters.AddWithValue("$cost", valuation.CostBasis.Amount);
-            command.Parameters.AddWithValue("$complete", valuation.IsComplete ? 1 : 0);
-            command.ExecuteNonQuery();
+            command.Parameters.AddWithValue("$currency", Currencies.Normalize(baseCurrency));
+
+            using var reader = command.ExecuteReader();
+            var results = new List<PositionValuationSnapshot>();
+            while (reader.Read())
+            {
+                results.Add(new PositionValuationSnapshot(
+                    DateOnly.ParseExact(reader.GetString(0), "yyyy-MM-dd"),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetString(3),
+                    reader.GetString(4),
+                    reader.GetDecimal(5),
+                    reader.IsDBNull(6) ? null : reader.GetDecimal(6),
+                    reader.IsDBNull(7) ? null : reader.GetDecimal(7),
+                    reader.GetDecimal(8),
+                    reader.GetInt32(9) != 0));
+            }
+
+            return results;
         }
     }
 
@@ -785,12 +951,26 @@ public sealed class PortfolioStore : IDisposable
         return connection;
     }
 
-    private static void Migrate(SqliteConnection connection)
+    private static void Migrate(SqliteConnection connection, string databasePath)
     {
         var current = ReadUserVersion(connection);
         if (current >= SchemaVersion)
         {
             return;
+        }
+
+        // A schema upgrade rewrites stored money, so keep the last pre-upgrade file to roll back
+        // to if the new version turns out unusable. Best effort: a failed copy must not block
+        // the migration itself.
+        if (current > 0 && File.Exists(databasePath))
+        {
+            try
+            {
+                File.Copy(databasePath, databasePath + ".bak", overwrite: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
         }
 
         using var tx = connection.BeginTransaction();
@@ -916,6 +1096,63 @@ public sealed class PortfolioStore : IDisposable
                 );
 
                 CREATE INDEX IF NOT EXISTS ix_ipo_account ON ipo_subscriptions(account_id);
+                """);
+        }
+
+        if (current < 6)
+        {
+            // Corrections keep the original row and add a mirror row that links back to it.
+            // Physical deletes are gone, so the link lives on the transactions themselves.
+            Execute(connection, tx, """
+                ALTER TABLE transactions ADD COLUMN reverses_transaction_id TEXT NOT NULL DEFAULT '';
+                CREATE INDEX IF NOT EXISTS ix_transactions_reverses ON transactions(reverses_transaction_id);
+                """);
+        }
+
+        if (current < 7)
+        {
+            // Per-holding snapshots: the total-only curve can measure a drawdown but cannot
+            // explain it. Market values are nullable — an unpriced holding is a gap to report,
+            // never a zero to average in.
+            Execute(connection, tx, """
+                CREATE TABLE IF NOT EXISTS valuation_position_snapshots (
+                    as_of TEXT NOT NULL,
+                    base_currency TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    currency TEXT NOT NULL,
+                    quantity TEXT NOT NULL DEFAULT '0',
+                    market_value_local TEXT,
+                    market_value_base TEXT,
+                    cost_basis_base TEXT NOT NULL DEFAULT '0',
+                    priced INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY (as_of, base_currency, symbol, account_id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_vps_currency_date
+                    ON valuation_position_snapshots(base_currency, as_of);
+                """);
+        }
+
+        if (current < 8)
+        {
+            // Cross-account exchanges: the incoming leg may land in another account. Empty
+            // means the same account, so every pre-v8 row reads exactly as before.
+            Execute(connection, tx, """
+                ALTER TABLE transactions ADD COLUMN counter_account_id TEXT NOT NULL DEFAULT '';
+                """);
+        }
+
+        if (current < 9)
+        {
+            // Database-level reversal uniqueness (P2-R01): the app-level checks guard one
+            // process; a filtered unique index guards every writer, forever. Empty string
+            // (no reversal) is excluded so normal rows never collide.
+            // Pre-existing duplicates would make index creation fail — the message says
+            // what happened instead of silently dropping data.
+            Execute(connection, tx, """
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_transactions_single_reversal
+                ON transactions(reverses_transaction_id)
+                WHERE reverses_transaction_id <> '';
                 """);
         }
 

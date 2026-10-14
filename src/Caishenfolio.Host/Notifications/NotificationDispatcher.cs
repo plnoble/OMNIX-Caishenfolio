@@ -42,7 +42,7 @@ public sealed record DispatchReport
 ///
 /// Channels are tried independently and in parallel. One broken webhook must not stop the email.
 /// </summary>
-public sealed class NotificationDispatcher
+public sealed partial class NotificationDispatcher
 {
     private readonly IReadOnlyList<INotificationChannel> _channels;
 
@@ -104,7 +104,7 @@ public sealed class NotificationDispatcher
     }
 
     /// <summary>An alert with a deadline behind it, which is sent even when routine ones are muted.</summary>
-    private static bool IsTimeCritical(PortfolioAlert alert) =>
+    public static bool IsTimeCritical(PortfolioAlert alert) =>
         alert.Kind is AlertKind.IpoDeadline || alert.Severity == AlertSeverity.Warning;
 
     internal static NotificationMessage BuildMessage(IReadOnlyList<PortfolioAlert> alerts)
@@ -123,7 +123,7 @@ public sealed class NotificationDispatcher
             body.Append(marker).Append(alert.Title);
             if (!string.IsNullOrWhiteSpace(alert.Message))
             {
-                body.Append('\n').Append("  ").Append(alert.Message);
+                body.Append('\n').Append("  ").Append(OutgoingText(alert.Message));
             }
 
             body.Append('\n');
@@ -143,4 +143,19 @@ public sealed class NotificationDispatcher
             Urgency = urgent ? NotificationUrgency.Urgent : NotificationUrgency.Normal,
         };
     }
+
+    /// <summary>
+    /// What an alert's message may look like once it leaves this machine (plan §8: 提醒消息
+    /// 不得包含凭据、完整本地路径或敏感备注). User notes attached to planned levels are a
+    /// likely home for exactly those, so the parenthetical note goes away entirely; anything
+    /// that still looks like a credential or a local path is redacted on top.
+    /// </summary>
+    internal static string OutgoingText(string message)
+    {
+        var withoutNote = NoteSuffixRegex().Replace(message, "");
+        return Security.SensitiveValueRedactor.RedactText(withoutNote);
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"（备注：[^）]*）")]
+    private static partial System.Text.RegularExpressions.Regex NoteSuffixRegex();
 }

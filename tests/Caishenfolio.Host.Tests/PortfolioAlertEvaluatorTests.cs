@@ -55,7 +55,7 @@ public class PortfolioAlertEvaluatorTests
     public void StaysQuietWhenNoLevelIsReached()
     {
         var alerts = PortfolioAlertEvaluator.Evaluate(
-            Valuation(price: 10m), [Level("buy", 8.0), Level("sell", 12.0)]);
+            Valuation(price: 10m), [Level("buy", 8.0), Level("sell", 12.0)], asOf: AsOf);
 
         Assert.Empty(alerts);
     }
@@ -64,7 +64,7 @@ public class PortfolioAlertEvaluatorTests
     public void IgnoresDeactivatedLevels()
     {
         var alerts = PortfolioAlertEvaluator.Evaluate(
-            Valuation(price: 9m), [Level("buy", 9.5, active: false)]);
+            Valuation(price: 9m), [Level("buy", 9.5, active: false)], asOf: AsOf);
 
         Assert.Empty(alerts);
     }
@@ -73,7 +73,7 @@ public class PortfolioAlertEvaluatorTests
     public void IgnoresLevelsForInstrumentsYouDoNotHold()
     {
         var alerts = PortfolioAlertEvaluator.Evaluate(
-            Valuation(price: 9m), [Level("buy", 9.5, symbol: "NASDAQ:AAPL")]);
+            Valuation(price: 9m), [Level("buy", 9.5, symbol: "NASDAQ:AAPL")], asOf: AsOf);
 
         Assert.Empty(alerts);
     }
@@ -88,21 +88,50 @@ public class PortfolioAlertEvaluatorTests
     }
 
     [Fact]
-    public void FlagsAStalePrice()
+    public void FlagsAStalePriceInTradingDays()
     {
+        // AsOf 2026-07-31 is a Friday; -30 calendar days is Wednesday 2026-07-01.
+        // The span holds 8 weekend days, so the trading-day age is 22.
         var alerts = PortfolioAlertEvaluator.Evaluate(
-            Valuation(price: 10m, quoteDate: AsOf.AddDays(-30)), stalePriceDays: 5);
+            Valuation(price: 10m, quoteDate: AsOf.AddDays(-30)), stalePriceDays: 5, asOf: AsOf);
 
         var alert = Assert.Single(alerts, a => a.Kind == AlertKind.StalePrice);
         Assert.Equal(AlertSeverity.Warning, alert.Severity);
-        Assert.Contains("30 天前", alert.Message);
+        Assert.Contains("22 个交易日", alert.Message);
+        Assert.Contains("按该市场日历", alert.Message);
+    }
+
+    [Fact]
+    public void AWeekendSpanDoesNotCountAsStaleness()
+    {
+        // Friday 2026-07-31 checked the following Monday: 3 calendar days, 1 trading day.
+        var monday = new DateOnly(2026, 8, 3);
+        var fridayQuote = new DateOnly(2026, 7, 31);
+
+        var alerts = PortfolioAlertEvaluator.Evaluate(
+            Valuation(price: 10m, quoteDate: fridayQuote), stalePriceDays: 2, asOf: monday);
+
+        Assert.DoesNotContain(alerts, a => a.Kind == AlertKind.StalePrice);
+    }
+
+    [Fact]
+    public void AModelledHolidayWeekDoesNotCountAsStaleness()
+    {
+        // CN National Day block 2026-10-01..10-07 (modelled): a quote from Wed 2026-09-30
+        // checked on Fri 2026-10-09 spans 7 weekdays but only 2 trading days.
+        var alerts = PortfolioAlertEvaluator.Evaluate(
+            Valuation(price: 10m, quoteDate: new DateOnly(2026, 9, 30)),
+            stalePriceDays: 3,
+            asOf: new DateOnly(2026, 10, 9));
+
+        Assert.DoesNotContain(alerts, a => a.Kind == AlertKind.StalePrice);
     }
 
     [Fact]
     public void FreshPriceRaisesNoStaleAlert()
     {
         var alerts = PortfolioAlertEvaluator.Evaluate(
-            Valuation(price: 10m, quoteDate: AsOf.AddDays(-2)), stalePriceDays: 5);
+            Valuation(price: 10m, quoteDate: AsOf.AddDays(-2)), stalePriceDays: 5, asOf: AsOf);
 
         Assert.DoesNotContain(alerts, a => a.Kind == AlertKind.StalePrice);
     }
@@ -157,6 +186,6 @@ public class PortfolioAlertEvaluatorTests
     [Fact]
     public void NoLevelsAndNoRiskMeansNoAlerts()
     {
-        Assert.Empty(PortfolioAlertEvaluator.Evaluate(Valuation(price: 10m)));
+        Assert.Empty(PortfolioAlertEvaluator.Evaluate(Valuation(price: 10m), asOf: AsOf));
     }
 }

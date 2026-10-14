@@ -4,6 +4,8 @@ using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Media;
 using Caishenfolio.Host.Portfolio;
 using Microsoft.Win32;
 
@@ -60,6 +62,25 @@ public partial class LedgerView : UserControl
         {
             AccountsGrid.SelectedIndex = 0;
         }
+
+        RefreshCounterAccountChoices();
+    }
+
+    /// <summary>Keeps the cross-account selector in step with the account list; the blank
+    /// first item means "same account".</summary>
+    private void RefreshCounterAccountChoices()
+    {
+        if (_model is null)
+        {
+            return;
+        }
+
+        var selected = (EntryCounterAccount.SelectedItem as AccountRow)?.Id;
+        var previous = new[] { new AccountRow("", "（同一账户）", "", "", "", "") }
+            .Concat(_model.Accounts);
+        EntryCounterAccount.ItemsSource = previous.ToList();
+        EntryCounterAccount.SelectedItem = previous.FirstOrDefault(a => a.Id == selected)
+            ?? previous.First();
     }
 
     private string? SelectedAccountId =>
@@ -92,14 +113,73 @@ public partial class LedgerView : UserControl
             or TransactionKind.Dividend or TransactionKind.OpeningPosition;
         var needsQuantity = kind is TransactionKind.Buy or TransactionKind.Sell or TransactionKind.OpeningPosition;
         var needsAmount = kind is TransactionKind.Dividend or TransactionKind.Interest
-            or TransactionKind.Deposit or TransactionKind.Withdraw or TransactionKind.OpeningCash;
+            or TransactionKind.Deposit or TransactionKind.Withdraw or TransactionKind.OpeningCash
+            or TransactionKind.FxExchange;
+        var isFx = kind == TransactionKind.FxExchange;
 
         EntrySymbol.IsEnabled = needsInstrument || kind == TransactionKind.Interest;
+        if (!EntrySymbol.IsEnabled)
+        {
+            EntrySymbol.Text = "";
+            EntryName.Text = "";
+        }
         EntryName.IsEnabled = EntrySymbol.IsEnabled;
         EntryQuantity.IsEnabled = needsQuantity;
         EntryPrice.IsEnabled = needsQuantity;
+        if (!needsQuantity)
+        {
+            EntryQuantity.Text = "";
+            EntryPrice.Text = "";
+        }
         EntryAmount.IsEnabled = needsAmount;
+        EntryCounterAmount.IsEnabled = isFx;
+        EntryCounterCurrency.IsEnabled = isFx;
+        EntryCounterAccount.IsEnabled = isFx && _model is not null && _model.Accounts.Count > 1;
+        EntryCounterAmountField.Visibility = isFx ? Visibility.Visible : Visibility.Collapsed;
+        EntryCounterAccountField.Visibility = isFx ? Visibility.Visible : Visibility.Collapsed;
+        EntryCounterCurrencyField.Visibility = isFx ? Visibility.Visible : Visibility.Collapsed;
+        EntryCurrencyLabel.Text = isFx ? "换出币种" : "币种";
+        EntrySymbolField.Visibility = EntrySymbol.IsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        EntryNameField.Visibility = EntryName.IsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        EntryQuantityField.Visibility = needsQuantity ? Visibility.Visible : Visibility.Collapsed;
+        EntryPriceField.Visibility = needsQuantity ? Visibility.Visible : Visibility.Collapsed;
+        FxRateHint.Visibility = isFx ? Visibility.Visible : Visibility.Collapsed;
+        if (isFx)
+        {
+            UpdateFxRateHint();
+        }
     }
+
+    /// <summary>
+    /// Live display of the rate implied by the two receipt amounts. Display only — the
+    /// ledger books both amounts exactly as entered, never a rate-derived amount (an implied
+    /// rate like 1/7.2 has no exact decimal form and would leave residue in the balance).
+    /// </summary>
+    private void UpdateFxRateHint()
+    {
+        if (FxRateHint is null)
+        {
+            return;
+        }
+
+        var from = (EntryCurrency.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
+        var to = (EntryCounterCurrency.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
+        var fromOk = decimal.TryParse(EntryAmount.Text.Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out var fromAmount);
+        var toOk = decimal.TryParse(EntryCounterAmount.Text.Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out var toAmount);
+
+        if (!fromOk || !toOk || fromAmount <= 0m || toAmount <= 0m || from == to)
+        {
+            FxRateHint.Text = "按回单如实填写两边的实际金额；成交汇率由软件计算并仅用于展示。";
+            return;
+        }
+
+        FxRateHint.Text =
+            $"成交汇率（按两边金额计算，仅展示，不用于入账）：1 {from} = " +
+            $"{(toAmount / fromAmount).ToString("0.######", CultureInfo.InvariantCulture)} {to}" +
+            $"　·　手续费按换出币种 {from} 记。";
+    }
+
+    private void FxField_OnChanged(object sender, RoutedEventArgs e) => UpdateFxRateHint();
 
     private TransactionKind SelectedKind() =>
         Enum.TryParse<TransactionKind>((EntryKind.SelectedItem as ComboBoxItem)?.Tag as string, out var kind)
@@ -165,20 +245,34 @@ public partial class LedgerView : UserControl
         }
     }
 
-    private LedgerTransaction BuildTransaction(string accountId)
+    /// <summary>
+    /// Builds the ledger fact from the current form state. Internal so the type-boundary
+    /// tests drive the real construction path (InternalsVisibleTo) — the view instance is
+    /// never shown and never bound to a ledger.
+    /// </summary>
+    internal LedgerTransaction BuildTransaction(string accountId)
     {
         var kind = SelectedKind();
         var date = DateOnly.TryParse(EntryDate.Text.Trim(), CultureInfo.InvariantCulture, out var parsed)
             ? parsed
             : throw new LedgerException($"无法解析日期「{EntryDate.Text}」，请用 yyyy-MM-dd。");
-        var symbol = EntrySymbol.Text.Trim();
         var currency = (EntryCurrency.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "CNY";
-        var quantity = ParseNumber(EntryQuantity.Text);
-        var price = ParseNumber(EntryPrice.Text);
-        var amount = ParseNumber(EntryAmount.Text);
-        var fee = ParseNumber(EntryFee.Text);
-        var tax = ParseNumber(EntryTax.Text);
         var note = EntryNote.Text.Trim();
+        var needsInstrument = kind is TransactionKind.Buy or TransactionKind.Sell
+            or TransactionKind.Dividend or TransactionKind.OpeningPosition or TransactionKind.Interest;
+        var needsQuantity = kind is TransactionKind.Buy or TransactionKind.Sell or TransactionKind.OpeningPosition;
+        var needsAmount = kind is TransactionKind.Dividend or TransactionKind.Interest
+            or TransactionKind.Deposit or TransactionKind.Withdraw or TransactionKind.OpeningCash
+            or TransactionKind.FxExchange;
+        var needsFee = kind is TransactionKind.Buy or TransactionKind.Sell or TransactionKind.FxExchange;
+        var needsTax = kind is TransactionKind.Buy or TransactionKind.Sell
+            or TransactionKind.Dividend or TransactionKind.Interest;
+        var symbol = needsInstrument ? ResolveSymbolForRecord() : "";
+        var quantity = needsQuantity ? ParseNumber(EntryQuantity.Text) : 0m;
+        var price = needsQuantity ? ParseNumber(EntryPrice.Text) : 0m;
+        var amount = needsAmount ? ParseNumber(EntryAmount.Text) : 0m;
+        var fee = needsFee ? ParseNumber(EntryFee.Text) : 0m;
+        var tax = needsTax ? ParseNumber(EntryTax.Text) : 0m;
 
         return kind switch
         {
@@ -196,8 +290,39 @@ public partial class LedgerView : UserControl
                 LedgerTransaction.Deposit(accountId, date, amount, currency, note),
             TransactionKind.Withdraw =>
                 LedgerTransaction.Withdraw(accountId, date, amount, currency, note),
+            TransactionKind.FxExchange => BuildFxExchange(accountId, date, amount, currency, fee, note),
             _ => LedgerTransaction.OpeningCash(accountId, date, amount, currency, note),
         };
+    }
+
+    /// <summary>
+    /// An exchange is booked from the two amounts on the receipt — both currencies and both
+    /// amounts exactly as they happened, in the selected (multi-currency) account.
+    /// </summary>
+    private LedgerTransaction BuildFxExchange(
+        string accountId, DateOnly date, decimal fromAmount, string fromCurrency, decimal fee, string note)
+    {
+        var counterAmount = ParseNumber(EntryCounterAmount.Text);
+        var counterCurrency = (EntryCounterCurrency.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
+        var counterAccountId = (EntryCounterAccount.SelectedItem as AccountRow)?.Id;
+        if (string.Equals(counterAccountId, accountId, StringComparison.Ordinal))
+        {
+            counterAccountId = null; // same account — keep the row shape identical to before
+        }
+
+        if (fromAmount <= 0m)
+        {
+            throw new LedgerException("换汇的换出金额必须大于 0（按回单填写）。");
+        }
+
+        if (counterAmount <= 0m)
+        {
+            throw new LedgerException("换汇的到账金额必须大于 0（按回单填写，不要用汇率反推）。");
+        }
+
+        return LedgerTransaction.FxExchange(
+            accountId, date, fromAmount, fromCurrency, counterAmount, counterCurrency, fee, note,
+            counterAccountId);
     }
 
     private static decimal ParseNumber(string text)
@@ -210,6 +335,108 @@ public partial class LedgerView : UserControl
                 : throw new LedgerException($"无法解析数字「{text}」。");
     }
 
+    // --- symbol resolution (N1: novices never type the internal EXCHANGE:CODE form) ---
+
+    private IReadOnlyList<Instrument> KnownInstruments =>
+        _model?.Snapshot?.Instruments ?? Array.Empty<Instrument>();
+
+    /// <summary>
+    /// Resolves what the user actually typed into the internal symbol form. Unresolved or
+    /// ambiguous input refuses to record — the ledger must never receive a guessed instrument.
+    /// </summary>
+    private string ResolveSymbolForRecord()
+    {
+        var input = EntrySymbol.Text.Trim();
+        if (input.Length == 0)
+        {
+            return "";
+        }
+
+        var resolution = SymbolResolver.Resolve(input, KnownInstruments);
+        if (resolution.Resolved is null)
+        {
+            throw new LedgerException($"标的「{input}」无法识别。{resolution.Reason}");
+        }
+
+        if (resolution.IsAmbiguous)
+        {
+            throw new LedgerException(
+                $"标的「{input}」有 {resolution.Ambiguities.Count} 种解读（{string.Join("、", resolution.Ambiguities)}）。" +
+                "请点击下方提示里的完整代码，明确是哪一个。");
+        }
+
+        return resolution.Resolved;
+    }
+
+    private void EntrySymbol_OnTextChanged(object sender, TextChangedEventArgs e) =>
+        UpdateSymbolHint();
+
+    /// <summary>
+    /// Live feedback under the symbol box: resolved (green check + why), ambiguous (clickable
+    /// candidates), or unresolved (how to try again). This is the novice's error message
+    /// *before* the mistake is recorded, not after.
+    /// </summary>
+    private void UpdateSymbolHint()
+    {
+        if (EntrySymbolHint is null)
+        {
+            return;
+        }
+
+        EntrySymbolHint.Inlines.Clear();
+        var input = EntrySymbol.Text.Trim();
+        if (input.Length == 0)
+        {
+            return;
+        }
+
+        var resolution = SymbolResolver.Resolve(input, KnownInstruments);
+        var accent = TryFindResource("BrushAccent") as Brush ?? Brushes.White;
+        var muted = TryFindResource("BrushFgMuted") as Brush ?? Brushes.Gray;
+        var danger = TryFindResource("BrushDanger") as Brush ?? Brushes.OrangeRed;
+
+        if (resolution.Resolved is null)
+        {
+            EntrySymbolHint.Inlines.Add(new Run($"✗ {resolution.Reason}") { Foreground = danger });
+            return;
+        }
+
+        if (resolution.IsAmbiguous)
+        {
+            EntrySymbolHint.Inlines.Add(new Run(
+                $"「{input}」有 {resolution.Ambiguities.Count} 种解读，记账前请点击选择：")
+            {
+                Foreground = danger,
+            });
+            for (var i = 0; i < resolution.Ambiguities.Count; i++)
+            {
+                if (i > 0)
+                {
+                    EntrySymbolHint.Inlines.Add(new Run("  ") { Foreground = muted });
+                }
+
+                var candidate = resolution.Ambiguities[i];
+                var link = new Hyperlink(new Run(candidate))
+                {
+                    Foreground = accent,
+                    FontWeight = FontWeights.SemiBold,
+                    TextDecorations = TextDecorations.Underline,
+                };
+                link.Click += (_, _) => EntrySymbol.Text = candidate;
+                EntrySymbolHint.Inlines.Add(link);
+            }
+
+            return;
+        }
+
+        EntrySymbolHint.Inlines.Add(new Run($"✓ 已识别：{resolution.Resolved}")
+        {
+            Foreground = accent,
+            FontWeight = FontWeights.SemiBold,
+        });
+        EntrySymbolHint.Inlines.Add(new Run($"（{resolution.Reason}）") { Foreground = muted });
+    }
+
     private void ClearEntry()
     {
         EntrySymbol.Clear();
@@ -217,6 +444,7 @@ public partial class LedgerView : UserControl
         EntryQuantity.Clear();
         EntryPrice.Clear();
         EntryAmount.Clear();
+        EntryCounterAmount.Clear();
         EntryFee.Clear();
         EntryTax.Clear();
         EntryNote.Clear();
@@ -356,7 +584,7 @@ public partial class LedgerView : UserControl
         }
     }
 
-    private void DeleteTransactionButton_OnClick(object sender, RoutedEventArgs e)
+    private void ReverseTransactionButton_OnClick(object sender, RoutedEventArgs e)
     {
         if (_model is null || TransactionsGrid.SelectedItem is not TransactionRow row)
         {
@@ -364,9 +592,19 @@ public partial class LedgerView : UserControl
             return;
         }
 
+        if (!row.CanReverse)
+        {
+            Notify(row.IsReversal
+                ? "这条是冲正记录，本身不能再次冲正。"
+                : "这条流水已冲正过，不能重复冲正。");
+            return;
+        }
+
         var confirm = MessageBox.Show(
-            $"删除 {row.Date} {row.Kind} {row.Symbol}？\n持仓与收益会随之重新计算。",
-            "确认删除",
+            $"冲正 {row.Date} {row.Kind} {row.Symbol}？\n" +
+            "原流水会保留，并新增一条反向冲正记录；持仓、现金与收益会回到这笔入账之前。\n" +
+            "已入账的流水不能删除，冲正是唯一的更正方式。",
+            "确认冲正",
             MessageBoxButton.OKCancel,
             MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.OK)
@@ -374,9 +612,17 @@ public partial class LedgerView : UserControl
             return;
         }
 
-        _model.RemoveTransaction(row.Id);
-        Notify("已删除。");
-        _ = ReloadAsync();
+        try
+        {
+            var reason = $"冲正 {row.Date} {row.Kind} {row.Symbol}（用户在账本页确认）";
+            _model.ReverseTransaction(row.Id, reason);
+            Notify("已冲正：原流水与冲正记录都保留在账本里。");
+            _ = ReloadAsync();
+        }
+        catch (Exception ex) when (ex is LedgerException or ArgumentException)
+        {
+            Notify($"冲正失败：{ex.Message}");
+        }
     }
 
     private void Notify(string message)

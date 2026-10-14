@@ -89,8 +89,10 @@ public class PortfolioSettingsTests : IDisposable
     }
 
     [Fact]
-    public void ZeroWeightsAreDroppedRatherThanBlockingTheTotal()
+    public void AnExplicitZeroTargetIsKeptAsAStatement()
     {
+        // P1-R08: an explicit 0% is "hold none of this", not an omission — dropping it made
+        // the rebalance analyzer refuse to plan the liquidation.
         using var store = NewStore();
         var saved = store.SaveSettings(new PortfolioSettings
         {
@@ -101,7 +103,9 @@ public class PortfolioSettingsTests : IDisposable
             },
         });
 
-        Assert.Equal(["equity"], saved.TargetAssetAllocation.Keys);
+        Assert.Equal(["bond", "equity"], saved.TargetAssetAllocation.Keys.OrderBy(k => k).ToArray());
+        Assert.Equal(0m, saved.TargetAssetAllocation["bond"]);
+        Assert.True(saved.TargetsAreCoherent); // 1 + 0 still sums to 100%
     }
 
     [Theory]
@@ -207,6 +211,128 @@ public class PortfolioSettingsTests : IDisposable
 
         Assert.Equal("USD", new PortfolioWorkspace(store, baseCurrency: "USD").BaseCurrency);
         Assert.Equal("CNY", new PortfolioWorkspace(store).BaseCurrency);
+    }
+
+    [Fact]
+    public async Task TwrNeedsTwoValuationPointsAndThenLinksThem()
+    {
+        using var store = NewStore();
+        var workspace = new PortfolioWorkspace(store);
+        workspace.Record(LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 1, 5), 100_000m, "CNY"));
+
+        var first = await workspace.RefreshAsync(new DateOnly(2026, 1, 5));
+        // One point in history: TWR is honestly null, not a number made from a single day.
+        Assert.Null(first.Twr);
+        Assert.NotNull(first.Xirr);
+
+        // A second valuation day (value unchanged: 100k cash) makes the curve linkable.
+        // The opening cash sits ON the first point, so it must not be double-counted —
+        // before that fix a flat ledger reported -50%.
+        var second = await workspace.RefreshAsync(new DateOnly(2026, 2, 5));
+        Assert.NotNull(second.Twr);
+        Assert.Equal(0.0, second.Twr!.Value, 6);
+    }
+
+    [Fact]
+    public async Task TwrCountsAnInterimDepositAsAFlowNotAGain()
+    {
+        using var store = NewStore();
+        var workspace = new PortfolioWorkspace(store);
+        workspace.Record(LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 1, 5), 100_000m, "CNY"));
+        await workspace.RefreshAsync(new DateOnly(2026, 1, 5));
+
+        // A deposit between the two points is money in, not a return.
+        workspace.Record(LedgerTransaction.Deposit("acct", new DateOnly(2026, 1, 20), 50_000m, "CNY"));
+        var second = await workspace.RefreshAsync(new DateOnly(2026, 2, 5));
+
+        Assert.NotNull(second.Twr);
+        Assert.Equal(0.0, second.Twr!.Value, 6);
+    }
+
+    // --- novice profile (N1) -------------------------------------------------------
+
+    [Fact]
+    public void RoundTripsTheNoviceProfile()
+    {
+        using var store = NewStore();
+        store.SaveSettings(new PortfolioSettings
+        {
+            UiMode = UiMode.Professional,
+            OnboardingCompleted = true,
+            Goal = "  十年内攒够首付  ",
+            HorizonYears = 10m,
+            LiquidityNeed = " AnyTime ",
+            EmergencyFundAmount = 60_000m,
+            MaxDrawdownTolerance = 0.3m,
+            WatchMarkets = ["hk", "CN", "jp"],
+        });
+
+        var loaded = store.LoadSettings();
+
+        Assert.Equal(UiMode.Professional, loaded.UiMode);
+        Assert.True(loaded.OnboardingCompleted);
+        Assert.Equal("十年内攒够首付", loaded.Goal);
+        Assert.Equal(10m, loaded.HorizonYears);
+        Assert.Equal("anytime", loaded.LiquidityNeed);
+        Assert.Equal(60_000m, loaded.EmergencyFundAmount);
+        Assert.Equal(0.3m, loaded.MaxDrawdownTolerance);
+        // Region codes normalize to their canonical form, deduplicated, sorted.
+        Assert.Equal(["cn", "hk", "jp"], loaded.WatchMarkets.ToArray());
+    }
+
+    [Fact]
+    public void AnOlderSettingsRowReadsAsNotStated()
+    {
+        using var store = NewStore();
+        // No novice keys at all — the pre-N1 settings layout.
+        store.SaveRawSetting("base_currency", "JPY");
+        store.SaveRawSetting("risk.single_position", "0.2");
+
+        var loaded = store.LoadSettings();
+
+        Assert.Equal(UiMode.Novice, loaded.UiMode);
+        Assert.False(loaded.OnboardingCompleted);
+        Assert.Equal("", loaded.Goal);
+        Assert.Null(loaded.HorizonYears);
+        Assert.Equal("", loaded.LiquidityNeed);
+        Assert.Equal(0m, loaded.EmergencyFundAmount);
+        Assert.Equal(0m, loaded.MaxDrawdownTolerance);
+        Assert.Empty(loaded.WatchMarkets);
+        // What the old row did carry still loads.
+        Assert.Equal("JPY", loaded.BaseCurrency);
+    }
+
+    [Fact]
+    public void AnUnknownLiquidityCodeIsRejectedNotGuessed()
+    {
+        using var store = NewStore();
+
+        Assert.Throws<LedgerException>(() =>
+            store.SaveSettings(new PortfolioSettings { LiquidityNeed = "whenever" }));
+        // A garbage value written by an older/foreign row reads as not stated, not as a crash.
+        store.SaveRawSetting("novice.liquidity", "garbage");
+        Assert.Equal("", store.LoadSettings().LiquidityNeed);
+    }
+
+    [Fact]
+    public void NoviceProfileValidatesItsOwnInputs()
+    {
+        using var store = NewStore();
+
+        Assert.Throws<LedgerException>(() =>
+            store.SaveSettings(new PortfolioSettings { HorizonYears = -1m }));
+        Assert.Throws<LedgerException>(() =>
+            store.SaveSettings(new PortfolioSettings { EmergencyFundAmount = -5m }));
+        Assert.Throws<LedgerException>(() =>
+            store.SaveSettings(new PortfolioSettings { MaxDrawdownTolerance = 1.5m }));
+        Assert.Throws<LedgerException>(() =>
+            store.SaveSettings(new PortfolioSettings { LiquidityNeed = "whenever" }));
+        Assert.Throws<LedgerException>(() =>
+            store.SaveSettings(new PortfolioSettings { WatchMarkets = ["xx"] }));
+
+        // Nothing above may have landed.
+        Assert.False(store.LoadSettings().OnboardingCompleted);
+        Assert.Null(store.LoadSettings().HorizonYears);
     }
 
     public void Dispose()

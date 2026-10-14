@@ -64,15 +64,30 @@ public sealed record LedgerTransaction
     /// <summary>Target currency of an <see cref="TransactionKind.FxExchange"/>.</summary>
     public string CounterCurrency { get; init; } = "";
     /// <summary>
+    /// Account receiving the <see cref="CounterCurrency"/> leg. Empty (or equal to
+    /// <see cref="AccountId"/>) means the same account — a cross-account exchange is the
+    /// ordinary "bank sells USD, broker receives USD" shape.
+    /// </summary>
+    public string CounterAccountId { get; init; } = "";
+    /// <summary>
     /// Amount actually credited in <see cref="CounterCurrency"/>. Stored rather than derived,
     /// because a rate like 1/7.2 has no exact decimal form and would leave residue in the balance.
     /// </summary>
     public decimal CounterAmount { get; init; }
     /// <summary>Units of <see cref="CounterCurrency"/> per unit of <see cref="Currency"/>; display only.</summary>
     public decimal FxRate { get; init; }
+    /// <summary>
+    /// Set on a reversal row: the id of the transaction it cancels. Both rows stay stored — an
+    /// append-only ledger is corrected by pairing, never by deleting — and replay treats the
+    /// pair as if it never happened.
+    /// </summary>
+    public string ReversesTransactionId { get; init; } = "";
     public string Note { get; init; } = "";
     public string ImportBatchId { get; init; } = "";
     public DateTimeOffset RecordedAt { get; init; } = DateTimeOffset.UtcNow;
+
+    /// <summary>True when this row exists only to cancel <see cref="ReversesTransactionId"/>.</summary>
+    public bool IsReversal => ReversesTransactionId.Length > 0;
 
     public Money FeeMoney => Money.Of(Fee, Currency);
     public Money TaxMoney => Money.Of(Tax, Currency);
@@ -163,16 +178,19 @@ public sealed record LedgerTransaction
 
     /// <summary>
     /// Records an exchange by the two amounts on the receipt — the precise way to book it,
-    /// since the implied rate rarely has an exact decimal form.
+    /// since the implied rate rarely has an exact decimal form. Pass
+    /// <paramref name="counterAccountId"/> to book the incoming leg into a different account
+    /// (e.g. USD leaves the bank account and lands in the broker account).
     /// </summary>
     public static LedgerTransaction FxExchange(
         string accountId, DateOnly date,
         decimal fromAmount, string fromCurrency,
         decimal toAmount, string toCurrency,
-        decimal fee = 0m, string note = "")
+        decimal fee = 0m, string note = "",
+        string? counterAccountId = null)
     {
         RequirePositive(toAmount, "换汇入账金额");
-        return FxLeg(accountId, date, fromAmount, fromCurrency, toCurrency, toAmount, toAmount / fromAmount, fee, note);
+        return FxLeg(accountId, date, fromAmount, fromCurrency, toCurrency, toAmount, toAmount / fromAmount, fee, note, counterAccountId);
     }
 
     /// <summary>Records an exchange by rate: units of <paramref name="toCurrency"/> per unit of <paramref name="fromCurrency"/>.</summary>
@@ -180,17 +198,18 @@ public sealed record LedgerTransaction
         string accountId, DateOnly date,
         decimal fromAmount, string fromCurrency,
         string toCurrency, decimal rate,
-        decimal fee = 0m, string note = "")
+        decimal fee = 0m, string note = "",
+        string? counterAccountId = null)
     {
         RequirePositive(rate, "换汇汇率");
-        return FxLeg(accountId, date, fromAmount, fromCurrency, toCurrency, fromAmount * rate, rate, fee, note);
+        return FxLeg(accountId, date, fromAmount, fromCurrency, toCurrency, fromAmount * rate, rate, fee, note, counterAccountId);
     }
 
     private static LedgerTransaction FxLeg(
         string accountId, DateOnly date,
         decimal fromAmount, string fromCurrency,
         string toCurrency, decimal toAmount, decimal rate,
-        decimal fee, string note)
+        decimal fee, string note, string? counterAccountId)
     {
         RequirePositive(fromAmount, "换汇金额");
         RequireNonNegative(fee, "手续费");
@@ -201,11 +220,20 @@ public sealed record LedgerTransaction
             throw new LedgerException("换汇的两种货币不能相同。");
         }
 
+        var resolvedCounterAccount = string.IsNullOrWhiteSpace(counterAccountId)
+            ? accountId
+            : counterAccountId!.Trim();
+        if (resolvedCounterAccount != accountId && string.Equals(resolvedCounterAccount, accountId, StringComparison.Ordinal))
+        {
+            throw new LedgerException("对方账户与换出账户相同；跨账户换汇请留空对方账户或选择不同账户。");
+        }
+
         return New(TransactionKind.FxExchange, accountId, "", date, from) with
         {
             CashAmount = fromAmount,
             CounterCurrency = to,
             CounterAmount = toAmount,
+            CounterAccountId = resolvedCounterAccount,
             FxRate = rate,
             Fee = fee,
             Note = note.Trim(),
@@ -213,6 +241,29 @@ public sealed record LedgerTransaction
     }
 
     // --- helpers -------------------------------------------------------------------
+
+    /// <summary>
+    /// Builds the mirror row that cancels <paramref name="original"/>. It copies the original's
+    /// economics exactly, so the pair nets to zero on replay without depending on the order or
+    /// the rounding of any recomputation. The reason is the whole audit trail a correction needs
+    /// beyond the two rows themselves.
+    /// </summary>
+    public static LedgerTransaction Reversal(LedgerTransaction original, string reason)
+    {
+        ArgumentNullException.ThrowIfNull(original);
+        if (original.IsReversal)
+        {
+            throw new LedgerException("冲正记录本身不能再被冲正；如需恢复，请录入一条相反方向的新流水。");
+        }
+
+        return original with
+        {
+            Id = $"txn_rev_{Guid.NewGuid():N}",
+            ReversesTransactionId = original.Id,
+            Note = string.IsNullOrWhiteSpace(reason) ? "冲正" : reason.Trim(),
+            RecordedAt = DateTimeOffset.UtcNow,
+        };
+    }
 
     private static LedgerTransaction Trade(
         TransactionKind kind, string accountId, string symbol, DateOnly tradeDate,

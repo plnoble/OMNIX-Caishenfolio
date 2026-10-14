@@ -16,11 +16,24 @@ public static class PositionCalculator
     {
         ArgumentNullException.ThrowIfNull(transactions);
 
+        // A correction pairs the original with a mirror row that points back at it; replay skips
+        // both, so the ledger reads as if the corrected fact never happened — cash, cost, income,
+        // and external flows all agree, and no re-derivation can drift. Rows are never removed.
+        var cancelled = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var txn in transactions)
+        {
+            if (txn.IsReversal)
+            {
+                cancelled.Add(txn.ReversesTransactionId);
+                cancelled.Add(txn.Id);
+            }
+        }
+
         var positions = new Dictionary<(string Account, string Symbol), PositionAccumulator>();
         var cash = new Dictionary<(string Account, string Currency), decimal>();
         var flows = new List<ExternalFlow>();
 
-        foreach (var txn in Ordered(transactions))
+        foreach (var txn in Ordered(transactions).Where(t => !cancelled.Contains(t.Id)))
         {
             switch (txn.Kind)
             {
@@ -79,8 +92,11 @@ public static class PositionCalculator
                     break;
 
                 case TransactionKind.FxExchange:
+                    // The incoming leg may land in a different account (bank sells USD, broker
+                    // receives it); an empty counter account means the same account.
                     AddCash(cash, txn.AccountId, txn.Currency, -(txn.CashAmount + txn.Fee));
-                    AddCash(cash, txn.AccountId, txn.CounterCurrency, txn.CounterAmount);
+                    AddCash(cash, txn.CounterAccountId.Length > 0 ? txn.CounterAccountId : txn.AccountId,
+                        txn.CounterCurrency, txn.CounterAmount);
                     break;
 
                 default:

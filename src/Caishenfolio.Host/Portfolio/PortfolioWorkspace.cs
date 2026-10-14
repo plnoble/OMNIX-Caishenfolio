@@ -14,6 +14,9 @@ public sealed record WorkspaceSnapshot
     public required IReadOnlyList<CashBalance> CashBalances { get; init; }
     /// <summary>Money-weighted return, or null when the flows cannot support one.</summary>
     public double? Xirr { get; init; }
+
+    /// <summary>Linked time-weighted return, or null with fewer than two valuation points.</summary>
+    public double? Twr { get; init; }
     public required PortfolioRiskReport Risk { get; init; }
     public required IReadOnlyList<PortfolioAlert> Alerts { get; init; }
     public required IReadOnlyList<string> Warnings { get; init; }
@@ -127,7 +130,8 @@ public sealed class PortfolioWorkspace
             valuation,
             Settings.Thresholds,
             _store.ListValuationHistory(BaseCurrency),
-            Settings.TargetAssetAllocation);
+            Settings.TargetAssetAllocation,
+            Settings.EmergencyFundAmount);
 
         var alerts = PortfolioAlertEvaluator.Evaluate(
             valuation,
@@ -147,6 +151,7 @@ public sealed class PortfolioWorkspace
             Transactions = transactions,
             CashBalances = state.CashBalances,
             Xirr = TryXirr(state, valuation, date),
+            Twr = TryTwr(state, valuation, date),
             Risk = risk,
             Alerts = alerts,
             Warnings = warnings.Concat(valuation.Warnings).Distinct(StringComparer.Ordinal).ToArray(),
@@ -175,6 +180,21 @@ public sealed class PortfolioWorkspace
             _store,
             BaseCurrency,
             _store.ListAccounts(includeArchived: true).ToDictionary(a => a.Name, a => a.Id, StringComparer.Ordinal));
+
+    /// <summary>
+    /// Cancels a recorded transaction by pairing it with a reversal row. The original stays — an
+    /// append-only ledger is corrected by an opposite entry, never by removal — and replay skips
+    /// the pair, so cash, positions, and flows return to their pre-mistake state exactly.
+    /// </summary>
+    public LedgerTransaction ReverseTransaction(string transactionId, string reason = "")
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(transactionId);
+        var original = _store.ListTransactions().FirstOrDefault(t => t.Id == transactionId)
+                       ?? throw new LedgerException($"流水 {transactionId} 不存在。");
+        var reversal = LedgerTransaction.Reversal(original, reason);
+        _store.AddTransaction(reversal);
+        return reversal;
+    }
 
     public int CommitImport(CsvImportPreview preview, bool skipInvalidRows = false)
     {
@@ -262,6 +282,49 @@ public sealed class PortfolioWorkspace
         try
         {
             return ReturnMetrics.Xirr(state.ExternalFlows, valuation.TotalValue, asOf);
+        }
+        catch (LedgerException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Time-weighted return from the stored valuation curve. Needs at least two points, which
+    /// means it is null on the very first refresh — the overview shows "—" until a second
+    /// day of history exists, which is more honest than a number built from one point.
+    ///
+    /// A snapshot at date D is a full replay, so it already embeds flows dated D (and all
+    /// earlier ones). Those must not be counted again as inflow — doing so double-counts the
+    /// opening cash and turns a flat ledger into a -50% "return". Only flows strictly between
+    /// two snapshot dates are genuine interim flows.
+    /// </summary>
+    private double? TryTwr(LedgerState state, PortfolioValuation valuation, DateOnly asOf)
+    {
+        if (state.ExternalFlows.Any(f => f.Amount.Currency != BaseCurrency))
+        {
+            return null;
+        }
+
+        try
+        {
+            var history = _store.ListValuationHistory(BaseCurrency);
+            var points = history.Count > 0 && history[^1].Date != asOf
+                ? [.. history, new ValuationPoint(asOf, valuation.TotalValue.Amount)]
+                : history;
+            if (points.Count == 0)
+            {
+                return null;
+            }
+
+            // Snapshot semantics: each point already contains that day's flows. Interior
+            // flows (after the first point, on/before the last) all belong in the chain —
+            // TimeWeighted places them by its end-of-day convention (P1-03).
+            var flows = state.ExternalFlows
+                .Where(f => f.Date > points[0].Date && f.Date <= points[^1].Date)
+                .Select(f => new DatedAmount(f.Date, f.Amount.Amount))
+                .ToArray();
+            return ReturnMetrics.TimeWeighted(points, flows);
         }
         catch (LedgerException)
         {

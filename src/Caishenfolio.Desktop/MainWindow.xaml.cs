@@ -26,6 +26,8 @@ public partial class MainWindow : Window
     private readonly PricePlanStore _pricePlan;
     private readonly PortfolioStore _portfolio;
     private readonly PortfolioViewModel _portfolioModel;
+    private PortfolioWorkspace? _wealthWorkspace;
+    private bool _noviceMode = true;
     private readonly PythonRuntimeProvisioner _pythonRuntime;
     private AnalyticsCoreClient? _client;
     private IReadOnlyList<MarketBarDto> _lastBars = Array.Empty<MarketBarDto>();
@@ -54,9 +56,17 @@ public partial class MainWindow : Window
         MarketHintText.Text = MarketLabels.FormatHint();
         SetCoreStatus(false);
 
-        var localApp = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Caishenfolio");
+        var isolation = TestIsolation.Resolve();
+        if (isolation.Mode == TestIsolationMode.Invalid)
+        {
+            throw new InvalidOperationException("测试隔离配置无效，已停止启动：" + isolation.Reason);
+        }
+
+        var localApp = isolation.Mode == TestIsolationMode.Isolated
+            ? isolation.StateRoot
+            : Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Caishenfolio");
         _pathRoots
             .Register(PathRootKind.Import, Path.Combine(localApp, "import"))
             .Register(PathRootKind.Artifact, Path.Combine(localApp, "artifact"))
@@ -80,6 +90,7 @@ public partial class MainWindow : Window
         // still opens and values cash, with holdings shown as "缺价格" rather than as zero.
         // The research side's planned buy/sell levels feed the wealth side's price alerts.
         var workspace = new PortfolioWorkspace(_portfolio) { PlanStore = _pricePlan };
+        _wealthWorkspace = workspace;
         _portfolioModel = new PortfolioViewModel(workspace);
         var artifactRoot = _pathRoots.GetRoot(PathRootKind.Artifact);
         OverviewView.Bind(_portfolioModel);
@@ -90,10 +101,23 @@ public partial class MainWindow : Window
         HoldingsPage.Exported += message => StatusText.Text = message;
         LedgerPage.Notified += message => StatusText.Text = message;
 
+        NoviceHomePage.Bind(_portfolioModel, workspace);
+        NoviceHomePage.NavigateRequested += page => ShowPage(page);
+        NoviceHomePage.OnboardingRequested += ShowOnboardingDialog;
+        NoviceHomePage.ModeSwitchRequested += () => SetNoviceMode(false);
+
+        EvidenceCardPage.Bind(
+            () => _client,
+            () => _portfolioModel,
+            () => workspace.BaseCurrency,
+            () => workspace.Settings.Thresholds.SinglePosition,
+            () => workspace.Settings.PriceTolerancePercent);
+
         // The analysis pages read through the core, which is not up yet — hand them an accessor
         // rather than a client, so they pick it up whenever it becomes available.
         ValuationPage.Bind(() => _client);
-        FxPage.Bind(() => _client, () => workspace.BaseCurrency);
+        FxPage.Bind(() => _client, () => workspace.BaseCurrency, () => _portfolioModel.Snapshot);
+        RiskLabPage.Bind(_portfolioModel);
         IpoPage.Bind(workspace);
         IpoPage.Notified += message => StatusText.Text = message;
 
@@ -110,10 +134,20 @@ public partial class MainWindow : Window
         ApplyDefaultDateRange("daily");
         UpdateChartPeriodHint();
         RefreshWatchListUi();
-        ShowPage("overview");
+        _noviceMode = workspace.Settings.UiMode != UiMode.Professional;
+        ApplyNavigationMode();
+        ShowPage(_noviceMode ? "home" : "overview");
 
         Loaded += async (_, _) =>
         {
+            // First run: collect the novice profile once, never again (OnboardingCompleted).
+            // Shown after the main window exists so CenterOwner and the smoke test's title
+            // check both behave.
+            if (!workspace.Settings.OnboardingCompleted)
+            {
+                ShowOnboardingDialog();
+            }
+
             await _portfolioModel.RefreshAsync().ConfigureAwait(true);
             await EnsureCoreReadyAsync(auto: true).ConfigureAwait(true);
             AttachPortfolioPricing();
@@ -337,6 +371,7 @@ public partial class MainWindow : Window
     private void NavValuation_OnClick(object sender, RoutedEventArgs e) => ShowPage("valuation");
     private void NavIpo_OnClick(object sender, RoutedEventArgs e) => ShowPage("ipo");
     private void NavFx_OnClick(object sender, RoutedEventArgs e) => ShowPage("fx");
+    private void NavRiskLab_OnClick(object sender, RoutedEventArgs e) => ShowPage("risklab");
     private void NavOverview_OnClick(object sender, RoutedEventArgs e) => ShowPage("overview");
     private void NavHoldings_OnClick(object sender, RoutedEventArgs e) => ShowPage("holdings");
     private void NavLedger_OnClick(object sender, RoutedEventArgs e) => ShowPage("ledger");
@@ -350,25 +385,40 @@ public partial class MainWindow : Window
     private void ShowPage(string page)
     {
         _currentPage = page;
+        PageHome.Visibility = page == "home" ? Visibility.Visible : Visibility.Collapsed;
+        PageEvidenceCard.Visibility = page == "evidencecard" ? Visibility.Visible : Visibility.Collapsed;
         PageOverview.Visibility = page == "overview" ? Visibility.Visible : Visibility.Collapsed;
         PageHoldings.Visibility = page == "holdings" ? Visibility.Visible : Visibility.Collapsed;
         PageLedger.Visibility = page == "ledger" ? Visibility.Visible : Visibility.Collapsed;
         PageValuation.Visibility = page == "valuation" ? Visibility.Visible : Visibility.Collapsed;
         PageIpo.Visibility = page == "ipo" ? Visibility.Visible : Visibility.Collapsed;
         PageFx.Visibility = page == "fx" ? Visibility.Visible : Visibility.Collapsed;
+        PageRiskLab.Visibility = page == "risklab" ? Visibility.Visible : Visibility.Collapsed;
         PageMarket.Visibility = page == "market" ? Visibility.Visible : Visibility.Collapsed;
         PagePlan.Visibility = page == "plan" ? Visibility.Visible : Visibility.Collapsed;
         PageGrid.Visibility = page == "grid" ? Visibility.Visible : Visibility.Collapsed;
         PageBacktest.Visibility = page == "backtest" ? Visibility.Visible : Visibility.Collapsed;
         PageCompare.Visibility = page == "compare" ? Visibility.Visible : Visibility.Collapsed;
         PageSystem.Visibility = page == "system" ? Visibility.Visible : Visibility.Collapsed;
+        ResearchContextBar.Visibility = page is "market" or "plan" or "grid" or "backtest" or "compare"
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
+        SetNavStyle(NavHome, page == "home");
+        SetNavStyle(NavEvidenceCard, page == "evidencecard");
         SetNavStyle(NavOverview, page == "overview");
         SetNavStyle(NavHoldings, page == "holdings");
         SetNavStyle(NavLedger, page == "ledger");
         SetNavStyle(NavValuation, page == "valuation");
         SetNavStyle(NavIpo, page == "ipo");
         SetNavStyle(NavFx, page == "fx");
+        SetNavStyle(NavRiskLab, page == "risklab");
+
+        if (page == "risklab")
+        {
+            // Simulations must read the latest valuation, not whatever was current at startup.
+            RiskLabPage.Render();
+        }
 
         if (page == "ipo")
         {
@@ -400,11 +450,106 @@ public partial class MainWindow : Window
             var n = _watchlist.Load().Count;
             CompareHintText.Text = $"当前关注 {n} 只；对比至少需要 2 只。";
         }
+
+        UpdatePageContextBadge(page);
+    }
+
+    /// <summary>
+    /// The badge is the stable visual separation the plan demands (plan §6): ledger-backed
+    /// pages, read-only research simulation, and pure history must never be confusable.
+    /// </summary>
+    private void UpdatePageContextBadge(string page)
+    {
+        PageContextText.Text = page switch
+        {
+            "market" or "plan" or "grid" or "compare" or "valuation" or "fx" => "研究模拟",
+            "backtest" => "历史回测",
+            "evidencecard" => "研究模拟",
+            "system" => "系统",
+            _ => "真实账本",
+        };
+
+        PageContextBadge.Background = new System.Windows.Media.SolidColorBrush(page switch
+        {
+            "market" or "plan" or "grid" or "compare" or "valuation" or "fx" or "evidencecard" => System.Windows.Media.Color.FromRgb(0x2B, 0x5A, 0x7A),
+            "backtest" => System.Windows.Media.Color.FromRgb(0x5A, 0x3A, 0x7A),
+            "system" => System.Windows.Media.Color.FromRgb(0x3D, 0x4F, 0x63),
+            _ => System.Windows.Media.Color.FromRgb(0x1F, 0x6B, 0x4A),
+        });
     }
 
     private static void SetNavStyle(Button btn, bool active)
     {
         btn.Style = (Style)btn.FindResource(active ? "NavBtnActive" : "NavBtn");
+    }
+
+    // --- novice / professional mode (N1) --------------------------------------------
+
+    private void NavHome_OnClick(object sender, RoutedEventArgs e) => ShowPage("home");
+
+    private void NavEvidenceCard_OnClick(object sender, RoutedEventArgs e) => ShowPage("evidencecard");
+
+    private void NavModeToggle_OnClick(object sender, RoutedEventArgs e) =>
+        SetNoviceMode(!_noviceMode);
+
+    /// <summary>
+    /// Novice mode hides the raw research tree (the home page offers the same entries with
+    /// honest simulation badges); professional mode restores every page. The choice persists,
+    /// so the app always opens the way the user left it.
+    /// </summary>
+    private void SetNoviceMode(bool novice)
+    {
+        _noviceMode = novice;
+        if (_wealthWorkspace is not null)
+        {
+            try
+            {
+                _wealthWorkspace.ApplySettings(_wealthWorkspace.Settings with
+                {
+                    UiMode = novice ? UiMode.Novice : UiMode.Professional,
+                });
+            }
+            catch (Exception ex) when (ex is LedgerException or ArgumentException)
+            {
+                StatusText.Text = $"界面模式保存失败（本次仍切换）：{ex.Message}";
+            }
+        }
+
+        ApplyNavigationMode();
+        ShowPage(novice ? "home" : "overview");
+    }
+
+    private void ApplyNavigationMode()
+    {
+        var research = _noviceMode ? Visibility.Collapsed : Visibility.Visible;
+        // The evidence card is a novice-facing feature (plan §9): visible in both modes.
+        ResearchNavGroup.Visibility = research;
+        NavMarket.Visibility = research;
+        NavPlan.Visibility = research;
+        NavGrid.Visibility = research;
+        NavBacktest.Visibility = research;
+        NavCompare.Visibility = research;
+        NavEvidenceCard.Visibility = Visibility.Visible;
+
+        // The toggle says where it goes, not where we are.
+        NavModeToggleLabel.Text = _noviceMode ? "专业模式" : "小白模式";
+        NavModeToggle.ToolTip = _noviceMode
+            ? "专业模式：显示行情/计划/网格/回测/对比等全部研究页面"
+            : "小白模式：回到任务型首页，研究入口带说明徽标";
+    }
+
+    private void ShowOnboardingDialog()
+    {
+        if (_wealthWorkspace is null)
+        {
+            return;
+        }
+
+        var dialog = new OnboardingWindow(_wealthWorkspace, _ => { }) { Owner = this };
+        dialog.ShowDialog();
+
+        // The profile card on the home page reads settings directly, not via the snapshot.
+        NoviceHomePage.Reload();
     }
 
     private void BindPlanView()

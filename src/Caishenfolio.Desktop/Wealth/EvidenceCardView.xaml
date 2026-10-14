@@ -1,0 +1,113 @@
+<UserControl x:Class="Caishenfolio.Desktop.Wealth.EvidenceCardView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="Transparent">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,10">
+            <Button DockPanel.Dock="Right" x:Name="GenerateButton" Content="生成证据卡" Padding="14,6"
+                    Background="#1F6B4A" BorderBrush="#2F9A6A" Click="GenerateButton_OnClick" />
+            <StackPanel>
+                <TextBlock Text="股票证据卡" FontSize="18" FontWeight="SemiBold"
+                           Foreground="{StaticResource BrushAccent}" />
+                <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{StaticResource BrushFgMuted}"
+                           Text="把「该不该买」拆成可以核对的事实：证据是否充分、承担了什么风险、什么条件会推翻判断。结论只是证据状态的描述，不是买卖指令。" />
+            </StackPanel>
+        </DockPanel>
+
+        <!-- Inputs -->
+        <Border Grid.Row="1" Background="{StaticResource BrushBgPanel}" CornerRadius="10" Margin="0,0,0,10"
+                BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="12">
+            <StackPanel>
+                <WrapPanel>
+                    <TextBlock Text="方向" VerticalAlignment="Center" Margin="0,0,4,6"
+                               Foreground="{StaticResource BrushFgMuted}" />
+                    <ComboBox x:Name="SideCombo" Width="76" Margin="0,0,10,6" SelectedIndex="0"
+                              ToolTip="买入卡问「加仓的证据」；卖出卡问「减仓的证据」——同一组事实，相反的问题">
+                        <ComboBoxItem Content="买入" Tag="buy" IsSelected="True" />
+                        <ComboBoxItem Content="卖出" Tag="sell" />
+                    </ComboBox>
+                    <TextBlock Text="标的" VerticalAlignment="Center" Margin="0,0,4,6"
+                               Foreground="{StaticResource BrushFgMuted}" />
+                    <TextBox x:Name="SymbolBox" Width="110" Padding="4" Margin="0,0,10,6"
+                             ToolTip="直接输代码（600000）、名称（浦发银行）或 ticker（AAPL）即可" />
+                    <TextBlock Text="候选金额" VerticalAlignment="Center" Margin="0,0,4,6"
+                               Foreground="{StaticResource BrushFgMuted}" />
+                    <TextBox x:Name="CandidateAmountBox" Width="90" Padding="4" Margin="0,0,4,6"
+                             ToolTip="想投入的金额（留空则跳过组合影响部分）" />
+                    <TextBlock x:Name="CandidateCurrencyLabel" Text="CNY" VerticalAlignment="Center" Margin="0,0,10,6"
+                               Foreground="{StaticResource BrushFgMuted}" />
+                    <TextBlock Text="持有期限" VerticalAlignment="Center" Margin="0,0,4,6"
+                               Foreground="{StaticResource BrushFgMuted}" />
+                    <TextBox x:Name="HorizonDaysBox" Width="70" Padding="4" Margin="0,0,4,6"
+                             ToolTip="计划持有的天数（可留空；用于生成失效条件）" />
+                    <TextBlock Text="天" VerticalAlignment="Center" Margin="0,0,10,6"
+                               Foreground="{StaticResource BrushFgMuted}" />
+                    <TextBlock Text="可承受最大损失" VerticalAlignment="Center" Margin="0,0,4,6"
+                               Foreground="{StaticResource BrushFgMuted}" />
+                    <TextBox x:Name="MaxLossPctBox" Width="60" Padding="4" Margin="0,0,4,6"
+                             ToolTip="本金的百分比，如 20 表示 20%（可留空）" />
+                    <TextBlock Text="%" VerticalAlignment="Center" Margin="0,0,10,6"
+                               Foreground="{StaticResource BrushFgMuted}" />
+                    <TextBlock Text="资金来源" VerticalAlignment="Center" Margin="0,0,4,6"
+                               Foreground="{StaticResource BrushFgMuted}" />
+                    <ComboBox x:Name="FundingCombo" Width="130" Margin="0,0,10,6" SelectedIndex="0"
+                              ToolTip="账本现有现金：总资产不变，现金减少。外部新增资金：总资产增加，现有现金不变">
+                        <ComboBoxItem Content="账本现有现金" Tag="existing_cash" IsSelected="True" />
+                        <ComboBoxItem Content="外部新增资金" Tag="external" />
+                    </ComboBox>
+                </WrapPanel>
+                <TextBlock x:Name="PortfolioSourceText" TextWrapping="Wrap" FontSize="11"
+                           Foreground="{StaticResource BrushFgMuted}"
+                           Text="组合影响按当前账本估值计算（总资产、该标的现有占比、可用现金、单一持仓上限来自理财偏好）。研究模拟，不写入账本。" />
+            </StackPanel>
+        </Border>
+
+        <!-- Status / conclusion banner -->
+        <Border Grid.Row="2" x:Name="ConclusionBanner" Visibility="Collapsed" CornerRadius="10" Padding="14,10"
+                Margin="0,0,0,10" Background="#121A24"
+                BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock x:Name="ConclusionStatusText" FontSize="16" FontWeight="SemiBold" />
+                    <TextBlock x:Name="ConclusionMetaText" FontSize="11" VerticalAlignment="Center" Margin="14,2,0,0"
+                               Foreground="{StaticResource BrushFgMuted}" />
+                </StackPanel>
+                <TextBlock x:Name="ConclusionSummaryText" TextWrapping="Wrap" FontSize="12" Margin="0,4,0,0"
+                           Foreground="{StaticResource BrushFgSecondary}" />
+                <ItemsControl x:Name="ConclusionReasonList" Margin="0,4,0,0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="11" Margin="0,2,0,0"
+                                       Foreground="{StaticResource BrushFgMuted}" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
+
+        <!-- Card sections -->
+        <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="CardSections">
+                <TextBlock x:Name="StatusText" TextWrapping="Wrap" FontSize="12"
+                           Foreground="{StaticResource BrushFgMuted}"
+                           Text="输入标的（可用名称/代码/拼音首字母），点「生成证据卡」。数据不足时卡片会明确停在「证据不足」。"/>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Disclaimer -->
+        <Border Grid.Row="4" Background="{StaticResource BrushBgPanel}" CornerRadius="8" Padding="10"
+                BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Margin="0,12,0,0">
+            <TextBlock x:Name="DisclaimerText" TextWrapping="Wrap" FontSize="11"
+                       Foreground="{StaticResource BrushFgMuted}" />
+        </Border>
+    </Grid>
+</UserControl>

@@ -203,7 +203,8 @@ public class TransactionCsvImporterTests : IDisposable
         var preview = TransactionCsvImporter.Preview(TransactionCsvImporter.BuildTemplate(), Account);
 
         Assert.Equal(0, preview.Invalid);
-        Assert.Equal(6, preview.Importable);
+        // One example row per common kind, including an exchange with its counter leg.
+        Assert.Equal(7, preview.Importable);
     }
 
     [Fact]
@@ -222,6 +223,112 @@ public class TransactionCsvImporterTests : IDisposable
         Assert.Equal(before.Quantity, after.Quantity);
         Assert.Equal(before.CostBasis.Amount, after.CostBasis.Amount);
         Assert.Equal(before.RealizedPnl.Amount, after.RealizedPnl.Amount);
+    }
+
+
+    [Fact]
+    public void ExportedExchangeRowsRoundTripWithTheirCounterLeg()
+    {
+        using var store = PortfolioStore.UnderStateRoot(_root);
+        var exchange = LedgerTransaction.FxExchange(
+            Account, new DateOnly(2026, 1, 20), 1000m, "CNY", 155_000m, "JPY", fee: 2m, note: "按回单");
+        store.AddTransaction(exchange);
+
+        var csv = PortfolioReportExporter.TransactionsCsv(store.ListTransactions());
+        var preview = TransactionCsvImporter.Preview(csv, Account);
+
+        var row = Assert.Single(preview.Rows);
+        var rebuilt = row.Transaction;
+        Assert.NotNull(rebuilt);
+        Assert.Equal(TransactionKind.FxExchange, rebuilt!.Kind);
+        Assert.Equal(1000m, rebuilt.CashAmount);
+        Assert.Equal("CNY", rebuilt.Currency);
+        Assert.Equal("JPY", rebuilt.CounterCurrency);
+        Assert.Equal(155_000m, rebuilt.CounterAmount);
+        Assert.Equal(2m, rebuilt.Fee);
+        Assert.False(row.Duplicate); // not yet in the target book
+    }
+
+    [Fact]
+    public void ReimportingAnExportOfRecordedRowsIsANoOp()
+    {
+        using var store = PortfolioStore.UnderStateRoot(_root);
+        store.AddTransactions(
+        [
+            LedgerTransaction.Deposit(Account, new DateOnly(2026, 1, 2), 50_000m, "CNY", "工资转入"),
+            LedgerTransaction.Buy(Account, "SSE:600000", new DateOnly(2026, 1, 5), 1000m, 10.05m, "CNY", 5m),
+        ]);
+
+        var csv = PortfolioReportExporter.TransactionsCsv(store.ListTransactions());
+        var preview = TransactionCsvImporter.Preview(csv, Account, store);
+
+        // Every exported row already lives in the book (matched by content, not by id).
+        Assert.Equal(0, preview.Importable);
+        Assert.Equal(2, preview.Duplicates);
+        Assert.Equal(0, preview.Invalid);
+    }
+
+    [Fact]
+    public void AReversalPairCannotBeResurrectedThroughImport()
+    {
+        using var store = PortfolioStore.UnderStateRoot(_root);
+        var buy = LedgerTransaction.Buy(Account, "SSE:600000", new DateOnly(2026, 1, 5), 100m, 10m, "CNY", 5m);
+        store.AddTransaction(buy);
+        store.AddTransaction(LedgerTransaction.Reversal(buy, "撤单"));
+
+        var csv = PortfolioReportExporter.TransactionsCsv(store.ListTransactions());
+        var preview = TransactionCsvImporter.Preview(csv, Account, store);
+
+        // The original row is refused because it is reversed; the mirror row is refused by kind.
+        Assert.Equal(0, preview.Importable);
+        Assert.Equal(2, preview.Invalid);
+        Assert.Contains(preview.Rows, r => r.Error is not null && r.Error.Contains("已冲正"));
+        Assert.Contains(preview.Rows, r => r.Error is not null && r.Error.Contains("冲正记录不能通过 CSV 导入"));
+    }
+
+
+    [Fact]
+    public void ACrossAccountExchangeRoundTripsThroughCsvWithBothBalancesIntact()
+    {
+        using var store = PortfolioStore.UnderStateRoot(_root);
+        var bank = store.SaveAccount(Host.Portfolio.Account.Create("银行", AccountKind.Bank, "CNY"));
+        var broker = store.SaveAccount(Host.Portfolio.Account.Create("券商", AccountKind.Securities, "USD"));
+
+        // Bank sells 7 000 CNY; the USD lands in the broker account.
+        store.AddTransaction(LedgerTransaction.FxExchange(
+            bank.Id, new DateOnly(2026, 1, 5), 7_000m, "CNY", 1_000m, "USD",
+            counterAccountId: broker.Id));
+
+        var csv = PortfolioReportExporter.TransactionsCsv(
+            store.ListTransactions(),
+            store.ListAccounts(includeArchived: true).ToDictionary(a => a.Id, a => a, StringComparer.Ordinal));
+        var preview = TransactionCsvImporter.Preview(
+            csv, bank.Id, store, "CNY",
+            store.ListAccounts(includeArchived: true).ToDictionary(a => a.Name, a => a.Id, StringComparer.Ordinal));
+
+        // The exported row must not import as a duplicate of itself (same economic content).
+        Assert.Equal(0, preview.Invalid);
+        var row = Assert.Single(preview.Rows);
+        Assert.True(row.Duplicate);
+
+        // And a FRESH store importing the same file must land both legs in the right accounts.
+        using var freshRoot = PortfolioStore.UnderStateRoot(
+            Path.Combine(_root, "fresh", Guid.NewGuid().ToString("N")));
+        var freshBank = freshRoot.SaveAccount(Host.Portfolio.Account.Create("银行", AccountKind.Bank, "CNY"));
+        var freshBroker = freshRoot.SaveAccount(Host.Portfolio.Account.Create("券商", AccountKind.Securities, "USD"));
+        var freshPreview = TransactionCsvImporter.Preview(
+            csv, freshBank.Id, freshRoot, "CNY",
+            freshRoot.ListAccounts(includeArchived: true).ToDictionary(a => a.Name, a => a.Id, StringComparer.Ordinal));
+        TransactionCsvImporter.Commit(freshPreview, freshRoot);
+
+        var state = freshRoot.LoadState();
+        // Both legs land in the right accounts — the counter account survived the round trip.
+        var bankCash = state.CashBalances.Single(b => b.AccountId == freshBank.Id);
+        Assert.Equal(-7_000m, bankCash.Amount);
+        Assert.Equal("CNY", bankCash.Currency);
+        var brokerCash = state.CashBalances.Single(b => b.AccountId == freshBroker.Id);
+        Assert.Equal(1_000m, brokerCash.Amount);
+        Assert.Equal("USD", brokerCash.Currency);
     }
 
     public void Dispose()

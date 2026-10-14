@@ -9,6 +9,7 @@ from pathlib import Path
 from caishenfolio_core.data.markets import classify_cn_code, cn_exchange_for_code
 from caishenfolio_core.data.models import MarketRegion
 from caishenfolio_core.market.fixture import SymbolHit
+from caishenfolio_core.market.pinyin_index import pinyin_matches
 
 # Offline seed — always works for common names (e.g. 平安).
 _SEED: tuple[tuple[str, str, str], ...] = (
@@ -151,16 +152,20 @@ def load_a_share_name_index() -> list[tuple[str, str, str]]:
 
 
 def fuzzy_search_a_share(query: str, limit: int = 20) -> list[SymbolHit]:
-    """Substring fuzzy match on code/name (e.g. 平安 → 平安银行 / 中国平安)."""
+    """Match on code / name / pinyin (e.g. 平安 → 平安银行; ``pfyh`` → 浦发银行)."""
     q = (query or "").strip()
     if not q:
         return []
     q_lower = q.lower()
     limit = max(1, min(limit, 50))
+    # An ASCII-letter query is a pinyin attempt: pinyin initials/full match, and only a
+    # letter-by-letter code match still applies (A-share codes are digits, so none).
+    pinyin_query = q.isascii() and q.isalpha()
 
     starts: list[SymbolHit] = []
     contains: list[SymbolHit] = []
     code_hits: list[SymbolHit] = []
+    pinyin_hits: list[SymbolHit] = []
 
     for code, name, exchange in load_a_share_name_index():
         name_l = name.lower()
@@ -178,10 +183,12 @@ def fuzzy_search_a_share(query: str, limit: int = 20) -> list[SymbolHit]:
             contains.append(hit)
         elif q in code or q_lower in code_l:
             code_hits.append(hit)
+        elif pinyin_query and pinyin_matches(q, name):
+            pinyin_hits.append(hit)
 
     merged: list[SymbolHit] = []
     seen: set[str] = set()
-    for bucket in (starts, contains, code_hits):
+    for bucket in (starts, contains, pinyin_hits, code_hits):
         for item in bucket:
             if item.symbol in seen:
                 continue

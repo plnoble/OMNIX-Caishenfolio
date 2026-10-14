@@ -1,0 +1,152 @@
+<UserControl x:Class="Caishenfolio.Desktop.Wealth.RiskLabView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="Transparent">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" Margin="0,0,0,12">
+            <StackPanel>
+                <TextBlock Text="风险与模拟" FontSize="18" FontWeight="SemiBold"
+                           Foreground="{StaticResource BrushAccent}" />
+                <TextBlock Text="解释盈亏和风险来自哪里；模拟一笔操作或一个行情假设会怎样。全部是数字推演，不构成建议，也不会写入真实账本。"
+                           Margin="0,4,0,0" Foreground="{StaticResource BrushFgMuted}" TextWrapping="Wrap" />
+            </StackPanel>
+        </DockPanel>
+
+        <Grid Grid.Row="1" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- What-if -->
+            <Border Grid.Column="0" Background="{StaticResource BrushBgPanel}" CornerRadius="10"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="12">
+                <StackPanel>
+                    <TextBlock Text="如果买入……（操作前模拟）" Style="{StaticResource SectionTitle}" />
+                    <WrapPanel Margin="0,4,0,6">
+                        <TextBlock Text="标的" VerticalAlignment="Center" Margin="0,0,4,6" Foreground="{StaticResource BrushFgMuted}" />
+                        <TextBox x:Name="WhatIfSymbolBox" Width="130" Margin="0,0,8,6"
+                                 ToolTip="代码、名称或 600000 / 00700 / AAPL 这类裸代码" />
+                        <TextBlock Text="金额" VerticalAlignment="Center" Margin="0,0,4,6" Foreground="{StaticResource BrushFgMuted}" />
+                        <TextBox x:Name="WhatIfAmountBox" Width="100" Margin="0,0,4,6" />
+                        <TextBlock Text="新标的货币" VerticalAlignment="Center" Margin="0,0,4,6" Foreground="{StaticResource BrushFgMuted}" />
+                        <ComboBox x:Name="WhatIfCurrencyCombo" Width="70" Margin="0,0,8,6" SelectedIndex="0">
+                            <ComboBoxItem Content="CNY" IsSelected="True" />
+                            <ComboBoxItem Content="HKD" />
+                            <ComboBoxItem Content="USD" />
+                            <ComboBoxItem Content="JPY" />
+                        </ComboBox>
+                        <Button Content="模拟" Padding="14,4" Margin="0,0,0,6" Click="WhatIfButton_OnClick" />
+                    </WrapPanel>
+                    <TextBlock x:Name="WhatIfResultText" TextWrapping="Wrap" FontSize="12"
+                               Foreground="{StaticResource BrushFgSecondary}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Stress -->
+            <Border Grid.Column="1" Background="{StaticResource BrushBgPanel}" CornerRadius="10"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="12">
+                <StackPanel>
+                    <TextBlock Text="压力情景（假设分析，不是预测）" Style="{StaticResource SectionTitle}" />
+                    <WrapPanel Margin="0,4,0,6">
+                        <TextBlock Text="股票跌" VerticalAlignment="Center" Margin="0,0,4,6" Foreground="{StaticResource BrushFgMuted}" />
+                        <TextBox x:Name="StressEquityBox" Width="52" Margin="0,0,8,6" Text="0" />
+                        <TextBlock Text="USD 变" VerticalAlignment="Center" Margin="0,0,4,6" Foreground="{StaticResource BrushFgMuted}" />
+                        <TextBox x:Name="StressUsdBox" Width="52" Margin="0,0,8,6" Text="0" />
+                        <TextBlock Text="JPY 变" VerticalAlignment="Center" Margin="0,0,4,6" Foreground="{StaticResource BrushFgMuted}" />
+                        <TextBox x:Name="StressJpyBox" Width="52" Margin="0,0,8,6" Text="0" />
+                        <TextBlock Text="最大持仓跌" VerticalAlignment="Center" Margin="0,0,4,6" Foreground="{StaticResource BrushFgMuted}" />
+                        <TextBox x:Name="StressLargestBox" Width="52" Margin="0,0,8,6" Text="0" />
+                        <TextBlock Text="债券类变" VerticalAlignment="Center" Margin="0,0,4,6" Foreground="{StaticResource BrushFgMuted}" />
+                        <TextBox x:Name="StressFixedIncomeBox" Width="52" Margin="0,0,8,6" Text="0"
+                                 ToolTip="债券/可转债/场外基金按你填的假设变动（未建模久期）" />
+                        <TextBlock Text="%" VerticalAlignment="Center" Margin="0,0,8,6" Foreground="{StaticResource BrushFgMuted}" />
+                        <Button Content="运行" Padding="14,4" Margin="0,0,0,6" Click="StressButton_OnClick" />
+                    </WrapPanel>
+                    <TextBlock x:Name="StressResultText" TextWrapping="Wrap" FontSize="12"
+                               Foreground="{StaticResource BrushFgSecondary}" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Contributions + rebalance -->
+        <Grid Grid.Row="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0" Background="{StaticResource BrushBgPanel}" CornerRadius="10"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="12">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <DockPanel Grid.Row="0">
+                        <Button DockPanel.Dock="Right" Content="刷新" Padding="10,3" Click="RefreshButton_OnClick" />
+                        <TextBlock DockPanel.Dock="Left" Text="盈亏贡献与汇率拆分" Style="{StaticResource SectionTitle}" />
+                    </DockPanel>
+                    <TextBlock Grid.Row="0" Text="「涨跌部分」按今日汇率；「汇率部分」= 成本 ×（今日汇率 − 成本日汇率）；「相对实际投入」= 两者之和。拆不出汇率部分时如实说明。"
+                               TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource BrushFgMuted}" Margin="0,2,0,6" />
+                    <DataGrid Grid.Row="1" x:Name="ContributionGrid" Style="{StaticResource WealthGrid}" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="标的" Binding="{Binding Symbol}" Width="130"
+                                                ElementStyle="{StaticResource WealthCellText}" />
+                            <DataGridTextColumn Header="浮动盈亏" Binding="{Binding Unrealized}" Width="110"
+                                                ElementStyle="{StaticResource WealthCellText}" />
+                            <DataGridTextColumn Header="占比" Binding="{Binding Share}" Width="70"
+                                                ElementStyle="{StaticResource WealthCellText}" />
+                            <DataGridTextColumn Header="涨跌部分" Binding="{Binding LocalEffect}" Width="110"
+                                                ElementStyle="{StaticResource WealthCellText}" />
+                            <DataGridTextColumn Header="汇率部分" Binding="{Binding FxEffect}" Width="110"
+                                                ElementStyle="{StaticResource WealthCellText}" />
+                            <DataGridTextColumn Header="相对实际投入" Binding="{Binding TrueUnrealized}" Width="120"
+                                                ElementStyle="{StaticResource WealthCellText}" />
+                            <DataGridTextColumn Header="说明" Binding="{Binding Note}" Width="*"
+                                                ElementStyle="{StaticResource WealthCellText}" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1" Margin="0,8,0,0" Background="{StaticResource BrushBgPanel}" CornerRadius="10"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="12">
+                <StackPanel>
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="比较两种回到目标的方式" Padding="10,3"
+                                Click="RebalanceButton_OnClick" />
+                        <TextBlock DockPanel.Dock="Left" Text="回到目标配置：卖出 vs 新增资金" Style="{StaticResource SectionTitle}" />
+                    </DockPanel>
+                    <WrapPanel Margin="0,4,0,4">
+                        <TextBlock Text="可用的新增资金" VerticalAlignment="Center" Margin="0,0,4,0"
+                                   Foreground="{StaticResource BrushFgMuted}" />
+                        <TextBox x:Name="RebalanceCashBox" Width="110" />
+                        <TextBlock x:Name="RebalanceCurrencyText" Text="（本位币）" VerticalAlignment="Center" Margin="6,0,0,0"
+                                   Foreground="{StaticResource BrushFgMuted}" />
+                    </WrapPanel>
+                    <TextBlock x:Name="RebalanceResultText" TextWrapping="Wrap" FontSize="12"
+                               Foreground="{StaticResource BrushFgSecondary}" />
+
+                    <Separator Margin="0,10" Background="{StaticResource BrushBorder}" />
+
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="归因最大回撤" Padding="10,3"
+                                Click="AttributionButton_OnClick"
+                                ToolTip="解释历史最大回撤由哪些资产与汇率造成（需要先有若干次刷新积累的持仓快照）" />
+                        <TextBlock DockPanel.Dock="Left" Text="最大回撤归因" Style="{StaticResource SectionTitle}" />
+                    </DockPanel>
+                    <TextBlock x:Name="AttributionResultText" TextWrapping="Wrap" FontSize="12"
+                               Foreground="{StaticResource BrushFgSecondary}" Margin="0,4,0,0" />
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

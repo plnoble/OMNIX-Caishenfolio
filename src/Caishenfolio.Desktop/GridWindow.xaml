@@ -73,7 +73,8 @@
                                 </Grid>
 
                                 <StackPanel Orientation="Vertical" Margin="0,8,0,0">
-                                    <Button Content="AI 建议网格参数" Padding="10,6" Margin="0,0,0,8" Click="Suggest_OnClick" />
+                                    <Button Content="规则估算网格参数" Padding="10,6" Margin="0,0,0,8" Click="Suggest_OnClick"
+                                            ToolTip="基于历史K线的分位数与 ATR 规则估算，不是大模型，不构成投资建议" />
                                     <Button Content="运行网格回测" Padding="10,6" Margin="0,0,0,8" Click="Backtest_OnClick" />
                                     <Button Content="保存为台账方案" Padding="10,6" Click="SavePlan_OnClick" />
                                 </StackPanel>

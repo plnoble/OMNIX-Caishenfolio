@@ -38,7 +38,7 @@ public partial class GridView : UserControl
         _interval = interval;
         ContextText.Text =
             $"{MarketLabels.FromSymbol(symbol)}  {_symbol}  |  {_start} ~ {_end}  |  {_interval} / {_adjustment}";
-        StatusText.Text = "可先点「AI 建议网格参数」，再回测或保存到台账。";
+        StatusText.Text = "可先点「规则估算网格参数」，再回测或保存到台账。";
         _ = RefreshPlansSafeAsync();
     }
 
@@ -532,7 +532,7 @@ public partial class GridView : UserControl
         gridCount = 0;
         if (!TryParseDouble(LowerBox.Text, out lower) || !TryParseDouble(UpperBox.Text, out upper))
         {
-            StatusText.Text = "请填写有效上下沿（可先点 AI 建议）。";
+            StatusText.Text = "请填写有效上下沿（可先点规则估算）。";
             return false;
         }
 

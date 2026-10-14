@@ -525,7 +525,8 @@ public class HeadlessNotifierTests : IDisposable
 
         // Reporting "no alerts" would imply prices were checked and were fine.
         Assert.Contains(result.Limitations, note => note.Contains("价格", StringComparison.Ordinal));
-        Assert.Contains("只覆盖打新时限", result.Summarize(), StringComparison.Ordinal);
+        Assert.Contains("已检查：打新时限", result.Summarize(), StringComparison.Ordinal);
+        Assert.Contains("未开启扩展检查", result.Summarize(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -597,5 +598,110 @@ public class ScheduledCheckInstallerTests
         // An install path with a space must stay one argument.
         Assert.Contains(@"""C:\Program Files\OMNIX\Caishenfolio.Desktop.exe"" --notify",
             command, StringComparison.Ordinal);
+    }
+}
+
+public class NotifyLogReaderTests : IDisposable
+{
+    private readonly string _root = Path.Combine(
+        Path.GetTempPath(), "caishenfolio_notifylog_tests", Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public void MissingLogMeansNoRunRecorded()
+    {
+        var status = NotifyLogReader.Read(scheduled: true, logPath: Path.Combine(_root, "notify.log"));
+
+        Assert.True(status.Scheduled);
+        Assert.Null(status.LastRun);
+        Assert.Null(status.LastRunAt);
+        // The capability statement matches what the headless runner actually checks.
+        Assert.Contains("只覆盖打新时限", status.Scope);
+        Assert.Contains("需要打开软件", status.Scope);
+    }
+
+    [Fact]
+    public void WithExtendedChecksTheScopeStatementIncludesLayerTwo()
+    {
+        var status = NotifyLogReader.Read(
+            scheduled: true,
+            logPath: Path.Combine(_root, "notify.log"),
+            extendedChecks: true);
+
+        Assert.Contains("价格/集中度", status.Scope);
+        Assert.Contains("失败不影响打新提醒", status.Scope);
+    }
+
+    [Fact]
+    public void TheLastLineBecomesTheLastRun()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllLines(LogPath(),
+        [
+            "2026-09-03 09:00:02  2 条提醒，1/1 个渠道送达。",
+            "2026-09-04 09:00:01  没有需要提醒的事项。（后台检查只覆盖打新时限，价格与集中度提醒需要打开软件。）",
+        ]);
+
+        var status = NotifyLogReader.Read(scheduled: true, logPath: LogPath());
+
+        Assert.NotNull(status.LastRunAt);
+        Assert.Equal(new DateTimeOffset(2026, 9, 4, 9, 0, 1, TimeSpan.FromHours(8)).Date,
+            status.LastRunAt!.Value.Date);
+        Assert.StartsWith("没有需要提醒的事项", status.LastRunSummary!);
+        Assert.Contains("没有需要提醒的事项", status.LastRun!);
+    }
+
+    [Fact]
+    public void VeryLongLinesAreClipped()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(LogPath(),
+            "2026-09-04 09:00:01  " + new string('x', 1000) + Environment.NewLine);
+
+        var status = NotifyLogReader.Read(scheduled: false, logPath: LogPath());
+
+        Assert.NotNull(status.LastRun);
+        Assert.True(status.LastRun!.Length <= NotifyLogReader.MaxLineLength + 1);
+        Assert.EndsWith("…", status.LastRun, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EmptyLogMeansNoRunRecorded()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(LogPath(), Environment.NewLine);
+
+        var status = NotifyLogReader.Read(scheduled: true, logPath: LogPath());
+
+        Assert.Null(status.LastRun);
+    }
+
+    [Fact]
+    public void UnparseableTimestampStillShowsTheLine()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(LogPath(), "garbage line without a timestamp" + Environment.NewLine);
+
+        var status = NotifyLogReader.Read(scheduled: true, logPath: LogPath());
+
+        Assert.Null(status.LastRunAt);
+        Assert.NotNull(status.LastRun);
+        Assert.Equal("garbage line without a timestamp", status.LastRun);
+    }
+
+    private string LogPath() => Path.Combine(_root, "notify.log");
+
+    public void Dispose()
+    {
+        try
+        {
+            if (Directory.Exists(_root))
+            {
+                Directory.Delete(_root, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+            // A locked temp file is not a test failure.
+        }
     }
 }

@@ -191,7 +191,95 @@ public class PortfolioRiskAnalyzerTests
         var report = PortfolioRiskAnalyzer.Analyze(valuation);
 
         Assert.False(valuation.IsComplete);
+        Assert.Equal(CoverageState.Partial, report.Coverage.State);
+        Assert.Contains("TSE:7203", report.Coverage.UnpricedPositions);
+        // The caveat leads the summary so the numbers below it are never read as a full picture.
+        Assert.StartsWith("估值不完整", report.Summary);
+        Assert.Contains("基于已定价部分", report.Summary);
         Assert.Contains("估值不完整", report.Summary);
+    }
+
+    [Fact]
+    public void APartiallyPricedPortfolioNeverClaimsAllClearEvenWithNoFindings()
+    {
+        // Small, well-diversified priced half + one large unpriced holding. The priced half shows
+        // no breach; the report must still refuse the green "no findings" reading on its own.
+        var ledger = PositionCalculator.Replay(
+        [
+            LedgerTransaction.OpeningPosition("acct", "SSE:600000", Day1, 1000m, 10m, "CNY"),
+            LedgerTransaction.OpeningPosition("acct", "NASDAQ:AAPL", Day1, 20m, 100m, "USD"),
+            LedgerTransaction.OpeningPosition("acct", "TSE:7203", Day1, 100m, 2800m, "JPY"), // 280 000 JPY, unpriced
+        ]);
+        var quotes = new Dictionary<string, PriceQuote>
+        {
+            ["SSE:600000"] = PriceQuote.Of("SSE:600000", 10m, "CNY", AsOf),
+            ["NASDAQ:AAPL"] = PriceQuote.Of("NASDAQ:AAPL", 100m, "USD", AsOf),
+        };
+        var fx = new FxConverter([
+            FxRate.Of("USD", "CNY", 10m, Day1),
+            FxRate.Of("USD", "JPY", 150m, Day1), // cost converts; the price is what is missing
+        ]);
+        var valuation = ValuationEngine.Value(ledger, quotes, fx, "CNY", AsOf);
+
+        var report = PortfolioRiskAnalyzer.Analyze(valuation);
+
+        Assert.Equal(CoverageState.Partial, report.Coverage.State);
+        Assert.Contains("估值不完整", report.Summary);
+        Assert.Contains("未定价", report.Summary);
+        // Priced 30 000 vs unpriced cost 18 667 (280 000 JPY ≈ 1 867 USD ≈ 18 667 CNY) → ~62% known.
+        Assert.InRange(report.Coverage.PricedFractionByCost, 0.5m, 0.75m);
+    }
+
+    [Fact]
+    public void NothingPricedAtAllReturnsUnknownInsteadOfACleanReport()
+    {
+        var ledger = PositionCalculator.Replay(
+        [
+            LedgerTransaction.OpeningPosition("acct", "SSE:600000", Day1, 1000m, 10m, "CNY"),
+        ]);
+        var valuation = ValuationEngine.Value(ledger, new Dictionary<string, PriceQuote>(), FxConverter.Empty, "CNY", AsOf);
+
+        var report = PortfolioRiskAnalyzer.Analyze(valuation);
+
+        Assert.Equal(CoverageState.InsufficientData, report.Coverage.State);
+        Assert.True(report.Coverage.IsUnknown);
+        // No concentration ratios at all, and the one finding says exactly why.
+        Assert.Single(report.Findings);
+        Assert.Equal(RiskLevel.Warning, report.Findings[0].Level);
+        Assert.Contains("未知", report.Summary);
+        Assert.Contains("不输出", report.Summary);
+        Assert.DoesNotContain("未触及你设定的任何上限", report.Summary);
+    }
+
+    [Fact]
+    public void DriftIsSuppressedWhenTheTotalItDividesByIsPartial()
+    {
+        var ledger = PositionCalculator.Replay(
+        [
+            LedgerTransaction.OpeningPosition("acct", "SSE:600000", Day1, 1000m, 10m, "CNY"),
+            LedgerTransaction.OpeningPosition("acct", "TSE:7203", Day1, 100m, 2800m, "JPY"),
+        ]);
+        var quotes = new Dictionary<string, PriceQuote>
+        {
+            ["SSE:600000"] = PriceQuote.Of("SSE:600000", 10m, "CNY", AsOf),
+        };
+        var valuation = ValuationEngine.Value(ledger, quotes, FxConverter.Empty, "CNY", AsOf);
+        var targets = new Dictionary<string, decimal> { ["equity"] = 0.60m };
+
+        var report = PortfolioRiskAnalyzer.Analyze(valuation, targetAssetAllocation: targets);
+
+        // Money deltas against a partial total would invent precision.
+        Assert.Empty(report.Drift);
+        Assert.Contains("目标配置偏离", report.Summary);
+    }
+
+    [Fact]
+    public void ACompleteValuationStillReportsPlainly()
+    {
+        var report = PortfolioRiskAnalyzer.Analyze(Concentrated());
+
+        Assert.Equal(CoverageState.Complete, report.Coverage.State);
+        Assert.DoesNotContain("估值不完整", report.Summary);
     }
 
     [Fact]

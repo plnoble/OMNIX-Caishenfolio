@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import unittest
 from datetime import date
@@ -47,6 +48,7 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(health["phase"], PRODUCT_PHASE)
         self.assertEqual(health["market_provider"], "fixture")
         self.assertTrue(health["market_data_synthetic"])
+        self.assertEqual(health["process_id"], os.getpid())
 
         status, search = dispatch(app, "GET", "/symbols/search", "q=AAPL")
         self.assertEqual(status, 200)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -70,7 +71,7 @@ class BarsSqliteCache:
 
     def _init(self) -> None:
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 conn.executescript(
                     """
                     CREATE TABLE IF NOT EXISTS bars (
@@ -109,7 +110,7 @@ class BarsSqliteCache:
         start_s = datetime(start.year, start.month, start.day, tzinfo=timezone.utc).isoformat()
         end_s = datetime(end.year, end.month, end.day, 23, 59, 59, tzinfo=timezone.utc).isoformat()
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 rows = conn.execute(
                     """
                     SELECT * FROM bars
@@ -128,7 +129,7 @@ class BarsSqliteCache:
         adjustment: Adjustment,
     ) -> date | None:
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 row = conn.execute(
                     """
                     SELECT MAX(ts) AS m FROM bars
@@ -154,7 +155,7 @@ class BarsSqliteCache:
         if not items:
             return 0
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 conn.executemany(
                     """
                     INSERT INTO bars (
@@ -205,14 +206,14 @@ class BarsSqliteCache:
     def stats(self) -> CacheStats:
         size = self.path.stat().st_size if self.path.exists() else 0
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 bar_rows = int(conn.execute("SELECT COUNT(*) FROM bars").fetchone()[0])
                 symbols = int(conn.execute("SELECT COUNT(DISTINCT symbol) FROM bars").fetchone()[0])
         return CacheStats(str(self.path), size, self.max_bytes, bar_rows, symbols)
 
     def clear(self, symbol: str | None = None) -> None:
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 if symbol:
                     conn.execute("DELETE FROM bars WHERE symbol = ?", (symbol,))
                 else:
@@ -220,7 +221,7 @@ class BarsSqliteCache:
                 conn.commit()
         # reclaim space
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 conn.execute("VACUUM")
 
     def enforce_quota(self) -> None:
@@ -229,7 +230,7 @@ class BarsSqliteCache:
         if stats.size_bytes <= self.max_bytes:
             return
         with self._lock:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 # delete oldest 10% batches until under limit
                 while True:
                     size = self.path.stat().st_size if self.path.exists() else 0

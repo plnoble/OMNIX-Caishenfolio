@@ -1,0 +1,121 @@
+<Window x:Class="Caishenfolio.Desktop.Wealth.OnboardingWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="欢迎使用 Caishenfolio"
+        Height="620" Width="560"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="{StaticResource BrushBgApp}"
+        Foreground="{StaticResource BrushFgPrimary}">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="欢迎使用 Caishenfolio" FontSize="20" FontWeight="SemiBold"
+                           Foreground="{StaticResource BrushAccent}" Margin="0,0,0,4" />
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12"
+                           Margin="0,0,0,16"
+                           Text="先回答几个问题（都可以留空），软件会用它们解释你的风险提示、显示你的首页。这些只是你自己的记录，不是投资建议。" />
+
+                <!-- Base currency -->
+                <TextBlock Text="① 用哪种货币汇总你的资产？" Style="{StaticResource SectionTitle}" />
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12" Margin="0,0,0,6"
+                           Text="所有账户的资产会折算成这个货币。之后可以随时在「设置」里改。" />
+                <ComboBox x:Name="BaseCurrencyCombo" Width="120" HorizontalAlignment="Left" Margin="0,0,0,16" SelectedIndex="0"
+                          SelectionChanged="BaseCurrencyCombo_OnSelectionChanged">
+                    <ComboBoxItem Content="CNY（人民币）" />
+                    <ComboBoxItem Content="HKD（港币）" />
+                    <ComboBoxItem Content="USD（美元）" />
+                    <ComboBoxItem Content="JPY（日元）" />
+                </ComboBox>
+
+                <!-- Goal -->
+                <TextBlock Text="② 这笔钱将来要做什么？（可留空）" Style="{StaticResource SectionTitle}" />
+                <TextBox x:Name="GoalBox" Padding="6" Margin="0,0,0,4"
+                         ToolTip="例如：十年内攒够首付。只写给自己看，会显示在首页。" />
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12" Margin="0,0,0,16"
+                           Text="写下目标，首页提醒才会围绕“你要去哪”而不是一串数字。" />
+
+                <!-- Horizon -->
+                <TextBlock Text="③ 多少年内可能用到这笔钱？（可留空）" Style="{StaticResource SectionTitle}" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <TextBox x:Name="HorizonBox" Width="90" Padding="6" />
+                    <TextBlock Text=" 年" VerticalAlignment="Center" Margin="6,0,0,0" />
+                </StackPanel>
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12" Margin="0,0,0,16"
+                           Text="期限越短，能承受的波动越小。软件不会替你判断，只会在风险提示里带上这个背景。" />
+
+                <!-- Liquidity -->
+                <TextBlock Text="④ 这笔钱多久可能要动用一次？（可不确定）" Style="{StaticResource SectionTitle}" />
+                <ComboBox x:Name="LiquidityCombo" Width="220" HorizontalAlignment="Left" Margin="0,0,0,4" SelectedIndex="0">
+                    <ComboBoxItem Content="不确定，先看看再说" Tag="" />
+                    <ComboBoxItem Content="随时可能要用" Tag="anytime" />
+                    <ComboBoxItem Content="3 个月内可能用" Tag="3m" />
+                    <ComboBoxItem Content="1 年内可能用" Tag="1y" />
+                    <ComboBoxItem Content="3 年以上基本不动" Tag="long" />
+                </ComboBox>
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12" Margin="0,0,0,16"
+                           Text="「随时要用」的钱不适合承受大波动；这只是一个记录，帮你把提醒读得更准。" />
+
+                <!-- Emergency fund -->
+                <TextBlock Text="⑤ 要留多少应急钱？（可留空）" Style="{StaticResource SectionTitle}" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <TextBox x:Name="EmergencyFundBox" Width="120" Padding="6" />
+                    <TextBlock x:Name="EmergencyFundCurrencyTag" Text="（本位币）" VerticalAlignment="Center"
+                               Margin="6,0,0,0" Foreground="{StaticResource BrushFgMuted}" />
+                </StackPanel>
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12" Margin="0,0,0,16"
+                           Text="这部分现金会被单独记住，不会被当成“闲置资金”来提醒你。" />
+
+                <!-- Drawdown tolerance -->
+                <TextBlock Text="⑥ 账面跌多少你会睡不着？（可不确定）" Style="{StaticResource SectionTitle}" />
+                <ComboBox x:Name="DrawdownCombo" Width="200" HorizontalAlignment="Left" Margin="0,0,0,4" SelectedIndex="0">
+                    <ComboBoxItem Content="不确定，先看看再说" Tag="0" />
+                    <ComboBoxItem Content="跌 10% 就很紧张" Tag="0.1" />
+                    <ComboBoxItem Content="跌 20% 还能接受" Tag="0.2" />
+                    <ComboBoxItem Content="跌 30% 也能拿住" Tag="0.3" />
+                    <ComboBoxItem Content="跌 50% 也不卖" Tag="0.5" />
+                </ComboBox>
+                <TextBlock x:Name="DrawdownHint" TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}"
+                           FontSize="12" Margin="0,0,0,16" />
+
+                <!-- Watch markets -->
+                <TextBlock Text="⑦ 你关注哪些市场？（可多选，都不选也行）" Style="{StaticResource SectionTitle}" />
+                <WrapPanel Margin="0,0,0,4">
+                    <CheckBox x:Name="CnCheck" Content="A股" Foreground="{StaticResource BrushFgPrimary}"
+                              Margin="0,0,16,6" IsChecked="True" />
+                    <CheckBox x:Name="HkCheck" Content="港股" Foreground="{StaticResource BrushFgPrimary}"
+                              Margin="0,0,16,6" />
+                    <CheckBox x:Name="UsCheck" Content="美股" Foreground="{StaticResource BrushFgPrimary}"
+                              Margin="0,0,16,6" />
+                    <CheckBox x:Name="JpCheck" Content="日股" Foreground="{StaticResource BrushFgPrimary}"
+                              Margin="0,0,16,6" />
+                </WrapPanel>
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12" Margin="0,0,0,16"
+                           Text="只影响首页展示的重点，不会隐藏任何功能。" />
+
+                <Border Background="{StaticResource BrushBgPanel}" CornerRadius="8" Padding="10"
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Margin="0,4,0,0">
+                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource BrushFgMuted}"
+                               Text="Caishenfolio 帮你记录、比较、解释、预警和复盘；提供证据，不替你预测未来，也不连接券商下单。" />
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Footer -->
+        <DockPanel Grid.Row="1" Margin="0,14,0,0">
+            <TextBlock x:Name="ErrorText" DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8"
+                       Foreground="{StaticResource BrushDanger}" FontSize="12" Text="" />
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="SkipButton" Content="跳过，直接进入" Padding="12,6" Margin="0,0,8,0"
+                        Click="SkipButton_OnClick" />
+                <Button x:Name="StartButton" Content="开始使用" Padding="14,6"
+                        Background="#1F6B4A" BorderBrush="#2F9A6A" Click="StartButton_OnClick" />
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</Window>

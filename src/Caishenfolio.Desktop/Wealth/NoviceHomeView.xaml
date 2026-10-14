@@ -1,0 +1,295 @@
+<UserControl x:Class="Caishenfolio.Desktop.Wealth.NoviceHomeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:wealth="clr-namespace:Caishenfolio.Desktop.Wealth"
+             Background="Transparent">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,12">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="RefreshButton" Content="刷新" Padding="14,6" Margin="0,0,8,0"
+                        Click="RefreshButton_OnClick" />
+                <Button x:Name="SwitchModeButton" Content="切换到专业模式" Padding="12,6"
+                        Click="SwitchModeButton_OnClick"
+                        ToolTip="专业模式显示全部研究页面；随时可切回来" />
+            </StackPanel>
+            <StackPanel>
+                <TextBlock Text="今天" FontSize="18" FontWeight="SemiBold"
+                           Foreground="{StaticResource BrushAccent}" />
+                <TextBlock x:Name="StatusText" Text="正在读取账本…" Margin="0,4,0,0"
+                           Foreground="{StaticResource BrushFgMuted}" TextWrapping="Wrap" />
+            </StackPanel>
+        </DockPanel>
+
+        <!-- Question 1: how much do I have, and which numbers are uncertain -->
+        <UniformGrid Grid.Row="1" Columns="5" Margin="0,0,0,12">
+            <Border Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="14,12" Margin="0,0,8,0"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="我总共有多少（真实账本）" Style="{StaticResource KpiCaption}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="TotalValueText" Text="—" Style="{StaticResource KpiValue}" />
+                    <TextBlock x:Name="CompletenessText" Text="" FontSize="11" TextWrapping="Wrap"
+                               Foreground="{StaticResource BrushFgMuted}" Margin="0,4,0,0" />
+                </StackPanel>
+            </Border>
+            <Border Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="14,12" Margin="0,0,8,0"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="其中现金" Style="{StaticResource KpiCaption}" />
+                    <TextBlock x:Name="CashText" Text="—" Style="{StaticResource KpiValue}" />
+                </StackPanel>
+            </Border>
+            <Border Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="14,12" Margin="0,0,8,0"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock x:Name="PnlCaption" Text="累计盈亏" Style="{StaticResource KpiCaption}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="TotalPnlText" Text="—" Style="{StaticResource KpiValue}" />
+                </StackPanel>
+            </Border>
+            <Border Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="14,12" Margin="0,0,8,0"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock x:Name="XirrCaption" Text="资金年化收益 XIRR" Style="{StaticResource KpiCaption}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="XirrText" Text="—" Style="{StaticResource KpiValue}" />
+                </StackPanel>
+            </Border>
+            <Border Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="14,12"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock x:Name="DrawdownCaption" Text="历史最大回撤" Style="{StaticResource KpiCaption}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="DrawdownText" Text="—" Style="{StaticResource KpiValue}" />
+                </StackPanel>
+            </Border>
+        </UniformGrid>
+
+        <!-- Question 3: what needs handling today -->
+        <Border Grid.Row="2" Background="{StaticResource BrushBgPanel}" CornerRadius="10" Margin="0,0,0,12"
+                BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="14">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="300" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                    <TextBlock Text="今天有什么需要处理" Style="{StaticResource SectionTitle}" />
+                    <ItemsControl x:Name="TaskList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button HorizontalContentAlignment="Stretch" Margin="0,0,0,6" Padding="0"
+                                        Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                        FocusVisualStyle="{x:Null}" Click="TaskCard_OnClick" Tag="{Binding TargetPage}">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <ContentPresenter />
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                    <Border CornerRadius="8" Padding="10,8"
+                                            Background="#121A24" BorderThickness="1">
+                                        <Border.BorderBrush>
+                                            <Binding Path="IsUrgent">
+                                                <Binding.Converter>
+                                                    <wealth:UrgencyBorderConverter />
+                                                </Binding.Converter>
+                                            </Binding>
+                                        </Border.BorderBrush>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{StaticResource BrushFgPrimary}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsUrgent}" Value="True">
+                                                                <Setter Property="Foreground" Value="{StaticResource BrushDanger}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" FontSize="12"
+                                                       Foreground="{StaticResource BrushFgSecondary}" Margin="0,3,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+                <Border Grid.Column="1" Background="#121A24" CornerRadius="8" Padding="12">
+                    <StackPanel>
+                        <TextBlock Text="你的档案" Style="{StaticResource SectionTitle}" />
+                        <ItemsControl x:Name="ProfileList" Margin="0,2,0,8">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="12"
+                                               Foreground="{StaticResource BrushFgSecondary}" Margin="0,2" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock x:Name="ProfileEmptyText" Text="还没填。回答几个问题，提醒会围绕你的情况解释。"
+                                   TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource BrushFgMuted}" />
+                        <Button Content="填写 / 修改档案" Padding="10,4" HorizontalAlignment="Left" Margin="0,6,0,0"
+                                Click="EditProfileButton_OnClick" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+
+        <!-- Question 2 + 4 -->
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Question 2: where is my money -->
+            <Border Grid.Column="0" Background="{StaticResource BrushBgPanel}" CornerRadius="10" Margin="0,0,8,0"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="14">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <DockPanel Grid.Row="0">
+                        <TextBlock Text="我的钱在哪里" Style="{StaticResource SectionTitle}" />
+                        <TextBlock x:Name="AllocationAsOfText" DockPanel.Dock="Right" Text="—"
+                                   HorizontalAlignment="Right" Foreground="{StaticResource BrushFgMuted}" FontSize="12" />
+                    </DockPanel>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="AllocationList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="46" />
+                                            <ColumnDefinition Width="90" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="90" />
+                                            <ColumnDefinition Width="110" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding Dimension}" FontSize="11"
+                                                   Foreground="{StaticResource BrushFgMuted}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Label}" FontSize="12"
+                                                   Foreground="{StaticResource BrushFgPrimary}" VerticalAlignment="Center" />
+                                        <ProgressBar Grid.Column="2" Minimum="0" Maximum="1" Height="8" Margin="4,0"
+                                                     Value="{Binding WeightFraction, Mode=OneWay}" Background="#0A0F16"
+                                                     Foreground="{StaticResource BrushAccent}"
+                                                     BorderBrush="{StaticResource BrushBorder}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="3" Text="{Binding Weight}" FontSize="12"
+                                                   Foreground="{StaticResource BrushFgSecondary}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="4" Text="{Binding Value}" FontSize="12"
+                                                   Foreground="{StaticResource BrushFgMuted}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <!-- Question 4: what if I do something -->
+            <Border Grid.Column="1" Background="{StaticResource BrushBgPanel}" CornerRadius="10"
+                    BorderBrush="#2B5A7A" BorderThickness="1" Padding="14">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="如果我想做点什么，会发生什么？" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Grid.Row="1" TextWrapping="Wrap" FontSize="12" Margin="0,2,0,10"
+                               Foreground="{StaticResource BrushFgMuted}"
+                               Text="以下入口都在研究区（蓝色边框 = 研究模拟）：只读行情、在图上做计划、跑历史回测，全部不会改动你的真实账本。" />
+                    <ItemsControl Grid.Row="2" x:Name="SimulationEntryList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button HorizontalContentAlignment="Stretch" Margin="0,0,0,6" Padding="0"
+                                        Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                        Click="SimulationEntry_OnClick" Tag="{Binding TargetPage}">
+                                    <Border CornerRadius="8" Padding="10,8" Background="#121A24"
+                                            BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding Badge}" FontSize="10" Padding="6,1"
+                                                           VerticalAlignment="Center" Margin="0,0,8,0">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground" Value="#9EC9FF" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Badge}" Value="历史回测">
+                                                                    <Setter Property="Foreground" Value="#C7A6FF" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13"
+                                                           Foreground="{StaticResource BrushFgPrimary}" />
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" FontSize="12"
+                                                       Foreground="{StaticResource BrushFgSecondary}" Margin="0,3,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Learning path (N6): embedded at the task location, never a separate reading room. -->
+        <Expander Grid.Row="4" Margin="0,12,0,0" IsExpanded="False"
+                  Foreground="{StaticResource BrushFgSecondary}">
+            <Expander.Header>
+                <TextBlock Text="学习路径：小白 → 进阶 → 高阶（点开就着软件里的位置学）"
+                           FontWeight="SemiBold" Foreground="{StaticResource BrushFgSecondary}" />
+            </Expander.Header>
+            <ItemsControl x:Name="LessonTierList" Margin="0,8,0,0">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Margin="0,0,0,10">
+                            <TextBlock Text="{Binding Tier}" FontWeight="SemiBold" FontSize="14"
+                                       Foreground="{StaticResource BrushAccent}" />
+                            <TextBlock Text="{Binding Intro}" TextWrapping="Wrap" FontSize="11"
+                                       Foreground="{StaticResource BrushFgMuted}" Margin="0,2,0,6" />
+                            <ItemsControl ItemsSource="{Binding Lessons}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Expander Margin="0,2">
+                                            <Expander.Header>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="12" />
+                                                    <TextBlock Text="{Binding Where, StringFormat=· {0}}" FontSize="11"
+                                                               Foreground="{StaticResource BrushFgMuted}" Margin="8,0,0,0" />
+                                                </StackPanel>
+                                            </Expander.Header>
+                                            <TextBlock Text="{Binding Body}" TextWrapping="Wrap" FontSize="12"
+                                                       Foreground="{StaticResource BrushFgSecondary}"
+                                                       Margin="14,4,0,4" />
+                                        </Expander>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </Expander>
+
+        <!-- Disclaimer -->
+        <Border Grid.Row="5" Background="{StaticResource BrushBgPanel}" CornerRadius="8" Padding="10"
+                BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Margin="0,12,0,0">
+            <TextBlock x:Name="DisclaimerText" TextWrapping="Wrap" FontSize="11"
+                       Foreground="{StaticResource BrushFgMuted}" />
+        </Border>
+    </Grid>
+</UserControl>

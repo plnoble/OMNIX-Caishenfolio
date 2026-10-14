@@ -117,7 +117,11 @@ public static class ReturnMetrics
 
     /// <summary>
     /// True time-weighted return, linking sub-period returns between valuation points.
-    /// A flow dated on a valuation point is treated as arriving immediately after that valuation.
+    ///
+    /// Snapshot convention: a valuation point is the value AFTER every flow dated that day
+    /// (the store replays the whole day's ledger before valuing). A flow therefore belongs to
+    /// the sub-period ENDING on its date, not the one starting there: the deposit is already
+    /// inside the ending point's value, so it is subtracted from the sub-period's gain.
     /// Returns null when fewer than two valuation points exist or a sub-period starts from zero.
     /// </summary>
     public static double? TimeWeighted(
@@ -138,17 +142,27 @@ public static class ReturnMetrics
         {
             var previous = ordered[i - 1];
             var current = ordered[i];
-            var inflow = flows
-                .Where(f => f.Date >= previous.Date && f.Date < current.Date)
+
+            // Flows on/before the previous point are already in previous.Value (it is a
+            // post-flow snapshot); flows on the current point are already in current.Value.
+            // Only genuinely interim flows land between the two and adjust the cost base.
+            var interimInflow = flows
+                .Where(f => f.Date > previous.Date && f.Date < current.Date)
+                .Sum(f => f.Amount);
+            var endOfDayInflow = flows
+                .Where(f => f.Date == current.Date)
                 .Sum(f => f.Amount);
 
-            var invested = previous.Value + inflow;
+            var invested = previous.Value + interimInflow;
             if (invested == 0m)
             {
                 return null;
             }
 
-            linked *= (double)(current.Value / invested);
+            // endOfDayInflow arrived inside this sub-period and sits in current.Value: strip
+            // it so the ratio measures appreciation, not the deposit (P1-03).
+            var gain = current.Value - endOfDayInflow;
+            linked *= (double)(gain / invested);
         }
 
         return linked - 1.0;
