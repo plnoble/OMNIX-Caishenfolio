@@ -3,8 +3,8 @@
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <!-- Codepage 936: the default 1252 cannot hold the Chinese product and shortcut strings,
        which only surfaced once the UI extension pinned the database codepage. -->
-  <Package Name="OMNIX-Caishenfolio"
-           Manufacturer="OMNIX"
+  <Package Name="Caishenfolio"
+           Manufacturer="Caishenfolio"
            Version="$(var.ProductVersion)"
            UpgradeCode="{7C4E5A21-9B3D-4F86-A0C2-1D5E8F3B7A64}"
            Codepage="936"
@@ -14,7 +14,7 @@
 
     <!-- MajorUpgrade is how a new version replaces an old one: install the newer MSI and it
          removes the previous build in place, keeping user data under LocalAppData untouched. -->
-    <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 OMNIX-Caishenfolio，无法降级安装。" />
+    <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 Caishenfolio，无法降级安装。" />
     <MediaTemplate EmbedCab="yes" />
 
     <!-- The product icon, used by both shortcuts and by 控制面板/应用 (Add-Remove Programs).
@@ -31,7 +31,7 @@
            uninstall would be unacceptable.
          - No live trading, broker execution, or non-loopback exposure is installed. -->
 
-    <Feature Id="MainFeature" Title="OMNIX-Caishenfolio" Level="1">
+    <Feature Id="MainFeature" Title="Caishenfolio" Level="1">
       <ComponentGroupRef Id="DesktopComponents" />
       <ComponentGroupRef Id="AnalyticsCoreComponents" />
       <ComponentRef Id="ApplicationShortcutComponent" />
@@ -54,7 +54,7 @@
     </UI>
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="OMNIX-Caishenfolio">
+      <Directory Id="INSTALLFOLDER" Name="Caishenfolio">
         <!-- The app looks for `python\caishenfolio_core` next to the executable. Shipping only
              the desktop binaries made an installed copy unable to start the Analytics Core. -->
         <Directory Id="PythonFolder" Name="python" />
@@ -62,7 +62,7 @@
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="ApplicationProgramsFolder" Name="OMNIX-Caishenfolio" />
+      <Directory Id="ApplicationProgramsFolder" Name="Caishenfolio" />
     </StandardDirectory>
 
     <StandardDirectory Id="DesktopFolder" />
@@ -87,7 +87,7 @@
                Directory="ApplicationProgramsFolder"
                Guid="{8B3A0E67-51D4-4C29-B7F0-96E2A5C8D413}">
       <Shortcut Id="ApplicationStartMenuShortcut"
-                Name="OMNIX-Caishenfolio"
+                Name="Caishenfolio"
                 Description="个人理财工作台"
                 Target="[INSTALLFOLDER]Caishenfolio.Desktop.exe"
                 WorkingDirectory="INSTALLFOLDER"
@@ -107,7 +107,7 @@
                Directory="DesktopFolder"
                Guid="{4D6E2B95-8C71-42A0-B3E9-5F27A8D0C614}">
       <Shortcut Id="ApplicationDesktopShortcut"
-                Name="OMNIX-Caishenfolio"
+                Name="Caishenfolio"
                 Description="个人理财工作台"
                 Target="[INSTALLFOLDER]Caishenfolio.Desktop.exe"
                 WorkingDirectory="INSTALLFOLDER"

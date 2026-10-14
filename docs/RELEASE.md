@@ -35,7 +35,7 @@ scripts\version.ps1 -SetVersion 1.0.0 -SetPhase GA
 dotnet build packaging\windows\Omnix.Installer.wixproj -c Release
 ```
 
-产物：`packaging\windows\bin\x64\Release\OMNIX-Caishenfolio.msi`
+产物：`packaging\windows\bin\x64\Release\Caishenfolio.msi`
 
 安装包只装 WPF 桌面二进制。.NET 8 桌面运行时与 Python 分析核心不打进 MSI：
 前者由系统提供，后者首次运行时按需准备。

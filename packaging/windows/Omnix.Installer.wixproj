@@ -1,4 +1,4 @@
-<Project Sdk="WixToolset.Sdk/5.0.2">
+﻿<Project Sdk="WixToolset.Sdk/5.0.2">
   <!--
     Builds the Windows MSI. The desktop is published first into obj\, then packaged.
 
@@ -6,7 +6,7 @@
     VERSION file — the installer version can never disagree with the app's own version.
   -->
   <PropertyGroup>
-    <OutputName>OMNIX-Caishenfolio</OutputName>
+    <OutputName>Caishenfolio</OutputName>
     <OutputType>Package</OutputType>
     <Platform>x64</Platform>
     <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>

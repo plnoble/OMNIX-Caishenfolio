@@ -1,7 +1,11 @@
 # Current Development
 
 - Project: **OMNIX-Caishenfolio**
-- Status: **R0~R5 + V1~V4 + A1~A4 + S1~S2 + F1~F5 + G1~G4 + H1~H4 完成 (v0.13.1 / R5)**
+- Next execution brief: **TR1 已启动并分派三个 Agent**，见 `agent-stage-trial-readiness-2026-10-08.md`：A 换汇结果卡可访问语义、B 数据失败/恢复契约、C 安装布局隔离冒烟。统筹负责集中验证和小问题直接修复，不重做 FA1/R7，不替真人验收。
+- Status: **本批工程整改及机器门禁通过，完整产品人验尚未完成。FA1-R01/R02/R03 已修；构建 0/0、C# 616、Python 448+1skip、独立真进程 5/5、负例 13/13、固定冷启动 5/5、两次完整隔离 UI 各 18/18。292 文件与最终 UI 清单零漂移，产品源码/MSI 未改。** 旧失败日志不可恢复，不把最新样本通过夸大成全部历史超时已归因。已提交（2026-10-14，两个提交：N0~N5 本体 + 本次整理）；**未发布、未安装**。
+- 本次（2026-10-14）实测门禁：构建 0/0、C# **621**（Host 570 + Desktop 51）、Python **448 通过 + 1 skip**（skip 为联网真实行情，有意门控）、UI 冒烟 18/18、安装布局冒烟通过。
+  状态行此前写 616、验证段写 587，均为手写漂移，已按实测订正。
+- 本次优化：①`ui_smoke.ps1` 旧报告改为**归档**而非拒绝运行（默认命令自 9/8 起实际已失效）；②安装包完成改名 Caishenfolio（`UpgradeCode` 与快捷方式注册表 KeyPath 刻意保持不变，原地升级不受影响）；③删除仓库根目录遗留的 0 字节 `%s` 文件。
 - 应用内更新已启用：下载 → SHA-256 校验 → ECDSA P-256 验签 → 安装；任一层不过即删除文件
 - 覆盖: A股 / 港股 / 美股 / 日股；股票 / ETF / 场外基金 / 债券 / 可转债 / 外汇 / 现金
 
@@ -24,28 +28,129 @@
   - H4 外部通知：企业微信/飞书/钉钉/Telegram/Discord/Slack/自定义 webhook + SMTP 邮件；
     `--notify` 无界面模式 + Windows 计划任务注册（仅用户点击时执行）；
     凭据经 DPAPI 加密后才写入账本
+- **N0**（小白安全化第一步，`novice-finance-product-plan.md` §5）：
+  - N0.1 冲正代替物理删除：`Reversal` 工厂 + schema v6（`reverses_transaction_id` 列、
+    迁移前自动备份 `.bak`）+ `PositionCalculator.Replay` 跳过冲正对 + 账本页「冲正选中」；
+    `PortfolioStore.RemoveTransaction` 已删除；CSV 预览拒绝再导入已冲正行
+  - N0.2 估值不完整不输出“正常”：`RiskCoverage`（Complete/Partial/InsufficientData）；
+    全部未定价时只返回一条 Warning「未知」并抑制集中度与偏离输出；
+    部分定价时摘要改为「仅基于已定价部分」并按成本口径给出覆盖比例；
+    总览页提醒区新增覆盖率红字条
+  - N0.3 提醒能力如实标注：设置页新增「后台检查范围」声明卡与最近一次检查结果
+    （`NotifyLogReader` 读取 notify.log 最后一行）；「价格与集中度」勾选文案明确
+    只在软件打开时生效
+  - N0.4 文档口径：README 阶段段落改为指向 `VERSION`/`PHASE` 单一来源，去掉过时版本号
+- **N1 第一批**（小白模式与任务首页，`novice-finance-product-plan.md` §6）：
+  - 记一笔免内部代码：`SymbolResolver` 接入账本页，裸代码/名称/ticker 实时解析
+    （✓ 已识别提示 + 歧义点击消歧），未解析/歧义拒绝记账（fail-closed）
+  - 首次引导 `OnboardingWindow`：本位币/目标/期限/应急金/回撤容忍/关注市场六问，
+    全可留空，跳过也标记完成（`ui.mode` + `novice.*` 设置键，`PortfolioSettings` 已扩展）
+  - 小白首页 `NoviceHomeView` + `NoviceTaskList`（纯函数可测）：四问结构
+    （多少钱+哪些不确定 / 钱在哪 / 今天做什么 / 做点什么会怎样），
+    缺价格为红色紧急待办，你的档案卡可重开引导
+  - 小白/专业模式切换：小白默认（首页落地、隐藏研究导航），专业完整导航；
+    持久化 `ui.mode`，左栏底部互切
+  - 真实账本（绿）/研究模拟（蓝）/历史回测（紫）顶栏徽标随页面切换
+  - `TermGlossary`：10 个术语的白话解释+局限警示，首页 KPI/表单就地 tooltip
+  - 「AI 建议网格参数」→「规则估算网格参数」（4 处 + 免责 tooltip）
+  - 新测试项目 `tests/Caishenfolio.Desktop.Tests`（桌面层纯逻辑可测）
+  - 冒烟脚本学会跳过首次引导（顺带验证引导窗口 BAML）；导航走查加入「首页」
+- **N2**（换汇记账与路径比较，`novice-finance-product-plan.md` §7）：
+  - N2.1 换汇向导：账本页「记一笔」新增「换汇」——回单两边金额入账，
+    成交汇率实时展示但仅显示；流水表显示「100 CNY → 2,450 JPY」双边金额
+  - N2.2/2.3 Python `research/fx_paths.py`：五路径比较（已持有/直换/绕行/持有/分批），
+    Decimal 计算 + 可追溯公式；固定样例（6.7260/159.97/24.5→3.011%）测试钉死；
+    成本未知=gross_only、缺报价=fail-closed
+  - `POST /research/fx-paths` 路由 + `AnalyticsCoreClient.PostFxPathsAsync` + 8 DTO
+  - `FxExchangeHistory`（Host）：读真实换汇成本（冲正对排除、方向敏感）
+  - 汇率页「兑换路径比较」面板：按账本预填（现金余额+历史成本折算）、
+    优势卡（毛/净）、盈亏平衡、报价溯源、五路径卡
+  - 页面徽标修正：汇率/估值页 → 研究模拟（原误标真实账本）
+  - N2.4 换汇提醒并入 N3 批次
+- **N3 第一批**（可信后台提醒，`novice-finance-product-plan.md` §8，含 N2.4）：
+  - `AlertGatekeeper` + `AlertNotificationState`（state/alert-state.json）：去重/冷却/
+    重入；送达与观察分离——投递失败不推进冷却，下个周期自动重试
+  - `HeadlessNotifier` 两层架构：层 1 打新时限永远跑（只读账本）；层 2
+    `BackgroundExtendedChecks` 开关下跑完整 `PortfolioWorkspace.RefreshAsync`
+    （同一求值器/阈值/交叉核对），失败捕获为 limitation 绝不阻塞层 1
+  - `BackgroundExtendedCheck` 运行器：探活复用已开核心，否则临时启动并在结束后
+    只停自己启动的；门控集成测试（env 变量）真实验证全链路
+  - **N2.4 换汇提醒规则（四类全）**：汇率区间 / 优势阈值 / 净到账目标 / 盈亏平衡
+    穿越——`FxPathFacts` 统一事实注入，措辞只陈述"你设定的事实被触发"，
+    禁用语测试覆盖全部四类
+  - 外发消息卫生：剔除「（备注：…）」用户备注 + 盘符路径脱敏（SensitiveValueRedactor）
+  - **市场日历与时区**：固定节假日（CN/HK/US/JP）+ 交易所时区"今天"；农历/浮动
+    节假日明示不建模（文案"约 N 个交易日"）
+  - 价格陈旧度按标的所属市场日历计算；§8 失败模式专项测试（限流/休眠漏跑/重复唤醒）
+  - 设置页：扩展检查开关（声明卡即时联动）+ 冷却时间（1–720 小时，默认 20）+
+    四类规则编辑器；`--notify` 手工验证 exit 0 / 无窗口 / 新日志格式「已检查：打新时限」
+- **N1/N2/N3 第二批收尾（同日）**：
+  - N1 拼音检索（pypinyin + 离线种子拼音，`fuzzy_search_a_share` 拼音匹配档）
+  - N1 TWR KPI（总览页 + 术语解释；同日流剔除语义有测试钉死）
+  - N1 回测页高级参数折叠（Expander）
+  - N1 引导采集流动性需求（七问全集；`LiquidityNeed` 校验/往返/旧行兼容）
+  - N2 路径差值 `diff_vs_best`（全比较统一单一基线：全体净额或全体毛额）
+  - 首页档案卡含流动性；汇率页路径卡显示"距最优"
+- **N4 股票决策证据卡**（`novice-finance-product-plan.md` §9）：
+  - Python `research/evidence_card.py`：九段结构（数据质量/估值/基本面/市场行为/
+    历史检验/组合影响/正反未知证据/失效条件/结论状态）；纯组装无模型；每条证据
+    带 basis 溯源；中性事实不进倾向计数；跨币种拒折算（None 非零）
+  - 结论顺序即策略：风险超限 > 证据不足 > 冲突 > 倾向；关键数据缺失时明确停止
+  - 禁语子串级扫描（BANNED_PHRASES）抓否定句里的违规；Task/Artifact/Audit 映射，
+    四通道独立降级
+  - `POST /research/evidence-card` 路由 + `PostEvidenceCardAsync` +
+    `EvidenceCardView`（结论横幅/九段卡片/证据三列表格/回撤对照提示）；
+    标的输入免内部代码（SymbolResolver）；左栏双模式可见；冒烟八页导航
+- **N5 仓位、收益归因与压力分析·第一批**（`novice-finance-product-plan.md` §10）：
+  - `PortfolioContributionAnalyzer`：持仓盈亏贡献 + 汇率/涨跌精确拆分
+    （三数模型：总览浮动盈亏=涨跌部分；汇率部分=成本×(今日汇率−成本日汇率)；
+    相对实际投入=两者之和；缺成本日汇率 → 如实标未知）
+  - `TradeWhatIfAnalyzer`：操作前模拟（前后占比 + 自设阈值超限预警 + 现金不足提示；
+    未定价拒绝；不写入账本）
+  - `PortfolioStressAnalyzer`：可编辑冲击（股票/USD/JPY/最大持仓），假设清单逐条可复算，
+    未定价排除并计数；债券/可转债/基金有意不套用股票跌幅（假设中说明）
+  - `RebalanceComparisonAnalyzer`：卖出 vs 新增资金两案并陈，缺口如实，
+    估值不完整拒绝计算
+  - 应急金语义：闲置现金检查扣除 `EmergencyFundAmount`，文案点名应急金
+  - UI：新「风险与模拟」页（贡献表 + 模拟/压力/再平衡表单）；冒烟九页导航
 
 ## 验证
 
 ```powershell
-dotnet build Caishenfolio.slnx; if ($?) { dotnet test Caishenfolio.slnx }   # 362 通过 / 0 警告
+dotnet build Caishenfolio.slnx; if ($?) { dotnet test Caishenfolio.slnx }   # 621 通过（Host 570 + Desktop 51）/ 0 警告
 $env:PYTHONPATH="$PWD\python"; $env:CAISHENFOLIO_MARKET_PROVIDER="fixture"
-python -m unittest discover -s tests/python -p "test_*.py"                  # 316 通过
-scripts\ui_smoke.ps1                             # XAML 改动必跑；含设置窗口加载检查
+# 正式门禁用应用 managed venv（复审 P2-04），不要用 PATH 上的系统 Python：
+$py = "$env:LOCALAPPDATA\Caishenfolio\state\.venv\Scripts\python.exe"
+& $py -W error -m unittest discover -s tests/python -p "test_*.py"   # 449 项运行：448 通过、1 skip
+scripts\ui_smoke.ps1                             # XAML 改动必跑；含引导跳过+九页导航+设置窗口
+# 真实进程复审门禁（需 managed venv；后台2+资金币种1+固定费1+外部资金1）：
+$env:CAISHENFOLIO_RUN_EXTENDED_CHECK_TESTS="1"
+dotnet test tests\Caishenfolio.Host.Tests --no-build --no-restore --filter 'FullyQualifiedName~BackgroundExtendedCheckIntegrationTests|FullyQualifiedName~EvidenceCardFundingCurrencyChainTests|FullyQualifiedName~FxPathCostChainTests' # 5/5
 dotnet build packaging\windows\Omnix.Installer.wixproj -c Release           # 出 MSI
 ```
 
 后台检查手工验证：`Caishenfolio.Desktop.exe --notify` 应无窗口退出（code 0），
-并在 `%LOCALAPPDATA%\Caishenfolio\logs\notify.log` 追加一行。
+并在 `%LOCALAPPDATA%\Caishenfolio\logs\notify.log` 追加一行（新格式含「已检查：…」
+与冷却/失败信息）；设置窗口底部「最近一次后台检查」应显示该行的内容。
+开启「后台扩展检查」后再跑一次，日志应显示「已检查：打新时限、价格与集中度」；
+拔网线跑则应显示「扩展检查失败：…打新时限提醒不受影响」。
 
-## 未做
+## 未做（N 系列后续）
 
-- 旧研究页（1225 行 code-behind）未 MVVM 化
-- akshare 债券 / 汇率接口未联网验证
-- `release_bundle.ps1`（manifest + checksums + 分步报告）未移植，当前由 release.yml 简化承担
-- 净值曲线尚无图表展示（数据已存在 `valuation_snapshots`，只用于算回撤）
-- 估值分位仅 A 股（上游数据限制）
-- 后台 `--notify` 只查打新时限；价格/集中度提醒需要分析核心，未在无界面模式下启动
+- **真人验收**：§6 七项任务 + §12 十一步脚本需真实新手无口头指导执行（自动化部分已落地为 NoviceEndToEndAcceptanceTests）
+- N6 细化：教育路径已有三层骨架与内容，可继续按用户反馈扩充；N7 无障碍专项（键盘/对比度/读屏）未做
+- 旧研究页 MVVM 化、通知多渠道 UI、净值曲线图表（历史遗留，非 Gate 项）
+
+- **Gate B/C 集中审查**（计划 §15：N4~N5 后审查数据追踪、样本外、过拟合、组合前后对比）
+- N5 第二批：回撤归因（需逐日持仓快照，当前 `valuation_snapshots` 只有总额）、利率情景、
+  行业集中度/相关性/ETF 重叠（依赖数据质量，计划§10 后续能力）；相关 UI 深化
+- N6 场景化教育（现有 TermGlossary/引导/就地解释为部分覆盖）、N7 全面测试与发布加固
+- N1 验收的"新手真人测试"（计划 §6 七项任务需真人无指导完成，自动化只覆盖机械导航）
+- N2 补充：跨账户换汇（domain 目前单账户多币种）、换汇 CSV 导入支持
+- N4 补充：样本外/参数敏感性回测进卡（当前历史检验为条件分布，滚动样本外待接
+  既有 out_of_sample_report）；卖出方向证据卡（计划质量门"卖出分析必须列税费"）
+- 日历：农历/浮动节假日未建模（固定节假日已入表，长假可能多报陈旧度，方向安全）
+- 旧研究页（1225 行 code-behind）未 MVVM 化；净值曲线无图表
 - 通知设置界面目前只支持一个 webhook 渠道（数据模型已支持多个）
 
 - GitHub: https://github.com/plnoble/OMNIX-Caishenfolio
