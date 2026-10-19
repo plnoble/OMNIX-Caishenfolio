@@ -23,6 +23,7 @@
   统筹自改门槛：≤20 行、无设计取舍的小问题自己改并注明提交；其余写任务书交 agent。
   worktree/审核目录/临时数据统一放 `D:\Agent\Worktrees\OMNIX-Caishenfolio\`。
   **当前未分配开发主线**，等用户指定。
+- 账本 schema **当前为 v9**（`PortfolioStore.SchemaVersion`）。下文 v5/v6 是各功能落地当时的版本，非当前值。
 - 应用内更新已启用：下载 → SHA-256 校验 → ECDSA P-256 验签 → 安装；任一层不过即删除文件
 - 覆盖: A股 / 港股 / 美股 / 日股；股票 / ETF / 场外基金 / 债券 / 可转债 / 外汇 / 现金
 
@@ -163,7 +164,7 @@ dotnet build packaging\windows\Omnix.Installer.wixproj -c Release           # �
   行业集中度/相关性/ETF 重叠（依赖数据质量，计划§10 后续能力）；相关 UI 深化
 - N6 场景化教育（现有 TermGlossary/引导/就地解释为部分覆盖）、N7 全面测试与发布加固
 - N1 验收的"新手真人测试"（计划 §6 七项任务需真人无指导完成，自动化只覆盖机械导航）
-- N2 补充：跨账户换汇（domain 目前单账户多币种）、换汇 CSV 导入支持
+- ~~N2 补充：跨账户换汇、换汇 CSV 导入~~ **已完成**（统筹 2026-10-19 独立核实：`LedgerTransaction.CounterAccountId` 含同账户校验；`TransactionCsvImporter` 认 换汇/结汇/购汇/fx）
 - N4 补充：样本外/参数敏感性回测进卡（当前历史检验为条件分布，滚动样本外待接
   既有 out_of_sample_report）；卖出方向证据卡（计划质量门"卖出分析必须列税费"）
 - 日历：农历/浮动节假日未建模（固定节假日已入表，长假可能多报陈旧度，方向安全）
