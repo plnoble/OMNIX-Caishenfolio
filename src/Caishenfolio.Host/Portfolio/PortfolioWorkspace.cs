@@ -382,7 +382,12 @@ public sealed class PortfolioWorkspace
             var accountFlows = state.FlowsForAccount(account.Id);
             var (flows, missing) = ConvertFlows(accountFlows, history);
             var accountWarnings = new List<string>(missing);
-            var netInvested = Money.Sum(flows.Select(f => f.Amount), BaseCurrency);
+            // One flow without its own day's rate is enough to make the sum meaningless: leaving the
+            // others in would understate 净投入 and turn the unconverted money into invented profit.
+            // The contract says null (未知) and the UI already renders null as 未知, so hand it null.
+            var netInvested = missing.Count > 0
+                ? (Money?)null
+                : Money.Sum(flows.Select(f => f.Amount), BaseCurrency);
             var firstFlowDate = flows.Count == 0 ? (DateOnly?)null : flows.Min(f => f.Date);
 
             // A balance-mode account is worth exactly what was last reported. Money moved after that
@@ -420,8 +425,8 @@ public sealed class PortfolioWorkspace
                 TotalValueBase = totalValue,
                 NetInvestedBase = netInvested,
                 MoneyWeightedReturn = AssessAccountReturn(account, totalValue, flows, missing, asOf),
-                Annualized = totalValue is { } total
-                    ? AnnualizedReturn(total - netInvested, netInvested, asOf, firstFlowDate)
+                Annualized = totalValue is { } total && netInvested is { } invested
+                    ? AnnualizedReturn(total - invested, invested, asOf, firstFlowDate)
                     : null,
                 Warnings = accountWarnings,
             });

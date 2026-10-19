@@ -272,6 +272,16 @@ public class CashflowLedgerAcceptanceTests : IDisposable
         // Today's rate would have produced exactly 0.00% here; a null with a reason is the honest answer.
         Assert.Contains(snapshot.Warnings, w => w.Contains("2025-01-02", StringComparison.Ordinal));
         Assert.Equal(48_500m, snapshot.Valuation.TotalValue.Amount);
+
+        // And the per-account totals must be unknown too, not built from whatever happened to
+        // convert. A 0 净投入 against a 48 500 市值 would print a confident +48 500 累计收益 for an
+        // account that has only ever been funded.
+        var summary = snapshot.AccountSummaries.Single(s => s.AccountId == account.Id);
+        Assert.Equal(48_500m, summary.TotalValueBase!.Value.Amount);
+        Assert.Null(summary.NetInvestedBase);
+        Assert.Null(summary.CumulativePnlBase);
+        Assert.Null(summary.Annualized);
+        Assert.Contains(summary.Warnings, w => w.Contains("2025-01-02", StringComparison.Ordinal));
     }
 
     // --- A8: valuation modes (R2) -----------------------------------------------------
