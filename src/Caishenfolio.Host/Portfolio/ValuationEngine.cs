@@ -290,9 +290,37 @@ public static class ValuationEngine
                 continue;
             }
 
+            if (assertion.Date > asOf)
+            {
+                // The report was made after the day being valued; it cannot speak for that day.
+                warnings.Add(
+                    $"账户 {account.Name} 的最后一次「当天资产金额」报在 {assertion.Date:yyyy-MM-dd}，" +
+                    $"晚于本次估值日 {asOf:yyyy-MM-dd}：那天没有可用的总额，市值未知（不是 0）。");
+                continue;
+            }
+
             if (fx.TryConvert(assertion.Value, baseCcy, out var asserted))
             {
                 balanceAccountValues[account.Id] = asserted;
+
+                // The report is a statement about one day. Money recorded after it has moved the
+                // account for certain, yet the reported figure cannot have followed: keeping quiet
+                // here is exactly the silent double count R2 warns about (an internal move both
+                // lands in the receiving account and stays inside the sender's stale total).
+                // The figure is still the best fact available, so it stays counted — but the
+                // aggregate may no longer be presented as complete.
+                var movedSince = state.FlowsForAccount(account.Id)
+                    .Where(flow => flow.Date > assertion.Date && flow.Date <= asOf)
+                    .ToList();
+                if (movedSince.Count > 0)
+                {
+                    warnings.Add(
+                        $"账户 {account.Name} 最后一次上报总额是 {assertion.Date:yyyy-MM-dd}，" +
+                        $"之后到估值日 {asOf:yyyy-MM-dd} 还有 {movedSince.Count} 笔资金进出" +
+                        $"（最近 {movedSince.Max(flow => flow.Date):yyyy-MM-dd}）。这个账户的市值已经不准，" +
+                        "合计里仍按最后一次上报计入，所以合计不完整。");
+                }
+
                 continue;
             }
 

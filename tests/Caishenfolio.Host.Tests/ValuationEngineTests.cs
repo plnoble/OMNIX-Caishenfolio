@@ -6,9 +6,24 @@ namespace Caishenfolio.Host.Tests;
 public class ValuationEngineTests
 {
     private const string Account = "acct_main";
+    private const string BalanceAccount = "acct_balance";
     private static readonly DateOnly Day1 = new(2026, 1, 5);
     private static readonly DateOnly AsOf = new(2026, 7, 31);
     private static readonly Dictionary<string, PriceQuote> NoQuotes = [];
+
+    /// <summary>One detail account and one balance-mode account, as the store would hand them over.</summary>
+    private static Dictionary<string, Account> Accounts()
+    {
+        // The type is spelled out because this class has a member called Account (the account id).
+        static Portfolio.Account New(string name, AccountKind kind, string id, AccountValuationMode mode) =>
+            Portfolio.Account.Create(name, kind, "CNY", id: id, mode: mode);
+
+        return new(StringComparer.Ordinal)
+        {
+            [Account] = New("主账户", AccountKind.Securities, Account, AccountValuationMode.Detail),
+            [BalanceAccount] = New("余额账户", AccountKind.Bank, BalanceAccount, AccountValuationMode.Balance),
+        };
+    }
 
     /// <summary>USD/CNY 7.2 and USD/JPY 150 — JPY→CNY has to triangulate through USD.</summary>
     private static FxConverter Rates() => new(
@@ -200,6 +215,84 @@ public class ValuationEngineTests
         Assert.True(valuation.IsComplete);
         Assert.True(valuation.TotalValue.IsZero);
         Assert.Empty(valuation.ByRegion);
+    }
+
+    /// <summary>
+    /// A reported total speaks for one day only. Money recorded after that day has certainly moved
+    /// the account — an internal move even lands in the receiving account while staying inside the
+    /// sender's stale total, which is the silent double count R2 names — so the aggregate may not
+    /// be presented as complete. The reported figure stays counted: it is still the last fact
+    /// known, and dropping a whole account would replace a small error with a large one.
+    /// </summary>
+    [Fact]
+    public void MoneyRecordedAfterABalanceReportMakesTheAggregateIncomplete()
+    {
+        var reportDate = new DateOnly(2026, 2, 28);
+        var transferDate = new DateOnly(2026, 4, 10);
+        var ledger = PositionCalculator.Replay(
+        [
+            LedgerTransaction.Deposit(Account, Day1, 50_000m, "CNY"),
+            LedgerTransaction.Deposit(BalanceAccount, Day1, 100_000m, "CNY"),
+            LedgerTransaction.BalanceAssertion(BalanceAccount, reportDate, 100_000m, "CNY"),
+            LedgerTransaction.Transfer(BalanceAccount, Account, transferDate, 10_000m, "CNY"),
+        ]);
+
+        var valuation = ValuationEngine.Value(
+            ledger, NoQuotes, FxConverter.Empty, "CNY", AsOf, instruments: null, accounts: Accounts());
+
+        Assert.False(valuation.IsComplete);
+        Assert.Contains(
+            valuation.Warnings,
+            w => w.Contains("余额账户", StringComparison.Ordinal)
+                && w.Contains("2026-02-28", StringComparison.Ordinal)
+                && w.Contains("2026-04-10", StringComparison.Ordinal));
+        // Still counted at the reported figure, deliberately: see the summary on this test. The
+        // 10 000 is therefore in the aggregate twice — A holds it as cash (60 000) and it is also
+        // still inside B's report (100 000) — which is exactly why the warning must exist. The
+        // truth is 150 000; a silent 160 000 would be the R2 failure mode.
+        Assert.Equal(160_000m, valuation.TotalValue.Amount);
+        var balanceAccount = valuation.AccountValues.Single(v => v.AccountId == BalanceAccount);
+        Assert.True(balanceAccount.ValueKnown);
+        Assert.Equal(100_000m, balanceAccount.TotalValue.Amount);
+    }
+
+    [Fact]
+    public void ABalanceReportDoesNotPriceADayBeforeItWasMade()
+    {
+        var reportDate = new DateOnly(2026, 6, 30);
+        var ledger = PositionCalculator.Replay(
+        [
+            LedgerTransaction.Deposit(BalanceAccount, Day1, 100_000m, "CNY"),
+            LedgerTransaction.BalanceAssertion(BalanceAccount, reportDate, 195_000m, "CNY"),
+        ]);
+
+        // Valuing 2026-03-31 with a report made on 2026-06-30 would be hindsight, not information.
+        var valuation = ValuationEngine.Value(
+            ledger, NoQuotes, FxConverter.Empty, "CNY", new DateOnly(2026, 3, 31),
+            instruments: null, accounts: Accounts());
+
+        Assert.False(valuation.IsComplete);
+        Assert.Contains(
+            valuation.Warnings,
+            w => w.Contains("2026-06-30", StringComparison.Ordinal) && w.Contains("未知"));
+        Assert.False(valuation.AccountValues.Single(v => v.AccountId == BalanceAccount).ValueKnown);
+        Assert.True(valuation.TotalValue.IsZero);
+    }
+
+    [Fact]
+    public void ABalanceReportMadeAfterItsFlowsIsStillComplete()
+    {
+        var ledger = PositionCalculator.Replay(
+        [
+            LedgerTransaction.Deposit(BalanceAccount, Day1, 100_000m, "CNY"),
+            LedgerTransaction.BalanceAssertion(BalanceAccount, new DateOnly(2026, 6, 30), 195_000m, "CNY"),
+        ]);
+
+        var valuation = ValuationEngine.Value(
+            ledger, NoQuotes, FxConverter.Empty, "CNY", AsOf, instruments: null, accounts: Accounts());
+
+        Assert.True(valuation.IsComplete);
+        Assert.Equal(195_000m, valuation.TotalValue.Amount);
     }
 }
 

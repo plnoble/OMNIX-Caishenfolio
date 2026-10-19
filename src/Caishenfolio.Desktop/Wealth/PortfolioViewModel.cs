@@ -231,7 +231,7 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
                 ? $"已估值 {Positions.Count} 个持仓，{snapshot.Accounts.Count} 个账户。"
                 : snapshot.Risk.Coverage.IsUnknown
                     ? "估值不可用：所有持仓都未定价，集中度与收益均为未知（不会按 0 计算）。"
-                    : $"估值不完整：{snapshot.Warnings.Count} 项未计入合计，风险结论仅基于已定价部分（见下方提示）。";
+                    : $"估值不完整：{snapshot.Warnings.Count} 项需要处理，风险结论仅基于已确定的部分（见下方提示）。";
     }
 
     private void AddSlices(string dimension, IReadOnlyList<AllocationSlice> slices)
