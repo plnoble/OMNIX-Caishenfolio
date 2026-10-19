@@ -3,7 +3,7 @@
 ## Latest scope — 2026-10-19 外汇核心化 / Android 架构审查
 
 - 用户将产品定位调整为“外汇资产管理和换汇决策为核心，普通资产记账为辅助”；本轮明确只审查，不实施大改。
-- 已交付：`docs/reviews/fx-android-architecture-review-2026-10-18.md`，覆盖现状、模型、差距、复用/重构/退出项、新模型、确定性引擎、Android 迁移及分阶段计划。
+- 已交付：`D:/Agent/Worktrees/OMNIX-Caishenfolio/reviews/fx-android-architecture-review-2026-10-18.md（仓库外：含真实交易金额，公开仓库不放）`，覆盖现状、模型、差距、复用/重构/退出项、新模型、确定性引擎、Android 迁移及分阶段计划。
 - 核心结论：保留回单/冲正/导入契约，新增 Lot 与消耗分配、目标货币和时间情景；Android 本机 Kotlin 领域内核，PC 可继续保留普通资产与研究能力。
 - 新发现：绕行固定费未知仍产生净额；历史成本未知使 held 路径被省略；提醒无稳定规则身份，且 UNKNOWN 观察/备注传递不完整。全部记录，未改业务代码。
 - 本轮验证：Python 外汇 64 项通过（系统 3.13.7，隔离 fixture，非 managed 全门禁）；Host/Host.Tests 编译完成，vstest→testhost 90 秒超时，0 项执行。证据 `.local/fx-android-review-20261018/`。无 UI/真实行情/Android 验收。

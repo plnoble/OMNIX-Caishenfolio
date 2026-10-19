@@ -1,6 +1,18 @@
 # Agent Handoff
 
-## Active Stage — 2026-10-08 TR1 试用准备
+## Latest — 2026-10-19 FX / Android 审查交付
+
+本轮用户要求先阅读代码，再审查“外汇资产管理/换汇决策优先”的新定位，不立即重写。审查报告：
+`D:/Agent/Worktrees/OMNIX-Caishenfolio/reviews/fx-android-architecture-review-2026-10-18.md（仓库外：含真实交易金额，公开仓库不放）`。原 PC 基线为 `a3afe7c`，开始时工作区干净。
+
+- 已核对数据库 v9、回单/跨账户换汇/冲正/CSV、均价成本池、估值、FX 数据源与计算、提醒和相关页面。旧文档“跨账户/换汇 CSV 未做”不是当前代码事实。
+- 当前没有 Lot/消耗链；旧五路径属于历史成本对当前参考价，旧 breakeven 单位 JPY/CNY，不是未来 USD/JPY 的路线临界。旧 split 也不是多档换汇。
+- 建议保留正确事实/测试/普通资产功能；新增独立 FX 领域，在 Kotlin/JVM 本地实现确定性内核；Room 存事实，DataStore 存偏好，Worker 周期检查，不承诺秒级触线通知。新架构只是建议，尚未实施。
+- 报告列出实证缺陷 FX-01/02 与负现金探针，以及提醒身份/UNKNOWN 的静态链路问题。不要误把旧测试全绿当成新需求已满足。
+- 2026-10-18 验证：Python FX 64 pass；使用系统 3.13.7（预期 managed venv 不存在）；Host 与测试项目编译成功，testhost 连接超时，TRX 0 executed。隔离证据 `.local/fx-android-review-20261018/`；未启动正式桌面、触碰个人正式账本或外发通知。
+- 本轮仅报告与开发记录变化，未改 C#/Python/XAML/schema/VERSION/PHASE，未提交/推送/发布。继续开发时以本次用户新定位为优先，先落实 A0 语义和迁移规则；不要自动恢复下方旧 TR1 分派任务。
+
+## Historical Active Stage — 2026-10-08 TR1 试用准备
 
 用户明确要求修复后继续安排下一阶段，而非停在报告。任务书：`agent-stage-trial-readiness-2026-10-08.md`。
 已分派三个执行 Agent：A 结果卡可访问语义、B 数据失败/恢复契约、C 安装布局安全冒烟。

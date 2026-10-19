@@ -627,3 +627,16 @@ FX 方向反转数学一致性有测试、后台提醒能力与设置文案逐�
 - 证据 `.local/fa1-repair-20261007/attempt-index.json` 包含一次真实脚本调试失败及七次最终通过，各 attempt 独立报告和日志，七次清单 SHA-256 相同。
 - 正式主账本前后指纹一致、无 WAL/SHM，无测试核心/监听残留；仅此观测范围，不宣称整个正式目录审计。MSI 原指纹不变，未重新打包或安装。
 - 旧失败现场无法恢复；确认的引导竞态已修，新固定样本未复现超时，不承诺所有历史故障已归因或永久无超时。
+
+### 2026-10-19 - FX / Android 架构审查交付
+
+| Category | Status | Evidence | Notes |
+| --- | --- | --- | --- |
+| Security and privacy | Pass | fixture、隔离 grid DB；C# 选定单测使用临时库；纯内存探针 | 未启动正式桌面/通知，不读取个人正式账本 |
+| Data, API, consistency | Warn | 源码调用链与 FX-01/02 探针 | 已发现缺陷和新模型差距，按审查范围未修 |
+| Code quality | N/A | 仅报告与开发记录 | 无产品代码改动 |
+| Testing | Warn | Python FX 64 pass；Host/Host.Tests 编译；fx-review.trx | 系统 Python，非 managed 全门禁；C# testhost 超时 0 executed |
+| UI / Android | N/A | 未改 XAML，未建 Android 工程 | 不声称 UI 或设备验收完成 |
+| Release | N/A | 未更改 VERSION/PHASE、MSI | 未提交/推送/安装/发布 |
+
+交付物：D:/Agent/Worktrees/OMNIX-Caishenfolio/reviews/fx-android-architecture-review-2026-10-18.md（仓库外：含真实交易金额，公开仓库不放）。此门禁记录的是审查证据边界，不是产品新版发布通过。

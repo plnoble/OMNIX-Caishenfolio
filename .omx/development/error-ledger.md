@@ -493,3 +493,13 @@
 - 修复：增加 ControlType.Window，与 PID/标题联合匹配；后续固定五次冷启动与两次完整 UI 均过。
 - 预防：窗口定位至少绑定进程身份与控件类型；临时“没看到”不能当作“非首次启动”；出现/关闭均有界等待，跳过关键观察必须失败。
 - 证据规则：独立 attempt 目录、原子拒覆盖、manifest/二进制指纹/起止/退出码；修代码后的新批次保留旧失败版本，不靠同版重试筛绿灯。已补入 skill-candidates。
+
+## 2026-10-19 - FX 审查：定向反例与验证环境限制
+
+- 症状/发现：两段绕行费用分支在 fixed_fee=None、spread_pct 已填时仍给净额和 ok；单段有未知费用守卫，多段漏掉。现有性质测试只向单段传部分费用，未向绕行传同一反例。
+- 检测：直接调用生产 compare_paths；100 CNY、USD/CNY=7.2、比例费 1% 返回 net=13.6125。修复状态：按用户“先审查”要求未修代码，进入审查报告 FX-01。
+- 预防：费用三态按路径×费用组合验证；未来 Route Engine 每条腿共用费用结算函数，避免复制分支。
+- 第二个反例：amount 已知、cost_in_base 未知的 held 在客户端/API 被整体丢弃。根因是将收益计算的输入要求施加到资产转换。新模型按结果字段区分可算价值与未知收益。
+- 验证限制：预期 managed venv 路径不存在，改用系统 Python 3.13.7 仅跑隔离 FX 测试，不称正式全门禁；C# 编译后测试宿主 90 秒连接超时，TRX 0 executed。根因未确认，不归因于机器慢或纯环境抖动，也不通过重试筛绿灯。
+- 工具纠正：一次 PowerShell 检索误用了 Bash 大括号路径展开，解析失败后改为目录 rg；无产品文件变更。
+- 证据：.local/fx-android-review-20261018/；迁移与新引擎建议见 D:/Agent/Worktrees/OMNIX-Caishenfolio/reviews/fx-android-architecture-review-2026-10-18.md（仓库外：含真实交易金额，公开仓库不放）。相关经验加入 skill-candidates。

@@ -989,3 +989,11 @@ quality-gates.md。
 - 用户要求统筹继续安排下一阶段，已生成 `agent-stage-trial-readiness-2026-10-08.md` 并启动三个子 Agent，而非只给口头建议。
 - A 负责换汇结果卡可访问性；B 负责故障注入/恢复契约；C 负责安装布局测试隔离。文件边界不重叠，构建/UI 由统筹串行调度。
 - 安装布局旧脚本只有标题检查、未配置隔离账本，不能直接运行；交给 C 先加固再验证。真人、系统显示、安装及外发授权保留原集中清单。
+
+## 2026-10-19 - 外汇核心化与 Android 迁移审查交付
+
+- 先读 AGENTS/current/handoff/开发协议，检查干净工作区；沿账本、数据库、行情、路径计算、提醒、页面、导入导出和测试追踪。形成 D:/Agent/Worktrees/OMNIX-Caishenfolio/reviews/fx-android-architecture-review-2026-10-18.md（仓库外：含真实交易金额，公开仓库不放）。
+- 结论：保存双边回单/冲正/既有资产研究；新增独立 Lot、分配、目标货币、情景时间、稳定策略身份。Android Kotlin 本机确定性计算，分阶段替换，不全盘重写。
+- 生产函数探针：绕行比例费 1% + 固定费 None 仍返回 ok/net；缺历史成本的 held 路径被丢弃；无来源现金换汇可产生负余额。代码未修改。
+- Python FX 64 项通过（系统 3.13.7，fixture，隔离 grid DB）；Host 与 Host.Tests 编译完成，但 vstest→testhost 90 秒连接超时，0 executed。未复用旧通过数，未启动正式桌面或真实通知。
+- 记录 current/handoff/decisions/error-ledger/quality-gates/reflections/skill-candidates；未提交、发布、改变版本或迁移真实数据。
