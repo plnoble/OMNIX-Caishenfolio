@@ -575,6 +575,12 @@ public sealed class PortfolioStore : IDisposable
             using var connection = Open();
             using var tx = connection.BeginTransaction();
 
+            // This path writes ledger rows directly, so it runs the same valuation-mode check as the
+            // normal write path (WP-01 D1). A 打新 record carries a position, and a balance-mode
+            // account's worth is the total it reports: such a row has to be refused here too,
+            // otherwise a warning is the only thing between the user and a wrong total.
+            ValidateValuationModes(connection, tx, subscription.ToLedgerTransactions());
+
             using (var command = connection.CreateCommand())
             {
                 command.Transaction = tx;
