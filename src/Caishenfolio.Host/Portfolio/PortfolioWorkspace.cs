@@ -379,10 +379,36 @@ public sealed class PortfolioWorkspace
             var known = value?.ValueKnown == true;
             var totalValue = known ? value!.TotalValue : (Money?)null;
 
-            var (flows, missing) = ConvertFlows(state.FlowsForAccount(account.Id), history);
+            var accountFlows = state.FlowsForAccount(account.Id);
+            var (flows, missing) = ConvertFlows(accountFlows, history);
             var accountWarnings = new List<string>(missing);
             var netInvested = Money.Sum(flows.Select(f => f.Amount), BaseCurrency);
             var firstFlowDate = flows.Count == 0 ? (DateOnly?)null : flows.Min(f => f.Date);
+
+            // A balance-mode account is worth exactly what was last reported. Money moved after that
+            // report never reaches the reported number, so the account (and the portfolio total) is
+            // quietly off by the amount moved until the user reports again. Same reasoning as D3:
+            // say it out loud rather than present a number that looks authoritative.
+            if (account.Mode == AccountValuationMode.Balance
+                && state.BalanceAssertions.TryGetValue(account.Id, out var assertion))
+            {
+                var afterReport = accountFlows.Where(f => f.Date > assertion.Date).ToList();
+                if (afterReport.Count > 0)
+                {
+                    accountWarnings.Add(
+                        $"账户「{account.Name}」最后上报总额是 {assertion.Date:yyyy-MM-dd}，" +
+                        $"之后还有 {afterReport.Count} 笔资金进出（最近 {afterReport.Max(f => f.Date):yyyy-MM-dd}），" +
+                        "报告里的金额没有跟着动，可能偏低或偏高；请补报当天资产金额。");
+                }
+            }
+
+            if (accountFlows.Count > 0 && account.Mode == AccountValuationMode.Balance
+                && !state.BalanceAssertions.ContainsKey(account.Id))
+            {
+                accountWarnings.Add(
+                    $"账户「{account.Name}」是余额模式且已有 {accountFlows.Count} 笔资金进出，但从未报过当天资产金额，" +
+                    "市值为未知（不是 0）。");
+            }
 
             summaries.Add(new AccountSummary
             {

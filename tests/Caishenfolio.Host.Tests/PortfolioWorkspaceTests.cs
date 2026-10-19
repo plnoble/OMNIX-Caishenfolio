@@ -166,6 +166,54 @@ public class PortfolioWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task ABalanceAccountIsSaidToBeStaleWhenMoneyMovesAfterItsLastReport()
+    {
+        using var store = NewStore();
+        var workspace = new PortfolioWorkspace(store);
+        var account = workspace.AddAccount(
+            "零钱通", AccountKind.Bank, "CNY", mode: AccountValuationMode.Balance);
+
+        workspace.Record(LedgerTransaction.BalanceAssertion(account.Id, Day1, 50_000m, "CNY"));
+        // Money lands after the report was made: the reported total cannot have moved with it, so
+        // the account value — and the portfolio total — is quietly off by that amount.
+        workspace.Record(LedgerTransaction.Deposit(account.Id, new DateOnly(2025, 3, 1), 10_000m, "CNY"));
+
+        var snapshot = await workspace.RefreshAsync(AsOf);
+        var summary = snapshot.AccountSummaries.Single(s => s.AccountId == account.Id);
+
+        var warning = Assert.Single(summary.Warnings);
+        Assert.Contains("2025-01-02", warning);
+        Assert.Contains("2025-03-01", warning);
+        Assert.Contains("补报", warning);
+        // The two numbers the warning is about: reported 50 000, moved in 10 000.
+        Assert.Equal(50_000m, summary.TotalValueBase!.Value.Amount);
+        Assert.Equal(10_000m, summary.NetInvestedBase!.Value.Amount);
+    }
+
+    [Fact]
+    public async Task ABalanceAccountReportedAfterItsFlowsIsNotCalledStale()
+    {
+        using var store = NewStore();
+        var workspace = new PortfolioWorkspace(store);
+        var account = workspace.AddAccount(
+            "零钱通", AccountKind.Bank, "CNY", mode: AccountValuationMode.Balance);
+        var silent = workspace.AddAccount(
+            "压箱底", AccountKind.Bank, "CNY", mode: AccountValuationMode.Balance);
+
+        workspace.Record(LedgerTransaction.Deposit(account.Id, Day1, 10_000m, "CNY"));
+        workspace.Record(LedgerTransaction.BalanceAssertion(account.Id, new DateOnly(2025, 3, 1), 60_000m, "CNY"));
+        workspace.Record(LedgerTransaction.Deposit(silent.Id, Day1, 1_000m, "CNY"));
+
+        var snapshot = await workspace.RefreshAsync(AsOf);
+
+        Assert.Empty(snapshot.AccountSummaries.Single(s => s.AccountId == account.Id).Warnings);
+        // A balance account that never reported a total is unknown, not zero (D3) — and it must say so.
+        var neverReported = snapshot.AccountSummaries.Single(s => s.AccountId == silent.Id);
+        Assert.False(neverReported.ValueKnown);
+        Assert.Contains(neverReported.Warnings, w => w.Contains("未知"));
+    }
+
+    [Fact]
     public async Task ImportsCsvAndBackfillsInstrumentMetadata()
     {
         using var store = NewStore();
