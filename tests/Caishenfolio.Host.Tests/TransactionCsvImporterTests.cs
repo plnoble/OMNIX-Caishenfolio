@@ -331,6 +331,56 @@ public class TransactionCsvImporterTests : IDisposable
         Assert.Equal("USD", brokerCash.Currency);
     }
 
+    /// <summary>
+    /// WP-01 export completeness: the two new kinds leave the book under their own names, with the
+    /// destination account spelled out, and they are refused on import with a reason — never
+    /// silently re-imported as some other kind, which would quietly change what the ledger says.
+    /// </summary>
+    [Fact]
+    public void TheNewKindsExportUnderTheirOwnNamesAndAreRefusedOnImportWithAReason()
+    {
+        using var store = PortfolioStore.UnderStateRoot(_root);
+        var source = store.SaveAccount(Host.Portfolio.Account.Create("银行", AccountKind.Bank, "CNY"));
+        var destination = store.SaveAccount(Host.Portfolio.Account.Create("券商", AccountKind.Bank, "CNY"));
+        var balance = store.SaveAccount(
+            Host.Portfolio.Account.Create("券商总览", AccountKind.Securities, "CNY", mode: AccountValuationMode.Balance));
+
+        var transfer = LedgerTransaction.Transfer(
+            source.Id, destination.Id, new DateOnly(2025, 6, 20), 30_000m, "CNY", "搬钱");
+        var assertion = LedgerTransaction.BalanceAssertion(
+            balance.Id, new DateOnly(2025, 6, 30), 195_000m, "CNY", "月底总览");
+        store.AddTransactions([transfer, assertion]);
+        store.AddTransaction(LedgerTransaction.Reversal(assertion, "金额记错"));
+
+        var accounts = store.ListAccounts(includeArchived: true).ToDictionary(a => a.Id, a => a, StringComparer.Ordinal);
+        var csv = PortfolioReportExporter.TransactionsCsv(store.ListTransactions(), accounts);
+
+        Assert.Contains("账户间转移", csv, StringComparison.Ordinal);
+        Assert.Contains("当天资产金额", csv, StringComparison.Ordinal);
+        Assert.Contains("冲正·当天资产金额", csv, StringComparison.Ordinal);
+        Assert.Contains("券商", csv, StringComparison.Ordinal); // the destination is named, not an id
+        Assert.Contains("30000", csv, StringComparison.Ordinal);
+
+        // The transfer row carries one amount and no counter currency: it must not read as two.
+        var transferRow = csv.Split('\n')
+            .Single(line => line.Contains("账户间转移", StringComparison.Ordinal))
+            .Split(',');
+        Assert.Equal("30000", transferRow[10]);
+        Assert.Equal("", transferRow[11]);
+        Assert.Equal("", transferRow[12]);
+        Assert.Equal("券商", transferRow[13]);
+
+        var preview = TransactionCsvImporter.Preview(csv, source.Id, store, "CNY",
+            accounts.Values.ToDictionary(a => a.Name, a => a.Id, StringComparer.Ordinal));
+        Assert.Equal(0, preview.Importable);
+        Assert.All(
+            preview.Rows.Where(r => r.Transaction is null),
+            r => Assert.False(string.IsNullOrWhiteSpace(r.Error)));
+        Assert.Contains(preview.Rows, r => r.Error is not null && r.Error.Contains("账户间转移", StringComparison.Ordinal));
+        Assert.Contains(preview.Rows, r => r.Error is not null && r.Error.Contains("当天资产金额", StringComparison.Ordinal));
+        Assert.Contains(preview.Rows, r => r.Error is not null && r.Error.Contains("冲正记录不能通过 CSV 导入", StringComparison.Ordinal));
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();

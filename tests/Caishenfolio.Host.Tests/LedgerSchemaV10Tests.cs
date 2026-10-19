@@ -132,7 +132,7 @@ public class LedgerSchemaV10Tests : IDisposable
     }
 
     [Fact]
-    public void V9LedgerUpgradesToV10KeepingEveryRowAndBackingUpFirst()
+    public void A10_V9LedgerUpgradesToV10KeepingEveryRowAndBackingUpFirst()
     {
         CreateV9Database();
         Assert.Equal(9, ReadUserVersion(DatabasePath));
@@ -167,7 +167,7 @@ public class LedgerSchemaV10Tests : IDisposable
     }
 
     [Fact]
-    public void MigratingAnAlreadyUpgradedLedgerIsANoOp()
+    public void A10_MigratingAnAlreadyUpgradedLedgerIsANoOp()
     {
         CreateV9Database();
         using (var first = new PortfolioStore(DatabasePath))
