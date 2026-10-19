@@ -319,7 +319,30 @@ public sealed class PortfolioWorkspace
     /// without a reported total is unknown, not zero (D3).
     /// </summary>
     private IReadOnlyList<AccountSummary> SummarizeAccounts(
-        LedgerState state, PortfolioValuation valuation, DateOnly asOf, IReadOnlyList<Account> accounts) => [];
+        LedgerState state, PortfolioValuation valuation, DateOnly asOf, IReadOnlyList<Account> accounts)
+    {
+        var values = valuation.AccountValues.ToDictionary(v => v.AccountId, StringComparer.Ordinal);
+        var summaries = new List<AccountSummary>(accounts.Count);
+        foreach (var account in accounts)
+        {
+            values.TryGetValue(account.Id, out var value);
+            var known = value?.ValueKnown == true;
+            summaries.Add(new AccountSummary
+            {
+                AccountId = account.Id,
+                Name = account.Name,
+                Currency = account.MainCurrency,
+                Mode = account.Mode,
+                ValueKnown = known,
+                TotalValueBase = known ? value!.TotalValue : null,
+                NetInvestedBase = null,
+                MoneyWeightedReturn = ReturnAssessment.Missing(
+                    "账户级净投入与收益率折算尚未实现（WP-01 P3）。", []),
+            });
+        }
+
+        return summaries;
+    }
 
     /// <summary>
     /// Time-weighted return from the stored valuation curve. Needs at least two points, which

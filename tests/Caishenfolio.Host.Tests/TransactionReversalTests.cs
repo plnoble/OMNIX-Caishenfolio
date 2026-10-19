@@ -165,9 +165,26 @@ public class TransactionReversalTests : IDisposable
         {
             connection.Open();
 
-            // Schema v5 as the previous release wrote it.
+            // Schema v5 as the previous release wrote it. The accounts table is part of that
+            // schema: every real v5 file has it, because the v1 step creates it and later steps
+            // never drop it. WP-01's v10 step alters accounts, so a fixture that claimed v5
+            // without the table was not a shape any release could have produced.
             using var create = connection.CreateCommand();
             create.CommandText = """
+                CREATE TABLE accounts (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    main_currency TEXT NOT NULL,
+                    broker TEXT NOT NULL DEFAULT '',
+                    note TEXT NOT NULL DEFAULT '',
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+
+                INSERT INTO accounts (id, name, kind, main_currency, broker, note, archived, created_at) VALUES
+                    ('acct', '旧账户', 'Securities', 'CNY', '', '', 0, '2026-01-01T00:00:00Z');
+
                 CREATE TABLE transactions (
                     id TEXT PRIMARY KEY,
                     account_id TEXT NOT NULL,
