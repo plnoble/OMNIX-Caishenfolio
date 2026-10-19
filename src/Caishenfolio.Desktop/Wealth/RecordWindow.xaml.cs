@@ -110,6 +110,15 @@ public partial class RecordWindow : Window
 
                 if (string.Equals(currency, SelectedCounterCurrency, StringComparison.Ordinal))
                 {
+                    // Defence in depth: the field is cleared when it goes off screen, so a value
+                    // here means something survived that would otherwise be dropped without a word.
+                    if (CounterAmountBox.Text.Trim().Length > 0)
+                    {
+                        throw new LedgerException(
+                            $"两边都是 {currency}，对方金额没有意义，也不会入账；请清空对方金额，" +
+                            "或把币种改成与转入账户不同的币种。");
+                    }
+
                     return LedgerTransaction.Transfer(account.Id, target.Id, date, amount, currency, note);
                 }
 
@@ -175,6 +184,20 @@ public partial class RecordWindow : Window
     }
 
     private void CounterAccountCombo_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (AmountRow is null)
+        {
+            return;
+        }
+
+        UpdateFieldVisibility();
+    }
+
+    /// <summary>
+    /// The currency is what decides whether a move needs a second amount at all, so it has to
+    /// refresh the form like the account and operation combos do.
+    /// </summary>
+    private void CurrencyCombo_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (AmountRow is null)
         {
@@ -270,14 +293,38 @@ public partial class RecordWindow : Window
 
     private void UpdateFieldVisibility()
     {
+        // The currency combo is the first control in the form, so its SelectionChanged fires while
+        // the rest of the BAML is still being parsed: everything below must tolerate the fields
+        // that do not exist yet.
+        if (CounterAccountRow is null || CounterAmountRow is null || FxRateText is null || AmountRow is null)
+        {
+            return;
+        }
+
         var operation = SelectedOperation;
         var move = operation == RecordOperation.Move;
         var crossCurrency = move &&
             !string.Equals(SelectedCurrency, SelectedCounterCurrency, StringComparison.Ordinal);
 
+        // Changing the currency can turn a cross-currency move into a same-currency one, and the
+        // counter amount stops meaning anything. Clear it as it goes off screen: a number the user
+        // typed must never be dropped silently at save time.
+        if (!crossCurrency && CounterAmountBox is not null && CounterAmountBox.Text.Length > 0)
+        {
+            CounterAmountBox.Text = "";
+        }
+
         CounterAccountRow.Visibility = move ? Visibility.Visible : Visibility.Collapsed;
         CounterAmountRow.Visibility = crossCurrency ? Visibility.Visible : Visibility.Collapsed;
         FxRateText.Visibility = crossCurrency ? Visibility.Visible : Visibility.Collapsed;
+        if (CounterCurrencyText is not null)
+        {
+            CounterCurrencyText.Text = crossCurrency
+                ? SelectedCounterCurrency
+                : move
+                    ? $"{SelectedCurrency}（两边同币种）"
+                    : "—";
+        }
 
         UpdateDerivedRate();
     }
@@ -285,6 +332,11 @@ public partial class RecordWindow : Window
     /// <summary>Display only: what the two receipt amounts imply. The rate is never typed in.</summary>
     private void UpdateDerivedRate()
     {
+        if (FxRateText is null || AmountBox is null || CounterAmountBox is null)
+        {
+            return;
+        }
+
         if (FxRateText.Visibility != Visibility.Visible)
         {
             FxRateText.Text = "汇率：—";

@@ -48,7 +48,8 @@
                 </StackPanel>
                 <StackPanel Margin="10,0,0,0">
                     <TextBlock Text="币种" Style="{StaticResource SectionTitle}" />
-                    <ComboBox x:Name="CurrencyCombo" Width="90" SelectedIndex="0">
+                    <ComboBox x:Name="CurrencyCombo" Width="90" SelectedIndex="0"
+                              SelectionChanged="CurrencyCombo_OnSelectionChanged">
                         <ComboBoxItem Content="CNY" IsSelected="True" />
                         <ComboBoxItem Content="HKD" />
                         <ComboBoxItem Content="USD" />

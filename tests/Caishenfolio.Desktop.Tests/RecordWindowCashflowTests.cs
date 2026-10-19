@@ -309,6 +309,55 @@ public class RecordWindowCashflowTests : IDisposable
         });
     }
 
+    /// <summary>
+    /// The currency decides whether a move needs a second amount, so it must refresh the form like
+    /// the account and operation combos do — and a number that stops meaning anything must not sit
+    /// on screen pretending it will be recorded.
+    /// </summary>
+    [Fact]
+    public void ChangingTheCurrencyRefreshesTheFormAndNeverDropsTheCounterAmountSilently()
+    {
+        Run(async () =>
+        {
+            using var store = NewStore();
+            var workspace = new PortfolioWorkspace(store);
+            var from = workspace.AddAccount("华泰证券", AccountKind.Securities, "CNY");
+            var toJpy = workspace.AddAccount("日本账户", AccountKind.Bank, "JPY");
+
+            var window = NewWindow(workspace, from);
+            SelectOperation(window, "Move");
+            SelectCounter(window, toJpy.Id);
+            Assert.Equal("CNY", SelectedCurrency(window));
+            Assert.Equal(Visibility.Visible, VisibilityOf(window, "CounterAmountRow"));
+            // The counter currency is on screen; the user copies both amounts off the receipt.
+            Assert.Equal("JPY", ((TextBlock)Element(window, "CounterCurrencyText")).Text);
+
+            Set(window, "AmountBox", "10000");
+            Set(window, "CounterAmountBox", "210000");
+
+            // Switching the outgoing currency to the destination's makes it a same-currency move.
+            SelectCurrency(window, "JPY");
+            Assert.Equal(Visibility.Collapsed, VisibilityOf(window, "CounterAmountRow"));
+            Assert.Equal(Visibility.Collapsed, VisibilityOf(window, "FxRateText"));
+            Assert.Equal("", ((TextBox)Element(window, "CounterAmountBox")).Text);
+            Assert.Contains("同币种", ((TextBlock)Element(window, "CounterCurrencyText")).Text, StringComparison.Ordinal);
+
+            // And back: the cross-currency form returns, empty rather than stale.
+            SelectCurrency(window, "CNY");
+            Assert.Equal(Visibility.Visible, VisibilityOf(window, "CounterAmountRow"));
+            Assert.Equal("JPY", ((TextBlock)Element(window, "CounterCurrencyText")).Text);
+
+            // Whatever happens, a counter amount that cannot be recorded is refused, not ignored.
+            SelectCurrency(window, "JPY");
+            Set(window, "CounterAmountBox", "210000");
+            Set(window, "DateBox", "2025-06-30");
+            Assert.False(window.TryRecord());
+            Assert.Contains("对方金额", ((TextBlock)Element(window, "ErrorText")).Text, StringComparison.Ordinal);
+            Assert.Empty(store.ListTransactions());
+            await Task.CompletedTask;
+        });
+    }
+
     private RecordWindow NewWindow(PortfolioWorkspace workspace, Account? preselected = null)
     {
         var window = new RecordWindow(workspace, workspace.Store.ListAccounts(), preselected);
@@ -334,6 +383,13 @@ public class RecordWindowCashflowTests : IDisposable
 
     private static string SelectedCurrency(RecordWindow window) =>
         ((ComboBoxItem)((ComboBox)Element(window, "CurrencyCombo")).SelectedItem).Content?.ToString() ?? "";
+
+    private static void SelectCurrency(RecordWindow window, string currency)
+    {
+        var combo = (ComboBox)Element(window, "CurrencyCombo");
+        combo.SelectedItem = combo.Items.Cast<ComboBoxItem>()
+            .Single(item => (string?)item.Content == currency);
+    }
 
     private static void Set(RecordWindow window, string name, string value) =>
         ((TextBox)Element(window, name)).Text = value;
