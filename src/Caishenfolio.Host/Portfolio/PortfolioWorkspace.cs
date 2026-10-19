@@ -150,6 +150,13 @@ public sealed class PortfolioWorkspace
             priceTolerancePercent: Settings.PriceTolerancePercent,
             ipoSubscriptions: _store.ListIpoSubscriptions());
 
+        var returnWarnings = new List<string>();
+        // Rates observed on any day, so each flow can be folded in at its own day (R5). The
+        // valuation itself keeps using the as-of converter above.
+        var history = new HistoricalFxConverter(_store.ListFxRates());
+        var xirrStatus = AssessXirr(state, valuation, date, history, returnWarnings);
+        var twr = TryTwr(state, valuation, date, history, returnWarnings);
+
         return new WorkspaceSnapshot
         {
             AsOf = date,
@@ -159,13 +166,18 @@ public sealed class PortfolioWorkspace
             Instruments = instruments,
             Transactions = transactions,
             CashBalances = state.CashBalances,
-            Xirr = TryXirr(state, valuation, date),
-            XirrStatus = AssessXirr(state, valuation, date),
-            AccountSummaries = SummarizeAccounts(state, valuation, date, accounts),
-            Twr = TryTwr(state, valuation, date),
+            // One number, one source of truth: the metric and its explanation never disagree.
+            Xirr = xirrStatus.Value,
+            XirrStatus = xirrStatus,
+            AccountSummaries = SummarizeAccounts(state, valuation, date, accounts, history),
+            Twr = twr,
             Risk = risk,
             Alerts = alerts,
-            Warnings = warnings.Concat(valuation.Warnings).Distinct(StringComparer.Ordinal).ToArray(),
+            Warnings = warnings
+                .Concat(valuation.Warnings)
+                .Concat(returnWarnings)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray(),
         };
     }
 
@@ -287,39 +299,77 @@ public sealed class PortfolioWorkspace
         }
     }
 
-    private double? TryXirr(LedgerState state, PortfolioValuation valuation, DateOnly asOf)
-    {
-        // A mixed-currency flow series cannot be discounted; skip rather than report a wrong rate.
-        if (state.ExternalFlows.Any(f => f.Amount.Currency != BaseCurrency))
-        {
-            return null;
-        }
-
-        try
-        {
-            return ReturnMetrics.Xirr(state.ExternalFlows, valuation.TotalValue, asOf);
-        }
-        catch (LedgerException)
-        {
-            return null;
-        }
-    }
-
     /// <summary>
     /// WP-01 R5: external flows are discounted at the exchange rate of the day they happened, so
     /// a portfolio holding more than one currency still has a return. A flow whose own-day rate
     /// is missing makes the result explicitly incomplete (the date is named) — it is never
     /// converted at today's rate and never silently dropped.
     /// </summary>
-    private ReturnAssessment AssessXirr(LedgerState state, PortfolioValuation valuation, DateOnly asOf) =>
-        ReturnAssessment.Missing("多币种现金流按发生日折算尚未实现（WP-01 P3）。", []);
+    private ReturnAssessment AssessXirr(
+        LedgerState state,
+        PortfolioValuation valuation,
+        DateOnly asOf,
+        HistoricalFxConverter history,
+        List<string> warnings)
+    {
+        var (flows, missing) = ConvertFlows(state.ExternalFlows, history);
+        if (missing.Count > 0)
+        {
+            foreach (var gap in missing)
+            {
+                warnings.Add($"外部流 {gap}，该笔未计入资金加权收益率。");
+            }
+
+            return ReturnAssessment.Missing(
+                $"有 {missing.Count} 笔外部流缺少发生当日的汇率，资金加权收益率无法计算。" +
+                "用今天的汇率代替会得到一个看着合理但错的数，所以这里不猜。",
+                missing);
+        }
+
+        try
+        {
+            return ReturnAssessment.Resolved(ReturnMetrics.Xirr(flows, valuation.TotalValue, asOf));
+        }
+        catch (LedgerException ex)
+        {
+            return ReturnAssessment.Missing($"现金流仍无法折算到 {BaseCurrency}：{ex.Message}", missing);
+        }
+    }
+
+    /// <summary>
+    /// Folds each flow into the base currency at the rate observed on the flow's own day. A flow
+    /// that cannot be converted is reported with its date instead of being dropped or approximated
+    /// (WP-01 R5) — dropping it would quietly change the answer.
+    /// </summary>
+    private (List<ExternalFlow> Flows, List<string> Missing) ConvertFlows(
+        IEnumerable<ExternalFlow> flows, HistoricalFxConverter history)
+    {
+        var converted = new List<ExternalFlow>();
+        var missing = new List<string>();
+        foreach (var flow in flows)
+        {
+            if (history.TryConvert(flow.Amount, BaseCurrency, flow.Date, out var conversion))
+            {
+                converted.Add(flow with { Amount = conversion });
+                continue;
+            }
+
+            missing.Add($"{flow.Date:yyyy-MM-dd} {flow.Amount.Currency}→{BaseCurrency} 缺少当日汇率");
+        }
+
+        return (converted, missing);
+    }
 
     /// <summary>
     /// WP-01 目标 3: per-account 总资产 / 累计收益 / 资金加权收益率 / 年化. A balance-mode account
     /// without a reported total is unknown, not zero (D3).
     /// </summary>
     private IReadOnlyList<AccountSummary> SummarizeAccounts(
-        LedgerState state, PortfolioValuation valuation, DateOnly asOf, IReadOnlyList<Account> accounts)
+        LedgerState state,
+        PortfolioValuation valuation,
+        DateOnly asOf,
+        IReadOnlyList<Account> accounts,
+        HistoricalFxConverter history)
     {
         var values = valuation.AccountValues.ToDictionary(v => v.AccountId, StringComparer.Ordinal);
         var summaries = new List<AccountSummary>(accounts.Count);
@@ -327,6 +377,13 @@ public sealed class PortfolioWorkspace
         {
             values.TryGetValue(account.Id, out var value);
             var known = value?.ValueKnown == true;
+            var totalValue = known ? value!.TotalValue : (Money?)null;
+
+            var (flows, missing) = ConvertFlows(state.FlowsForAccount(account.Id), history);
+            var accountWarnings = new List<string>(missing);
+            var netInvested = Money.Sum(flows.Select(f => f.Amount), BaseCurrency);
+            var firstFlowDate = flows.Count == 0 ? (DateOnly?)null : flows.Min(f => f.Date);
+
             summaries.Add(new AccountSummary
             {
                 AccountId = account.Id,
@@ -334,14 +391,62 @@ public sealed class PortfolioWorkspace
                 Currency = account.MainCurrency,
                 Mode = account.Mode,
                 ValueKnown = known,
-                TotalValueBase = known ? value!.TotalValue : null,
-                NetInvestedBase = null,
-                MoneyWeightedReturn = ReturnAssessment.Missing(
-                    "账户级净投入与收益率折算尚未实现（WP-01 P3）。", []),
+                TotalValueBase = totalValue,
+                NetInvestedBase = netInvested,
+                MoneyWeightedReturn = AssessAccountReturn(account, totalValue, flows, missing, asOf),
+                Annualized = totalValue is { } total
+                    ? AnnualizedReturn(total - netInvested, netInvested, asOf, firstFlowDate)
+                    : null,
+                Warnings = accountWarnings,
             });
         }
 
         return summaries;
+    }
+
+    private ReturnAssessment AssessAccountReturn(
+        Account account,
+        Money? totalValue,
+        IReadOnlyList<ExternalFlow> flows,
+        IReadOnlyList<string> missing,
+        DateOnly asOf)
+    {
+        if (missing.Count > 0)
+        {
+            return ReturnAssessment.Missing(
+                $"账户「{account.Name}」有 {missing.Count} 笔资金进出缺少发生当日的汇率，收益率无法计算。", missing);
+        }
+
+        if (totalValue is not { } value)
+        {
+            return ReturnAssessment.Missing(
+                $"账户「{account.Name}」还没有可用的市值（余额模式未报过总额，或持仓未定价），收益率未知。", []);
+        }
+
+        try
+        {
+            return ReturnAssessment.Resolved(ReturnMetrics.Xirr(flows, value, asOf));
+        }
+        catch (LedgerException ex)
+        {
+            return ReturnAssessment.Missing($"账户「{account.Name}」现金流无法折算：{ex.Message}", []);
+        }
+    }
+
+    /// <summary>
+    /// 年化: the cumulative return (累计收益 ÷ 净投入) compounded over the account's holding span.
+    /// The money-weighted rate is already an annual figure, so this is the other, simpler read.
+    /// </summary>
+    private static double? AnnualizedReturn(
+        Money pnl, Money netInvested, DateOnly asOf, DateOnly? firstFlowDate)
+    {
+        if (netInvested.Amount == 0m || firstFlowDate is not { } start || start >= asOf)
+        {
+            return null;
+        }
+
+        var cumulative = (double)(pnl.Amount / Math.Abs(netInvested.Amount));
+        return ReturnMetrics.Annualize(cumulative, asOf.DayNumber - start.DayNumber);
     }
 
     /// <summary>
@@ -354,19 +459,33 @@ public sealed class PortfolioWorkspace
     /// opening cash and turns a flat ledger into a -50% "return". Only flows strictly between
     /// two snapshot dates are genuine interim flows.
     /// </summary>
-    private double? TryTwr(LedgerState state, PortfolioValuation valuation, DateOnly asOf)
+    private double? TryTwr(
+        LedgerState state,
+        PortfolioValuation valuation,
+        DateOnly asOf,
+        HistoricalFxConverter history,
+        List<string> warnings)
     {
-        if (state.ExternalFlows.Any(f => f.Amount.Currency != BaseCurrency))
+        // The chain of daily values is denominated in the base currency, so interim flows have to
+        // be folded in at their own day's rate for the same reason XIRR does (R5). A gap makes the
+        // chain incomparable; the caller reports which date is missing.
+        var (flowsConverted, missing) = ConvertFlows(state.ExternalFlows, history);
+        if (missing.Count > 0)
         {
+            foreach (var gap in missing)
+            {
+                warnings.Add($"外部流 {gap}，时间加权收益率无法计算。");
+            }
+
             return null;
         }
 
         try
         {
-            var history = _store.ListValuationHistory(BaseCurrency);
-            var points = history.Count > 0 && history[^1].Date != asOf
-                ? [.. history, new ValuationPoint(asOf, valuation.TotalValue.Amount)]
-                : history;
+            var history_ = _store.ListValuationHistory(BaseCurrency);
+            var points = history_.Count > 0 && history_[^1].Date != asOf
+                ? [.. history_, new ValuationPoint(asOf, valuation.TotalValue.Amount)]
+                : history_;
             if (points.Count == 0)
             {
                 return null;
@@ -375,7 +494,7 @@ public sealed class PortfolioWorkspace
             // Snapshot semantics: each point already contains that day's flows. Interior
             // flows (after the first point, on/before the last) all belong in the chain —
             // TimeWeighted places them by its end-of-day convention (P1-03).
-            var flows = state.ExternalFlows
+            var flows = flowsConverted
                 .Where(f => f.Date > points[0].Date && f.Date <= points[^1].Date)
                 .Select(f => new DatedAmount(f.Date, f.Amount.Amount))
                 .ToArray();

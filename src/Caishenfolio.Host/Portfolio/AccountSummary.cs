@@ -27,9 +27,10 @@ public sealed record ReturnAssessment
     public string Reason { get; init; } = "";
 
     /// <summary>Every input was there; <paramref name="value"/> may still be null when the series
-    /// itself cannot support a rate (e.g. all flows share one sign).</summary>
-    public static ReturnAssessment Resolved(double? value) =>
-        new() { Value = value, IsComplete = true };
+    /// itself cannot support a rate (e.g. all flows share one sign), which
+    /// <paramref name="reason"/> explains.</summary>
+    public static ReturnAssessment Resolved(double? value, string reason = "") =>
+        new() { Value = value, IsComplete = true, Reason = reason };
 
     /// <summary>Something was missing. The gap is named, never papered over.</summary>
     public static ReturnAssessment Missing(string reason, IReadOnlyList<string> missingInputs) =>

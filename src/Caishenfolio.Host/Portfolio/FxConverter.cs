@@ -117,3 +117,63 @@ public sealed class FxConverter
             ? converted
             : throw new LedgerException($"缺少 {amount.Currency} → {Currencies.Normalize(targetCurrency)} 的汇率。");
 }
+
+/// <summary>
+/// Converts money at the rate observed <em>on a given day</em> — the day a flow actually happened.
+///
+/// Discounting a cash flow needs the rate of that flow's own moment: substituting today's rate
+/// silently rewrites history and produces a confident, wrong return (WP-01 R5). So a date with no
+/// observation is a failure the caller must report, not a gap to fill from a neighbour. Only
+/// observations whose <c>as_of</c> is exactly that day are used; triangulation through the pivot
+/// stays within the same day, which is still that day's rate.
+/// </summary>
+public sealed class HistoricalFxConverter
+{
+    private readonly Dictionary<DateOnly, FxConverter> _byDate = new();
+    private readonly string _pivot;
+
+    public HistoricalFxConverter(IEnumerable<FxRate> rates, string pivot = Currencies.Usd)
+    {
+        ArgumentNullException.ThrowIfNull(rates);
+        _pivot = Currencies.Normalize(pivot);
+        foreach (var group in rates.GroupBy(r => r.AsOf))
+        {
+            _byDate[group.Key] = new FxConverter(group, _pivot);
+        }
+    }
+
+    public static HistoricalFxConverter Empty { get; } = new([]);
+
+    /// <summary>Days that have at least one observation.</summary>
+    public IReadOnlyCollection<DateOnly> ObservedDates => _byDate.Keys;
+
+    public bool TryConvert(Money amount, string targetCurrency, DateOnly date, out Money converted)
+    {
+        var target = Currencies.Normalize(targetCurrency);
+        if (string.Equals(amount.Currency, target, StringComparison.Ordinal))
+        {
+            converted = amount;
+            return true;
+        }
+
+        if (_byDate.TryGetValue(date, out var converter) &&
+            converter.TryConvert(amount, target, out converted))
+        {
+            return true;
+        }
+
+        converted = default;
+        return false;
+    }
+
+    public bool TryGetRate(string from, string to, DateOnly date, out decimal rate)
+    {
+        if (!_byDate.TryGetValue(date, out var converter))
+        {
+            rate = 0m;
+            return false;
+        }
+
+        return converter.TryGetRate(from, to, out rate);
+    }
+}

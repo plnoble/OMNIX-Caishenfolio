@@ -108,8 +108,14 @@ public class PortfolioWorkspaceTests : IDisposable
         Assert.Equal(40_000m, snapshot.Valuation.CashValue.Amount);
     }
 
+    /// <summary>
+    /// WP-01 R5. The valuation day's rate is on file, but the flow's own day's is not — so the
+    /// return is reported as incomplete with that date named. It must not be computed from the
+    /// valuation-day rate (which would print a confident 0.00% here) and must not vanish without
+    /// saying why. The old assertion only checked the null; this one pins the explanation.
+    /// </summary>
     [Fact]
-    public async Task XirrIsSkippedRatherThanWrongWhenFlowsAreMultiCurrency()
+    public async Task MultiCurrencyXirrIsIncompleteWhenTheFlowDaysRateIsMissing()
     {
         using var store = NewStore();
         var pricing = new StubPricing();
@@ -121,7 +127,42 @@ public class PortfolioWorkspaceTests : IDisposable
         var snapshot = await workspace.RefreshAsync(AsOf);
 
         Assert.Null(snapshot.Xirr);
+        Assert.False(snapshot.XirrStatus.IsComplete);
+        Assert.Contains(snapshot.XirrStatus.MissingInputs, item => item.Contains("2025-01-02", StringComparison.Ordinal));
+        Assert.Contains(snapshot.Warnings, w => w.Contains("2025-01-02", StringComparison.Ordinal));
         Assert.Equal(17_200m, snapshot.Valuation.TotalValue.Amount);
+
+        // The gap is specifically the flow's own day, not a total absence of rates.
+        var stored = store.ListFxRates();
+        Assert.Contains(stored, r => r.BaseCurrency == "USD" && r.QuoteCurrency == "CNY" && r.AsOf == AsOf);
+        Assert.DoesNotContain(stored, r => r.AsOf == Day1);
+    }
+
+    /// <summary>
+    /// The counterpart to the test above: once the flow's own day has a rate, the multi-currency
+    /// return is computable and uses that day's rate, not the later one.
+    /// </summary>
+    [Fact]
+    public async Task MultiCurrencyXirrUsesTheFlowDaysRateOnceItIsKnown()
+    {
+        using var store = NewStore();
+        var pricing = new StubPricing();
+        pricing.Rates[("USD", "CNY")] = 7.2m;
+        var workspace = new PortfolioWorkspace(store, pricing);
+        store.SaveFxRate(FxRate.Of("USD", "CNY", 7.0m, Day1, "fixture"));
+        workspace.Record(LedgerTransaction.Deposit("acct", Day1, 1_000m, "USD"));
+
+        var snapshot = await workspace.RefreshAsync(AsOf);
+
+        Assert.True(snapshot.XirrStatus.IsComplete);
+        Assert.NotNull(snapshot.Xirr);
+        // 1,000 USD in at 7.0 = 7,000 CNY; 1,000 USD valued at 7.2 = 7,200 CNY.
+        var expected = ReturnMetrics.Xirr([
+            new DatedAmount(Day1, -7_000m),
+            new DatedAmount(AsOf, 7_200m),
+        ]);
+        Assert.NotNull(expected);
+        Assert.Equal(expected!.Value, snapshot.Xirr!.Value, 9);
     }
 
     [Fact]
