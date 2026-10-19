@@ -368,7 +368,11 @@ public sealed record TransactionRow(
         TransactionKind.Tax => "税",
         TransactionKind.FxExchange => "换汇",
         TransactionKind.OpeningPosition => "期初持仓",
-        _ => "期初现金",
+        TransactionKind.OpeningCash => "期初现金",
+        TransactionKind.BalanceAssertion => "当天资产金额",
+        TransactionKind.Transfer => "账户间转移",
+        // Never borrow another kind's name; an unmapped kind shows its raw name instead.
+        _ => kind.ToString(),
     };
 }
 

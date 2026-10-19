@@ -173,7 +173,12 @@ public static class PortfolioReportExporter
         TransactionKind.Tax => "税",
         TransactionKind.FxExchange => "换汇",
         TransactionKind.OpeningPosition => "期初持仓",
-        _ => "期初现金",
+        TransactionKind.OpeningCash => "期初现金",
+        TransactionKind.BalanceAssertion => "当天资产金额",
+        TransactionKind.Transfer => "账户间转移",
+        // A new kind must never be exported under another kind's name: that is a silently wrong
+        // row in a file the user may re-import or hand to someone else.
+        _ => throw new LedgerException($"导出未支持 {kind} 类型。"),
     };
 
     private static string RegionOf(string symbol) =>

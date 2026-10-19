@@ -322,6 +322,11 @@ public sealed class PortfolioStore : IDisposable
         }
     }
 
+    /// <summary>
+    /// Rows of one account. A same-currency <see cref="TransactionKind.Transfer"/> is one row
+    /// carrying both legs, so the receiving account must see it too — otherwise the money would
+    /// appear in one account's ledger and nowhere in the other's (WP-01 A4).
+    /// </summary>
     public IReadOnlyList<LedgerTransaction> ListTransactions(
         string? accountId = null,
         string? symbol = null,
@@ -337,7 +342,7 @@ public sealed class PortfolioStore : IDisposable
                        fee, tax, cash_amount, counter_currency, counter_amount, fx_rate,
                        reverses_transaction_id, counter_account_id, note, import_batch_id, recorded_at
                 FROM transactions
-                WHERE ($account IS NULL OR account_id = $account)
+                WHERE ($account IS NULL OR account_id = $account OR counter_account_id = $account)
                   AND ($symbol IS NULL OR symbol = $symbol)
                   AND ($from IS NULL OR trade_date >= $from)
                   AND ($to IS NULL OR trade_date <= $to)
