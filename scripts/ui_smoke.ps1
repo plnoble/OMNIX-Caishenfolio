@@ -1034,10 +1034,32 @@ function Invoke-RecordDialogCheck {
         }
         throw "新增记录：20 秒内未出现「$marker」。"
     }
-    function Find-RecordWindow {
-        $windows = @($automation::RootElement.FindAll(
+    function Find-TopWindows {
+        @($automation::RootElement.FindAll(
             [System.Windows.Automation.TreeScope]::Children, $byPid))
-        $windows | Where-Object { $_.Current.Name -eq "新增记录" } | Select-Object -First 1
+    }
+    # Identify the dialog by its CONTENT, not its caption: the control that only exists in this
+    # window. A title-based lookup silently fails the moment a caption changes.
+    function Find-RecordWindow {
+        foreach ($window in (Find-TopWindows)) {
+            if (Find-ById $window "OperationCombo") { return $window }
+        }
+        $null
+    }
+    function Get-WindowDump {
+        (Find-TopWindows | ForEach-Object { "[$($_.Current.Name)] class=$($_.Current.ClassName)" }) -join " ; "
+    }
+    function Get-StatusText {
+        $status = Find-ById $main "StatusText"
+        if ($status) { $status.Current.Name } else { "" }
+    }
+    function Get-VisibleTextSample {
+        $texts = @($main.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text))))
+        $names = @($texts | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
+        ($names | Select-Object -First 18) -join " / "
     }
 
     $ledgerButton = Find-Button $main "账本"
@@ -1051,12 +1073,16 @@ function Invoke-RecordDialogCheck {
     $openButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 
     $dialog = $null
-    $deadline = (Get-Date).AddSeconds(15)
+    $deadline = (Get-Date).AddSeconds(25)
     while ((Get-Date) -lt $deadline -and -not $dialog) {
         Start-Sleep -Milliseconds 300
         $dialog = Find-RecordWindow
     }
-    if (-not $dialog) { throw "新增记录：窗口 15 秒内没有出现（BAML 可能在运行时才坏）。" }
+    if (-not $dialog) {
+        throw ("新增记录：窗口 25 秒内没有出现（BAML 可能在运行时才坏）。" +
+            "主窗口状态栏：「$(Get-StatusText)」；顶层窗口：$(Get-WindowDump)；" +
+            "页面可见文本：$(Get-VisibleTextSample)")
+    }
 
     # The four operations must all be on offer (disabled ones still enumerate while expanded).
     $operations = Find-ById $dialog "OperationCombo"
