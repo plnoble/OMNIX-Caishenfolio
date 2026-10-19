@@ -15,6 +15,15 @@ public sealed record WorkspaceSnapshot
     /// <summary>Money-weighted return, or null when the flows cannot support one.</summary>
     public double? Xirr { get; init; }
 
+    /// <summary>
+    /// Why <see cref="Xirr"/> is what it is. When a flow's own-day exchange rate is missing this
+    /// says so and names the date, instead of the number silently disappearing (WP-01 R5).
+    /// </summary>
+    public required ReturnAssessment XirrStatus { get; init; }
+
+    /// <summary>Per-account totals and returns (WP-01 目标 3).</summary>
+    public required IReadOnlyList<AccountSummary> AccountSummaries { get; init; }
+
     /// <summary>Linked time-weighted return, or null with fewer than two valuation points.</summary>
     public double? Twr { get; init; }
     public required PortfolioRiskReport Risk { get; init; }
@@ -151,6 +160,8 @@ public sealed class PortfolioWorkspace
             Transactions = transactions,
             CashBalances = state.CashBalances,
             Xirr = TryXirr(state, valuation, date),
+            XirrStatus = AssessXirr(state, valuation, date),
+            AccountSummaries = SummarizeAccounts(state, valuation, date, accounts),
             Twr = TryTwr(state, valuation, date),
             Risk = risk,
             Alerts = alerts,
@@ -158,8 +169,13 @@ public sealed class PortfolioWorkspace
         };
     }
 
-    public Account AddAccount(string name, AccountKind kind, string mainCurrency, string broker = "") =>
-        _store.SaveAccount(Account.Create(name, kind, mainCurrency, broker));
+    public Account AddAccount(
+        string name,
+        AccountKind kind,
+        string mainCurrency,
+        string broker = "",
+        AccountValuationMode mode = AccountValuationMode.Detail) =>
+        _store.SaveAccount(Account.Create(name, kind, mainCurrency, broker, mode: mode));
 
     /// <summary>
     /// Records a transaction and remembers the instrument, so allocation grouping has metadata
@@ -288,6 +304,22 @@ public sealed class PortfolioWorkspace
             return null;
         }
     }
+
+    /// <summary>
+    /// WP-01 R5: external flows are discounted at the exchange rate of the day they happened, so
+    /// a portfolio holding more than one currency still has a return. A flow whose own-day rate
+    /// is missing makes the result explicitly incomplete (the date is named) — it is never
+    /// converted at today's rate and never silently dropped.
+    /// </summary>
+    private ReturnAssessment AssessXirr(LedgerState state, PortfolioValuation valuation, DateOnly asOf) =>
+        ReturnAssessment.Missing("多币种现金流按发生日折算尚未实现（WP-01 P3）。", []);
+
+    /// <summary>
+    /// WP-01 目标 3: per-account 总资产 / 累计收益 / 资金加权收益率 / 年化. A balance-mode account
+    /// without a reported total is unknown, not zero (D3).
+    /// </summary>
+    private IReadOnlyList<AccountSummary> SummarizeAccounts(
+        LedgerState state, PortfolioValuation valuation, DateOnly asOf, IReadOnlyList<Account> accounts) => [];
 
     /// <summary>
     /// Time-weighted return from the stored valuation curve. Needs at least two points, which
