@@ -1,5 +1,6 @@
 using Caishenfolio.Host.Portfolio;
 using Microsoft.Data.Sqlite;
+using Xunit.Abstractions;
 
 namespace Caishenfolio.Host.Tests;
 
@@ -13,6 +14,40 @@ public class LedgerSchemaV10Tests : IDisposable
 {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(), "caishenfolio_schema_v10_tests", Guid.NewGuid().ToString("N"));
+
+    private readonly ITestOutputHelper _output;
+
+    public LedgerSchemaV10Tests(ITestOutputHelper output) => _output = output;
+
+    /// <summary>
+    /// The census the delivery evidence quotes: it is printed on every run, so the numbers in a
+    /// report can be re-measured instead of trusted.
+    /// </summary>
+    private void WriteCensus(string label, string path)
+    {
+        _output.WriteLine(
+            $"{label}: user_version={ReadUserVersion(path)}，" +
+            $"账户={CountRows(path, "accounts")}，流水={CountRows(path, "transactions")}，" +
+            $"冲正关系={CountReversals(path)}，accounts.mode 列={(HasColumn(path, "accounts", "mode") ? "有" : "无")}");
+    }
+
+    private static long CountRows(string path, string table)
+    {
+        using var connection = new SqliteConnection($"Data Source={path};Mode=ReadOnly");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM {table};";
+        return Convert.ToInt64(command.ExecuteScalar() ?? 0L);
+    }
+
+    private static long CountReversals(string path)
+    {
+        using var connection = new SqliteConnection($"Data Source={path};Mode=ReadOnly");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM transactions WHERE reverses_transaction_id <> '';";
+        return Convert.ToInt64(command.ExecuteScalar() ?? 0L);
+    }
 
     /// <summary>The v9 schema as it existed before WP-01, plus one fixture row set.</summary>
     private const string V9Schema = """
@@ -137,6 +172,7 @@ public class LedgerSchemaV10Tests : IDisposable
         CreateV9Database();
         Assert.Equal(9, ReadUserVersion(DatabasePath));
         Assert.False(HasColumn(DatabasePath, "accounts", "mode"));
+        WriteCensus("迁移前", DatabasePath);
 
         using (var store = new PortfolioStore(DatabasePath))
         {
@@ -164,6 +200,8 @@ public class LedgerSchemaV10Tests : IDisposable
         Assert.Equal(PortfolioStore.SchemaVersion, ReadUserVersion(DatabasePath));
         Assert.True(HasColumn(DatabasePath, "accounts", "mode"));
         Assert.Equal(10, PortfolioStore.SchemaVersion);
+        WriteCensus("迁移后", DatabasePath);
+        WriteCensus("迁移前备份 .bak", DatabasePath + ".bak");
     }
 
     [Fact]
