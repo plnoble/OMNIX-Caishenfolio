@@ -441,6 +441,15 @@ def compare_paths(
             # WP2: an unknown percentage cost blocks the net figure on EVERY path — a lone
             # fixed fee with a silently-zeroed spread would overstate the arrival here too.
             detail3 = {"status": "比例成本未填写（未知≠0），净额未计算"}
+        elif cost3.fixed_fee is None:
+            # FX-01: an unknown fixed fee blocks the net here exactly as it does on a single
+            # leg. This branch used to fall through and subtract nothing, returning status=ok
+            # with a confident net figure for a cost it had never been told — the one thing
+            # this module exists to prevent.
+            detail3 = {
+                "status": "固定费未填写（未知≠0），净额未计算",
+                "multiplicative_fraction_per_leg": float(_q(frac3)),
+            }
         else:
             # (1 - f)^2 because the money crosses two spreads.
             kept = (Decimal(1) - frac3) ** 2
@@ -456,9 +465,7 @@ def compare_paths(
                 detail3 = {
                     "multiplicative_fraction_per_leg": float(_q(frac3)),
                     "combined_fraction": float(_q(Decimal(1) - kept)),
-                    "fixed_fee_in_target": (
-                        float(_q(fee_in_target)) if fee_in_target is not None else 0.0
-                    ),
+                    "fixed_fee_in_target": float(_q(fee_in_target)),
                 }
         paths.append(
             PathResult(

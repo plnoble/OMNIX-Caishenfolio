@@ -733,3 +733,55 @@ class CostInvariantTests(unittest.TestCase):
                     continue
                 self.assertNotEqual(path["status"], "ok", (spread, fee, path["key"]))
                 self.assertIsNone(path["net_amount"])
+
+
+class DetourUnknownFixedFeeTests(unittest.TestCase):
+    """FX-01: the two-leg path must refuse a net exactly as the one-leg path does.
+
+    It used to subtract nothing for an unknown fixed fee and return ``ok``, so the screen
+    showed a confident net arrival for a cost nobody had supplied. The existing
+    "unknown cost cannot be ok" tests never configured this combination on the detour, which
+    is why every one of them passed while the hole was open.
+    """
+
+    def _compare(self, cost: PathCost) -> dict:
+        quotes = {
+            "USD/CNY": MarketQuote("USD", "CNY", Decimal("7.2")),
+            "USD/JPY": MarketQuote("USD", "JPY", Decimal("160")),
+        }
+        held = HeldPosition("JPY", Decimal("1000"), Decimal("100"))
+        result = compare_paths(
+            Decimal("100"), "CNY", "USD", quotes, held=held,
+            costs={k: cost for k in ("held_to_target", "base_to_target", "base_via_held_to_target")},
+        )
+        return {p.key: p for p in result.paths}
+
+    def test_a_known_spread_with_an_unknown_fee_yields_no_net_on_the_detour(self) -> None:
+        paths = self._compare(PathCost(spread_pct=Decimal("1")))
+
+        detour = paths["base_via_held_to_target"]
+        self.assertEqual(detour.status, "gross_only")
+        self.assertIsNone(detour.net_amount)
+        self.assertIn("固定费", detour.cost_detail["status"])
+
+    def test_the_detour_now_agrees_with_the_single_leg_path(self) -> None:
+        paths = self._compare(PathCost(spread_pct=Decimal("1")))
+
+        # Same cost model, same verdict: this disagreement was the defect.
+        self.assertEqual(
+            paths["base_via_held_to_target"].status, paths["base_to_target"].status)
+
+    def test_a_fully_stated_cost_still_produces_a_net(self) -> None:
+        paths = self._compare(PathCost(
+            spread_pct=Decimal("1"), fixed_fee=Decimal("0"), fee_currency="USD"))
+
+        detour = paths["base_via_held_to_target"]
+        self.assertEqual(detour.status, "ok")
+        self.assertIsNotNone(detour.net_amount)
+        # Two legs, so the spread bites twice.
+        self.assertEqual(detour.cost_detail["multiplicative_fraction_per_leg"], 0.01)
+
+    def test_an_unknown_fee_is_never_reported_as_zero(self) -> None:
+        detour = self._compare(PathCost(spread_pct=Decimal("1")))["base_via_held_to_target"]
+
+        self.assertNotIn("fixed_fee_in_target", detour.cost_detail)
