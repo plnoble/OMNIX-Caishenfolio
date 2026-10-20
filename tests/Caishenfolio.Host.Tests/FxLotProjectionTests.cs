@@ -213,6 +213,30 @@ public class FxLotProjectionTests : IDisposable
         Assert.Contains(ledger.Warnings, w => w.Contains("未被批次覆盖", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// CHARACTERIZATION, not approval (WP-02 §7/FX-03): an exchange that spends more of a currency
+    /// than the account holds still goes through, leaving a negative balance. The architecture
+    /// review wants this refused for cash/bank accounts, but the task book's own A1–A4 fixtures
+    /// record exchanges without a funding deposit, and no ruling says which exemptions
+    /// (融资/未建账的外币) apply — so this package pins today's behaviour and leaves the decision.
+    /// When the rule is introduced, this test is the one to rewrite on purpose.
+    /// </summary>
+    [Fact]
+    public void TodayAnOverspendExchangeSilentlyLeavesANegativeBalance()
+    {
+        var exchange = LedgerTransaction.FxExchange(Account, Day1, 100_000m, "CNY", 2_000_000m, "JPY", 0m, "");
+        var state = PositionCalculator.Replay([exchange]);
+
+        // No deposit first: CNY is spent that the ledger never held.
+        Assert.Equal(-100_000m, state.CashBalances.Single(balance => balance.Currency == "CNY").Amount);
+        Assert.Equal(2_000_000m, state.CashBalances.Single(b => b.Currency == "JPY").Amount);
+
+        // And the batch is created anyway: batches follow the receipts, not the balances.
+        var lot = Assert.Single(FxLotLedger.FromTransactions([exchange]).Lots);
+        Assert.Equal(2_000_000m, lot.RemainingAmount);
+        Assert.Equal(100_000m, lot.CostAmount);
+    }
+
     [Fact]
     public void TheFixtureLooksLikeARealReceiptAndSurvivesAStoreRoundTrip()
     {
