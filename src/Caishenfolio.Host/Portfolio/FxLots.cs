@@ -130,29 +130,45 @@ public sealed record FxLotLedger
         // order a caller happens to hand the rows in.
         foreach (var txn in PositionCalculator.Ordered(all.Where(t => !cancelled.Contains(t.Id))))
         {
+            // Money leaving a currency draws the batches down whatever the reason (WP-02 R2:
+            // the batch is a projection of the cash, not of the exchange list). A withdrawal or
+            // a purchase takes the cost with it; leaving the batch untouched would let later
+            // money inherit a cost that already left the account.
+            var fundedBy = new List<FxLotConsumption>();
+            foreach (var (accountId, currency, amount) in CashOut(txn))
+            {
+                var draw = Consume(states, accountId, currency, amount, txn.TradeDate, warnings);
+                if (draw is not { } taken)
+                {
+                    continue;
+                }
+
+                spends.Add(new FxLotSpend
+                {
+                    TransactionId = txn.Id,
+                    Date = txn.TradeDate,
+                    AccountId = accountId,
+                    Currency = currency,
+                    Amount = amount,
+                    Lots = taken.Taken,
+                    UncoveredAmount = taken.Uncovered,
+                });
+
+                // The new batch was paid by this very outflow: that is its provenance chain.
+                if (txn.Kind == TransactionKind.FxExchange
+                    && string.Equals(accountId, txn.AccountId, StringComparison.Ordinal))
+                {
+                    fundedBy.AddRange(taken.Taken);
+                }
+            }
+
             if (txn.Kind != TransactionKind.FxExchange)
             {
                 continue;
             }
 
-            // What left the account, fee included — the ledger's own convention (the fee is
-            // charged in the currency being converted).
             var spendCurrency = Currencies.Normalize(txn.Currency);
             var spendAmount = txn.CashAmount + txn.Fee;
-            var draw = Consume(states, spendCurrency, spendAmount, txn.TradeDate, warnings);
-            if (draw is { } taken)
-            {
-                spends.Add(new FxLotSpend
-                {
-                    TransactionId = txn.Id,
-                    Date = txn.TradeDate,
-                    AccountId = txn.AccountId,
-                    Currency = spendCurrency,
-                    Amount = spendAmount,
-                    Lots = taken.Taken,
-                    UncoveredAmount = taken.Uncovered,
-                });
-            }
 
             var gotCurrency = Currencies.Normalize(txn.CounterCurrency);
             if (gotCurrency.Length == 0 || txn.CounterAmount <= 0m)
@@ -164,7 +180,11 @@ public sealed record FxLotLedger
             {
                 Id = $"lot_{txn.Id}",
                 AcquiredOn = txn.TradeDate,
-                AccountId = txn.AccountId,
+                // A cross-account move delivers the acquired currency to the counter account;
+                // the batch belongs where the money now is (WP-01 books both legs that way).
+                AccountId = string.IsNullOrEmpty(txn.CounterAccountId)
+                    ? txn.AccountId
+                    : txn.CounterAccountId,
                 Currency = gotCurrency,
                 OriginalAmount = txn.CounterAmount,
                 RemainingAmount = txn.CounterAmount,
@@ -174,7 +194,7 @@ public sealed record FxLotLedger
                 RemainingCostAmount = spendAmount,
                 SourceTransactionId = txn.Id,
                 Note = txn.Note,
-                FundedBy = draw?.Taken ?? [],
+                FundedBy = fundedBy,
             }));
         }
 
@@ -191,15 +211,49 @@ public sealed record FxLotLedger
     }
 
     /// <summary>
-    /// FIFO draw-down of one currency: oldest lot first, and never more than is left.
-    /// Null when this currency has no batches at all — spending fresh base money is how a batch
-    /// gets created, not a batch consumption, so it must not produce a spend row or a warning.
+    /// Cash leaving an account, per currency, whatever the reason: the batch view follows the
+    /// money, so every outflow draws it down (fees included, the ledger's own convention).
+    /// Inflows are deliberately absent — money that arrived without a receipt creates no batch.
+    /// </summary>
+    private static IEnumerable<(string AccountId, string Currency, decimal Amount)> CashOut(
+        LedgerTransaction txn)
+    {
+        var currency = Currencies.Normalize(txn.Currency);
+        switch (txn.Kind)
+        {
+            case TransactionKind.FxExchange when currency.Length > 0 && txn.CashAmount + txn.Fee > 0m:
+                yield return (txn.AccountId, currency, txn.CashAmount + txn.Fee);
+                break;
+
+            case TransactionKind.Withdraw when currency.Length > 0 && txn.CashAmount + txn.Fee > 0m:
+                yield return (txn.AccountId, currency, txn.CashAmount + txn.Fee);
+                break;
+
+            case TransactionKind.Buy when currency.Length > 0
+                                          && txn.Quantity * txn.Price + txn.Fee + txn.Tax > 0m:
+                yield return (txn.AccountId, currency, txn.Quantity * txn.Price + txn.Fee + txn.Tax);
+                break;
+
+            case TransactionKind.Transfer when currency.Length > 0 && txn.CashAmount + txn.Fee > 0m:
+                yield return (txn.AccountId, currency, txn.CashAmount + txn.Fee);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// FIFO draw-down of one currency in ONE account: oldest lot first, never more than is left.
+    /// Null when that account has no batches of the currency at all — spending fresh base money is
+    /// how a batch gets created, not a batch consumption, so it must not produce a spend row.
     /// </summary>
     private static (IReadOnlyList<FxLotConsumption> Taken, decimal Uncovered)? Consume(
-        List<LotState> lots, string currency, decimal amount, DateOnly date, List<string> warnings)
+        List<LotState> lots, string accountId, string currency, decimal amount, DateOnly date,
+        List<string> warnings)
     {
+        // Batches are per account: spending in B must never consume A's lot, which would hand
+        // B's unknown-origin cash A's historical cost.
         var tracked = lots
-            .Where(s => string.Equals(s.Lot.Currency, currency, StringComparison.OrdinalIgnoreCase))
+            .Where(s => string.Equals(s.Lot.AccountId, accountId, StringComparison.Ordinal)
+                        && string.Equals(s.Lot.Currency, currency, StringComparison.OrdinalIgnoreCase))
             .ToArray();
         if (tracked.Length == 0)
         {
@@ -228,9 +282,11 @@ public sealed record FxLotLedger
             }
 
             var take = Math.Min(state.Remaining, need);
-            var costShare = state.Remaining > 0m
-                ? state.RemainingCost * take / state.Remaining
-                : 0m;
+            // Exhausting a batch takes its whole remaining cost, so the cost is conserved exactly
+            // instead of leaving an un-allocatable crumb behind (review #13).
+            var costShare = take >= state.Remaining
+                ? state.RemainingCost
+                : state.RemainingCost * take / state.Remaining;
             taken.Add(new FxLotConsumption
             {
                 LotId = state.Lot.Id,
@@ -269,15 +325,13 @@ public sealed record FxLotLedger
 
         public void Normalize()
         {
-            // Repeated proportional division leaves dust; a lot that is exhausted to a rounding
-            // ghost is empty, and its cost follows it to zero.
+            // Only the AMOUNT snaps to zero on a rounding ghost. The cost is never zeroed on its
+            // own: a batch exhausted to its last unit hands its whole remaining cost to that
+            // consumption (see Consume), so cost is conserved exactly instead of leaking a crumb
+            // no later spend could ever claim (review #13).
             if (Math.Abs(Remaining) < 0.000_000_1m)
             {
                 Remaining = 0m;
-            }
-
-            if (Math.Abs(RemainingCost) < 0.000_000_1m)
-            {
                 RemainingCost = 0m;
             }
 
@@ -319,32 +373,41 @@ public sealed record FxLotLedger
         }
 
         var totals = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var queue = new Queue<FxLotConsumption>(lot.FundedBy);
+        // Breadth-first up the chain. Each hop carries a FACTOR: the share of the ancestor batch
+        // this branch actually consumed. Without it a deep chain would attribute the ancestor's
+        // whole purchase to a sliver of it (review #5), and additive costs would double-count.
+        var queue = new Queue<(FxLotConsumption Step, decimal Factor, int Depth)>(
+            lot.FundedBy.Select(step => (step, 1m, 0)));
         while (queue.Count > 0)
         {
-            var step = queue.Dequeue();
+            var (step, factor, depth) = queue.Dequeue();
 
-            // One hop per lot: an ancestor cannot legitimately appear twice, and the guard keeps a
-            // malformed projection from looping instead of answering.
-            if (!seen.Add(step.LotId))
+            // Depth is the cycle guard: every hop goes forward in time, so a legitimate chain is
+            // short, and a malformed projection must answer instead of looping. Repeated
+            // ancestors are NOT skipped — two batches may legitimately share one source.
+            if (depth > 32 || step.Amount <= 0m)
             {
                 continue;
             }
 
-            if (!byId.TryGetValue(step.LotId, out var ancestor))
+            var ancestor = byId.GetValueOrDefault(step.LotId);
+            if (ancestor is null || ancestor.OriginalAmount <= 0m)
             {
                 // The ancestor is gone (its exchange was reversed): the share is still part of the
                 // story, recorded under the currency the consumption itself named.
-                totals[step.CostCurrency] = totals.GetValueOrDefault(step.CostCurrency) + step.CostAmount;
+                totals[step.CostCurrency] = totals.GetValueOrDefault(step.CostCurrency)
+                                            + factor * step.CostAmount;
                 continue;
             }
 
-            totals[ancestor.CostCurrency] =
-                totals.GetValueOrDefault(ancestor.CostCurrency) + step.CostAmount;
+            // What left the ancestor for this branch, in the ancestor's own paying currency.
+            totals[ancestor.CostCurrency] = totals.GetValueOrDefault(ancestor.CostCurrency)
+                                            + factor * step.CostAmount;
+
+            var share = step.Amount / ancestor.OriginalAmount;
             foreach (var next in ancestor.FundedBy)
             {
-                queue.Enqueue(next);
+                queue.Enqueue((next, factor * share, depth + 1));
             }
         }
 

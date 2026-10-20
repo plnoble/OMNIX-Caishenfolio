@@ -144,6 +144,164 @@ public class FxLotProjectionTests : IDisposable
     }
 
     [Fact]
+    public void MoneyThatLeavesTakesItsCostWithIt()
+    {
+        // WP-02 (review #3): the batch follows the cash, not the exchange list. Withdraw the whole
+        // pot, put back cash without a receipt, then spend it: the new lot must NOT inherit the
+        // cost that already left the account.
+        var buy = LedgerTransaction.FxExchange(Account, Day1, 30_000m, "CNY", 600_000m, "JPY");
+        var withdraw = LedgerTransaction.Withdraw(Account, Day2, 600_000m, "JPY", "取现");
+        var redeposit = LedgerTransaction.Deposit(Account, Day3, 300_000m, "JPY", "柜台存回");
+        var spend = LedgerTransaction.FxExchange(Account, Day4, 100_000m, "JPY", 660m, "USD", 0m, "");
+
+        var ledger = FxLotLedger.FromTransactions([buy, withdraw, redeposit, spend]);
+
+        // The withdrawal drew the batch to zero…
+        var jpy = ledger.Lots.Single(lot => lot.Currency == "JPY");
+        Assert.Equal(0m, jpy.RemainingAmount);
+        Assert.Equal(0m, jpy.RemainingCostAmount);
+        // …and the withdrawal itself is on the trail.
+        Assert.Single(ledger.Spends, spend => spend.TransactionId == withdraw.Id);
+
+        // The USD lot was paid with money that has no receipt: no upstream cost is invented.
+        var usd = ledger.Lots.Single(lot => lot.Currency == "USD");
+        Assert.Equal(100_000m, usd.CostAmount);
+        Assert.Empty(usd.FundedBy);
+        Assert.Empty(FxLotLedger.UpstreamCosts(ledger, usd));
+    }
+
+    [Fact]
+    public void AnotherAccountsBatchIsNeverConsumed()
+    {
+        // Review #4: spending in B must not inherit A's historical cost.
+        const string Other = "acct_other";
+        var buy = LedgerTransaction.FxExchange(Account, Day1, 30_000m, "CNY", 600_000m, "JPY");
+        var deposit = LedgerTransaction.Deposit(Other, Day2, 300_000m, "JPY", "别人转入");
+        var spend = LedgerTransaction.FxExchange(Other, Day3, 300_000m, "JPY", 2_000m, "USD", 0m, "");
+
+        var ledger = FxLotLedger.FromTransactions([buy, deposit, spend]);
+
+        // A's batch is untouched by B's spending…
+        var aLot = ledger.Lots.Single(lot => lot.AccountId == Account && lot.Currency == "JPY");
+        Assert.Equal(600_000m, aLot.RemainingAmount);
+        // …and B's USD lot has no cost chain at all.
+        var usd = Assert.Single(ledger.Lots, lot => lot.AccountId == Other && lot.Currency == "USD");
+        Assert.Empty(usd.FundedBy);
+    }
+
+    [Fact]
+    public void ACrossAccountExchangePutsTheBatchInTheReceivingAccount()
+    {
+        const string Receiver = "acct_receiver";
+        var move = LedgerTransaction.FxExchange(
+            Account, Day1, 30_000m, "CNY", 600_000m, "JPY", 0m, "", counterAccountId: Receiver);
+
+        var lot = Assert.Single(FxLotLedger.FromTransactions([move]).Lots);
+
+        Assert.Equal(Receiver, lot.AccountId);
+        Assert.Equal(30_000m, lot.CostAmount);
+    }
+
+    [Fact]
+    public void APotWithoutAReceiptStillHasAQuantityAndAnUnknownCost()
+    {
+        // Review #8/A8 at the wiring seam: the alert layer used to bail out when the moving
+        // average had no cost, which silently disabled net-arrival alerts for money that arrived
+        // without a receipt. The pot must survive with cost = null (unknown, not zero).
+        Directory.CreateDirectory(_root);
+        using var store = PortfolioStore.UnderStateRoot(_root);
+        store.SaveAccount(Portfolio.Account.Create("换汇账户", AccountKind.Bank, "CNY"));
+        store.AddTransaction(LedgerTransaction.Deposit("acct", Day1, 1_500m, "JPY", "境外亲戚转入"));
+
+        var held = Notifications.BackgroundExtendedCheck.HeldPositionOf(store, "CNY", "JPY");
+
+        Assert.NotNull(held);
+        Assert.Equal(1_500m, held!.Value.amount);
+        Assert.Null(held.Value.cost);
+    }
+
+    [Fact]
+    public void TheHeldCostIsTheFifoRemainderNotTheMovingAverage()
+    {
+        // Review #2, the smallest discriminating input: 100 CNY → 2,000 JPY, then
+        // 200 CNY → 2,000 JPY, then 2,000 JPY out. FIFO leaves the SECOND batch (200 CNY),
+        // the moving average would say 150 CNY.
+        Directory.CreateDirectory(_root);
+        using var store = PortfolioStore.UnderStateRoot(_root);
+        store.SaveAccount(Portfolio.Account.Create("换汇账户", AccountKind.Bank, "CNY"));
+        store.AddTransaction(LedgerTransaction.FxExchange("acct", Day1, 100m, "CNY", 2_000m, "JPY"));
+        store.AddTransaction(LedgerTransaction.FxExchange("acct", Day2, 200m, "CNY", 2_000m, "JPY"));
+        store.AddTransaction(LedgerTransaction.FxExchange("acct", Day3, 2_000m, "JPY", 13.33m, "USD"));
+
+        var held = Notifications.BackgroundExtendedCheck.HeldPositionOf(store, "CNY", "JPY");
+
+        Assert.NotNull(held);
+        Assert.Equal(2_000m, held!.Value.amount);
+        Assert.Equal(200m, held.Value.cost);
+    }
+
+    [Fact]
+    public void ADeepChainIsAttributedByShareNotByWhatTheAncestorPaidInTotal()
+    {
+        // Review #5, repro one: 100 CNY → 2,000 JPY; 1,000 JPY → 10 USD; 5 USD → 4 EUR.
+        // The EUR batch used HALF of the USD batch, so it inherits half of that batch's cost:
+        // 500 JPY for this segment, and a quarter of the original 100 CNY = 25 CNY behind it.
+        var a = LedgerTransaction.FxExchange(Account, Day1, 100m, "CNY", 2_000m, "JPY");
+        var b = LedgerTransaction.FxExchange(Account, Day2, 1_000m, "JPY", 10m, "USD", 0m, "");
+        var c = LedgerTransaction.FxExchange(Account, Day3, 5m, "USD", 4m, "EUR", 0m, "");
+
+        var ledger = FxLotLedger.FromTransactions([a, b, c]);
+        var eur = ledger.Lots.Single(lot => lot.Currency == "EUR");
+        var upstream = FxLotLedger.UpstreamCosts(ledger, eur);
+
+        Assert.Equal(500m, upstream["JPY"]);
+        Assert.Equal(25m, upstream["CNY"]);
+    }
+
+    [Fact]
+    public void TwoBranchesFromOneSourceBothCount()
+    {
+        // Review #5, repro two: one JPY batch funds two USD batches which then merge into EUR.
+        // The shared source must appear once per real contribution, not once in total.
+        var a = LedgerTransaction.FxExchange(Account, Day1, 100m, "CNY", 2_000m, "JPY");
+        var b1 = LedgerTransaction.FxExchange(Account, Day2, 1_000m, "JPY", 10m, "USD", 0m, "");
+        var b2 = LedgerTransaction.FxExchange(Account, Day3, 1_000m, "JPY", 10m, "USD", 0m, "");
+        var c = LedgerTransaction.FxExchange(Account, Day4, 12m, "USD", 11m, "EUR", 0m, "");
+
+        var ledger = FxLotLedger.FromTransactions([a, b1, b2, c]);
+        var eur = ledger.Lots.Single(lot => lot.Currency == "EUR");
+        var upstream = FxLotLedger.UpstreamCosts(ledger, eur);
+
+        // 12 USD out of 20: all 10 of the first batch (1,000 JPY / 50 CNY) plus 2 of the second
+        // (200 JPY / 10 CNY). The shared JPY source is counted on both branches — the old
+        // once-per-lot guard dropped one of them and said 50 CNY.
+        Assert.Equal(1_200m, upstream["JPY"]);
+        Assert.Equal(60m, upstream["CNY"]);
+    }
+
+    [Fact]
+    public void CostIsConservedToTheLastUnit()
+    {
+        // Review #13: 0.05 CNY → 1 JPY, then spend 0.999999 of it. The crumb used to be zeroed,
+        // so the rest of the pot silently became free.
+        var buy = LedgerTransaction.FxExchange(Account, Day1, 0.05m, "CNY", 1m, "JPY");
+        var spend = LedgerTransaction.FxExchange(Account, Day2, 0.999999m, "JPY", 0.006m, "USD", 0m, "");
+        var rest = LedgerTransaction.FxExchange(Account, Day3, 0.000001m, "JPY", 0.00000001m, "USD", 0m, "");
+
+        var ledger = FxLotLedger.FromTransactions([buy, spend, rest]);
+        var jpy = ledger.Lots.Single(lot => lot.Currency == "JPY");
+        var consumed = ledger.Spends
+            .Where(s => s.Currency == "JPY")
+            .SelectMany(s => s.Lots)
+            .Sum(c => c.CostAmount);
+
+        // Everything that left carries its share; nothing evaporates at the last unit.
+        Assert.Equal(0m, jpy.RemainingAmount);
+        Assert.Equal(0m, jpy.RemainingCostAmount);
+        Assert.Equal(0.05m, consumed + jpy.RemainingCostAmount, 10);
+    }
+
+    [Fact]
     public void A4_AThirdCurrencyBatchCostsWhatThisSegmentPaidNotTheOriginalMoney()
     {
         var cnyToJpy = TwoPurchases()[0];                      // 30,000 CNY → 600,000 JPY

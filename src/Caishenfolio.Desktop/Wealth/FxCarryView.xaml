@@ -328,6 +328,9 @@
                                     <DataGridTextColumn Header="原始投入（另一条链路，不混算）" Binding="{Binding Upstream}" Width="220" />
                                 </DataGrid.Columns>
                             </DataGrid>
+                            <TextBlock x:Name="FxSpendList" TextWrapping="Wrap" FontSize="11" Margin="0,8,0,0"
+                                       Foreground="{StaticResource BrushFgSecondary}"
+                                       AutomationProperties.Name="部分换出的消耗明细" />
                         </StackPanel>
                     </Expander>
 

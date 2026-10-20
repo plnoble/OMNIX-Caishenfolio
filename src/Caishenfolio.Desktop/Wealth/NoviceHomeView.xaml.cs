@@ -72,7 +72,9 @@ public partial class NoviceHomeView : UserControl
     {
         XirrCaption.ToolTip = TermGlossary.Tooltip("xirr");
         DrawdownCaption.ToolTip = TermGlossary.Tooltip("drawdown");
-        PnlCaption.ToolTip = "已实现盈亏 + 浮动盈亏（含分红与票息，扣费税后）。";
+        PnlCaption.ToolTip =
+            "累计收益 = 总资产 − 净投入（分红与票息已经算在总资产里，不另外再加一次）。" +
+            "任一账户未报数、或价格/汇率缺失时显示「未知」，不拿部分和冒充总数。";
     }
 
     private void Render()

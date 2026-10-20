@@ -258,6 +258,9 @@ public static class ValuationEngine
         var cashValue = Money.Zero(baseCcy);
         var cashByCurrency = new Dictionary<string, Money>(StringComparer.Ordinal);
         var cashByAccount = new Dictionary<string, Money>(StringComparer.Ordinal);
+        // Detail accounts whose cash could not be converted: their total is UNKNOWN, not just
+        // the priced part (WP-02 review #1 — an unpriced pot must not read as a certain loss).
+        var cashUnknownAccounts = new HashSet<string>(StringComparer.Ordinal);
         foreach (var balance in state.CashBalances)
         {
             if (IsBalanceAccount(accounts, balance.AccountId))
@@ -270,6 +273,7 @@ public static class ValuationEngine
             if (!fx.TryConvert(balance.Money, baseCcy, out var converted))
             {
                 warnings.Add($"账户 {balance.AccountId} 的 {balance.Currency} 现金缺少汇率，未计入总额。");
+                cashUnknownAccounts.Add(balance.AccountId);
                 continue;
             }
 
@@ -329,8 +333,22 @@ public static class ValuationEngine
                 $"{assertion.Value.Currency} → {baseCcy} 的汇率，账户市值未知。");
         }
 
+        // An account is unknown if its cash had no rate or any of its holdings had no price:
+        // reporting the priced part as the account's worth would silently turn UNKNOWN into a
+        // number (and, with the headline P&L, into a certain loss).
+        var unpricedAccounts = valuations
+            .Where(valuation => !valuation.Priced)
+            .Select(valuation => valuation.Position.AccountId)
+            .ToHashSet(StringComparer.Ordinal);
+
         var accountValues = BuildAccountValues(
-            accounts, balanceAccountValues, cashByAccountBase, holdingsByAccount, baseCcy);
+            accounts,
+            balanceAccountValues,
+            cashByAccountBase,
+            holdingsByAccount,
+            cashUnknownAccounts,
+            unpricedAccounts,
+            baseCcy);
 
         // The portfolio total is detail accounts (cash + holdings) plus balance accounts (their
         // own number), each counted exactly once.
@@ -400,6 +418,8 @@ public static class ValuationEngine
         IReadOnlyDictionary<string, Money> balanceValues,
         IReadOnlyDictionary<string, Money> cashByAccount,
         IReadOnlyDictionary<string, Money> holdingsByAccount,
+        IReadOnlySet<string> cashUnknownAccounts,
+        IReadOnlySet<string> unpricedAccounts,
         string baseCurrency)
     {
         if (accounts is null)
@@ -427,11 +447,15 @@ public static class ValuationEngine
 
             var cash = cashByAccount.TryGetValue(account.Id, out var c) ? c : Money.Zero(baseCurrency);
             var holdings = holdingsByAccount.TryGetValue(account.Id, out var h) ? h : Money.Zero(baseCurrency);
+            var complete = !cashUnknownAccounts.Contains(account.Id) && !unpricedAccounts.Contains(account.Id);
             results.Add(new AccountValue
             {
                 AccountId = account.Id,
                 Mode = AccountValuationMode.Detail,
-                ValueKnown = true,
+                // A detail account with unpriced cash or holdings reports UNKNOWN, exactly like a
+                // balance account that never asserted (D3): the number would otherwise be the
+                // priced part presented as the whole.
+                ValueKnown = complete,
                 TotalValue = cash + holdings,
                 CashValue = cash,
                 HoldingsValue = holdings,

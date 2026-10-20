@@ -112,6 +112,10 @@ public static class HeadlessNotifier
             catch (Exception ex)
             {
                 limitations.Add($"扩展检查失败（价格/集中度）：{ex.Message}。打新时限提醒不受影响。");
+                // WP-02 R6/A10 (review #6): a whole round that could not run is UNKNOWN for
+                // every FX rule — not "the condition went away". Without this the gatekeeper
+                // records a fake exit and the next successful round announces a fake re-entry.
+                unknownFxKeys = FxAlertRuleEvaluator.KnownKeys(settings.FxAlertRules);
             }
         }
         else if (!settings.BackgroundExtendedChecks)

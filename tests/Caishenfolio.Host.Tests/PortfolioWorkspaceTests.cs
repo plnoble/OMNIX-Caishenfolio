@@ -238,6 +238,28 @@ public class PortfolioWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task ADetailAccountWithUnconvertibleCashIsUnknownNotNegative()
+    {
+        // WP-02 review #1: JPY cash with no JPY→CNY rate used to be dropped while the account
+        // stayed "known", so the account's worth read 0 against 100 CNY invested — a certain
+        // −100 loss invented out of a missing quote.
+        using var store = NewStore();
+        var workspace = new PortfolioWorkspace(store);
+        var account = workspace.AddAccount("换汇账户", AccountKind.Bank, "CNY");
+
+        workspace.Record(LedgerTransaction.Deposit(account.Id, Day1, 100m, "CNY"));
+        workspace.Record(LedgerTransaction.FxExchange(account.Id, Day1, 100m, "CNY", 2_000m, "JPY"));
+
+        var snapshot = await workspace.RefreshAsync(AsOf);
+
+        var summary = Assert.Single(snapshot.AccountSummaries);
+        Assert.False(summary.ValueKnown);
+        Assert.Null(summary.CumulativePnlBase);
+        Assert.Null(snapshot.CumulativePnlBase);
+        Assert.Contains(snapshot.Valuation.Warnings, warning => warning.Contains("JPY", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task TheHeadlineCumulativePnlIsUnknownWhenAnyAccountIs()
     {
         using var store = NewStore();

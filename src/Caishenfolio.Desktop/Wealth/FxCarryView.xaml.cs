@@ -108,7 +108,9 @@ public sealed record FxLotRow
             RemainingCost = $"{Number(lot.RemainingCostAmount)} {lot.CostCurrency}",
             Upstream = upstream.Count == 0
                 ? "—（用新资金买入）"
-                : string.Join(" + ", upstream.Select(pair => $"{Number(pair.Value)} {pair.Key}")),
+                // "、" not "+": these are different currencies at different levels, so adding
+                // them is meaningless and a plus sign would suggest otherwise (review #5).
+                : string.Join("、", upstream.Select(pair => $"{Number(pair.Value)} {pair.Key}")),
             RemainingValue = lot.RemainingAmount.ToString(CultureInfo.InvariantCulture),
         };
     }
@@ -485,6 +487,11 @@ public partial class FxCarryView : UserControl
             FxAdvantageNetText.Text = "—";
             FxBreakevenText.Text = "—";
             FxQuoteInfoText.Text = "";
+            // Review #10: the new cards must not keep the PREVIOUS run's numbers next to a
+            // changed input — a stale rate reads exactly like a fresh one.
+            FxNowText.Text = "—";
+            FxCriticalText.Text = "—";
+            FxBaselineText.Text = "—";
             return;
         }
 
@@ -564,7 +571,13 @@ public partial class FxCarryView : UserControl
 
             if (now.PnlVsCostInBase is { } pnl)
             {
-                parts.Add($"盈亏 {FormatSigned(pnl)}");
+                // Review #9: the number is GROSS (before costs) and in the base currency. Saying
+                // just "盈亏 +0.8" next to a net arrival one line up reads as net profit, and the
+                // user has no way to tell that a fee already turned it negative.
+                var basis = string.Equals(now.PnlBasis, "gross", StringComparison.OrdinalIgnoreCase)
+                    ? "毛额"
+                    : now.PnlBasis;
+                parts.Add($"盈亏（{basis}，{response.BaseCurrency}）{FormatSigned(pnl)}");
             }
 
             if (!now.CostKnown)
@@ -665,6 +678,31 @@ public partial class FxCarryView : UserControl
         {
             FxLotsHint.Text += Environment.NewLine + "· " + warning;
         }
+
+        // A2/R3: "which batch, how much" — the FIFO trail itself, not just the totals. Without
+        // this the user sees batches and a remaining balance but never which one a spend ate.
+        var lines = new List<string>();
+        foreach (var spend in ledger.Spends.Where(s => s.Lots.Count > 0))
+        {
+            var parts = spend.Lots.Select(consumed =>
+            {
+                var from = ledger.Lots.FirstOrDefault(lot => lot.Id == consumed.LotId);
+                var acquired = from is null
+                    ? consumed.LotId
+                    : from.AcquiredOn.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                return $"{acquired} 那批 {Number(consumed.Amount)} {consumed.Currency}" +
+                       $"（成本 {Number(consumed.CostAmount)} {consumed.CostCurrency}）";
+            });
+            var uncovered = spend.UncoveredAmount > 0m
+                ? $"；另有 {Number(spend.UncoveredAmount)} {spend.Currency} 没有批次覆盖"
+                : "";
+            lines.Add($"{spend.Date:yyyy-MM-dd} 换出 {Number(spend.Amount)} {spend.Currency}：消耗 " +
+                      string.Join("、", parts) + uncovered + "。");
+        }
+
+        FxSpendList.Text = lines.Count == 0
+            ? "还没有换出记录：换出一部分时会按取得日先进先出，从最早的一批开始扣。"
+            : string.Join(Environment.NewLine, lines);
     }
 
     /// <summary>Non-base cash the ledger reports, by currency — the ground truth for the gap note.</summary>

@@ -69,7 +69,7 @@ public class FxCarryPageBatchTests : IDisposable
 
             Assert.Contains("16.33 USD", Text(view, "FxNowText"), StringComparison.Ordinal);
             Assert.Contains("比基准 +17.6%", Text(view, "FxNowText"), StringComparison.Ordinal);
-            Assert.Contains("盈亏 +17.6", Text(view, "FxNowText"), StringComparison.Ordinal);
+            // Review #9: the P&L must say it is a GROSS number and in which currency, because the`n            // net arrival one line up is a different number.`n            Assert.Contains("盈亏（毛额，CNY）+17.6", Text(view, "FxNowText"), StringComparison.Ordinal);
 
             // The critical rate is stated in the pair's own unit, with the move still needed.
             Assert.Contains("1 USD = 176.4 JPY", Text(view, "FxCriticalText"), StringComparison.Ordinal);
@@ -238,6 +238,39 @@ public class FxCarryPageBatchTests : IDisposable
             Assert.Contains("= —", baseline, StringComparison.Ordinal);
             Assert.DoesNotContain("= 0", baseline, StringComparison.Ordinal);
             await Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public void ThePageShowsWhichBatchEachSpendAte()
+    {
+        WpfTestHost.Run(async () =>
+        {
+            Directory.CreateDirectory(_root);
+            using var store = PortfolioStore.UnderStateRoot(_root);
+            var workspace = new PortfolioWorkspace(store);
+            var account = workspace.AddAccount("换汇账户", AccountKind.Bank, "CNY");
+            // Two batches; the second spend crosses both, so the trail must name both.
+            workspace.Record(LedgerTransaction.FxExchange(
+                account.Id, new DateOnly(2025, 1, 10), 100m, "CNY", 2_000m, "JPY"));
+            workspace.Record(LedgerTransaction.FxExchange(
+                account.Id, new DateOnly(2025, 2, 10), 100m, "CNY", 2_000m, "JPY"));
+            workspace.Record(LedgerTransaction.FxExchange(
+                account.Id, new DateOnly(2025, 3, 10), 3_000m, "JPY", 20m, "USD", 0m, ""));
+            var snapshot = await workspace.RefreshAsync(new DateOnly(2026, 1, 2));
+
+            var view = new FxCarryView();
+            view.Bind(() => null, () => "CNY", () => snapshot);
+            view.RenderPathComparison(SampleResponse(), "CNY");
+
+            var trail = Text(view, "FxSpendList");
+            // Both batches are named, with the FIFO order (January first) and the amounts.
+            Assert.Contains("2025-01-10 那批 2,000 JPY", trail, StringComparison.Ordinal);
+            Assert.Contains("2025-02-10 那批 1,000 JPY", trail, StringComparison.Ordinal);
+            Assert.True(
+                trail.IndexOf("2025-01-10", StringComparison.Ordinal)
+                < trail.IndexOf("2025-02-10", StringComparison.Ordinal),
+                trail);
         });
     }
 

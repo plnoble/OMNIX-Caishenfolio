@@ -154,6 +154,23 @@ public sealed record FxRuleOutcome
 /// </summary>
 public static class FxAlertRuleEvaluator
 {
+    /// <summary>
+    /// The alert identities these rules would own. Used when a whole evaluation round could not
+    /// run: every one of them is UNKNOWN, and the gatekeeper must keep their last verdict
+    /// instead of recording an exit that never happened (WP-02 R6).
+    /// </summary>
+    public static IReadOnlySet<string> KnownKeys(IEnumerable<FxAlertRule> rules)
+    {
+        ArgumentNullException.ThrowIfNull(rules);
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var rule in rules.Where(rule => rule.Enabled))
+        {
+            keys.Add(AlertGatekeeper.KeyOf(Probe(rule)));
+        }
+
+        return keys;
+    }
+
     public static FxRuleEvaluationResult Evaluate(
         IReadOnlyList<FxAlertRule> rules,
         Func<FxAlertRule, (decimal Rate, string Source)?> rateOf,

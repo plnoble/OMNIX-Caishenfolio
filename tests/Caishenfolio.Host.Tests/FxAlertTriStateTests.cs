@@ -124,6 +124,72 @@ public class FxAlertTriStateTests : IDisposable
     }
 
     [Fact]
+    public void ProbeKeyMatchesTheKeyOfTheAlertItRepresents()
+    {
+        var rule = Band();
+        Assert.Equal(KeyOf(rule), Assert.Single(FxAlertRuleEvaluator.KnownKeys([rule])));
+    }
+    [Fact]
+    public async Task AWholeRoundThatCouldNotRunIsUnknownForEveryRule()
+    {
+        // Review #6: not just one unreachable quote — the whole extended check throwing. Before
+        // this, the catch left unknownFxKeys empty, the gatekeeper recorded an exit, and the next
+        // good round announced a re-entry that never happened.
+        var rule = Band();
+        var key = KeyOf(rule);
+        Directory.CreateDirectory(_root);
+        using var store = PortfolioStore.UnderStateRoot(_root);
+        var stateStore = new AlertNotificationStateStore(Path.Combine(_root, "alert-state.json"));
+        stateStore.Save(DeliveredOnMonday(key));
+        var settings = NotificationSettings.Default with
+        {
+            BackgroundExtendedChecks = true,
+            FxAlertRules = [rule],
+        };
+
+        var failed = await HeadlessNotifier.RunAsync(
+            store,
+            settings,
+            Today,
+            extendedCheck: _ => throw new HttpRequestException("核心没起来"),
+            stateStore: stateStore,
+            now: Monday.AddMinutes(10));
+
+        Assert.Contains(failed.Limitations, note => note.Contains("扩展检查失败", StringComparison.Ordinal));
+        var afterFailure = stateStore.Load();
+        Assert.True(afterFailure.Records[key].WasInRange);
+        Assert.Equal(Monday, afterFailure.Records[key].LastNotifiedAt);
+
+        // Recovery, condition still met: suppressed. A fake re-entry would send here.
+        var recovered = await HeadlessNotifier.RunAsync(
+            store,
+            settings,
+            Today,
+            extendedCheck: _ => Task.FromResult(new BackgroundCheckResult
+            {
+                Alerts =
+                [
+                    new PortfolioAlert
+                    {
+                        Kind = AlertKind.FxBand,
+                        Severity = AlertSeverity.Info,
+                        Symbol = "USD/CNY",
+                        Title = "汇率进入你设定的区间",
+                        Message = "USD/CNY 当前 7.1，在你设定的区间内。",
+                    },
+                ],
+                FxOutcomes = [new FxRuleOutcome { AlertKey = key, State = FxRuleState.Met }],
+            }),
+            stateStore: stateStore,
+            now: Monday.AddMinutes(20));
+
+        // Nothing left the machine: same verdict, no re-entry announcement.
+        Assert.Equal(0, recovered.Dispatch.AlertCount);
+        Assert.Equal(1, recovered.SuppressedByCooldown);
+        Assert.True(stateStore.Load().Records[key].WasInRange);
+    }
+
+    [Fact]
     public async Task A10_TheNotifierReportsTheReasonAndKeepsItsCooldownWhileTheQuoteIsMissing()
     {
         // The whole chain, not just the two pure pieces: evaluator → notifier → gatekeeper.
