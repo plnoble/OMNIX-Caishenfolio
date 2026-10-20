@@ -23,6 +23,20 @@ public sealed record FxAlertRule
 {
     public required FxAlertRuleKind Kind { get; init; }
 
+    /// <summary>
+    /// Stable identity of this rule (WP-03 R4/D5). Two rules that differ only by their threshold
+    /// must not share one dedupe key; same identity plus same revision is the same watch. Empty
+    /// means "derive it from the kind and the currencies", so a settings file written before this
+    /// field existed still gets a stable identity.
+    /// </summary>
+    public string Id { get; init; } = "";
+
+    /// <summary>
+    /// Bumped whenever the rule's own parameters change (D5). Editing a note is not a new watch;
+    /// changing what it watches for is.
+    /// </summary>
+    public int Revision { get; init; }
+
     /// <summary>RateBand: the pair to watch, e.g. <c>USD/CNY</c> meaning 1 USD = x CNY.</summary>
     public string Pair { get; init; } = "";
 

@@ -938,6 +938,14 @@ public sealed class FxNowDto
     [JsonPropertyName("pnl_vs_cost_in_base")]
     public decimal? PnlVsCostInBase { get; set; }
 
+    /// <summary>
+    /// WP-03 R6/D7: the same P&amp;L measured on the NET arrival — what actually lands. Null when
+    /// the cost model is incomplete; the page then says "净额未知" instead of quoting the gross
+    /// number as if it were the answer.
+    /// </summary>
+    [JsonPropertyName("pnl_vs_cost_net_in_base")]
+    public decimal? PnlVsCostNetInBase { get; set; }
+
     [JsonPropertyName("held_cost_in_base")]
     public decimal? HeldCostInBase { get; set; }
 
