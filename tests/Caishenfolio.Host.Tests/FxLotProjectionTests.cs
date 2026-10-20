@@ -121,6 +121,29 @@ public class FxLotProjectionTests : IDisposable
     }
 
     [Fact]
+    public void ReversingASpendGivesTheConsumedBatchesBack()
+    {
+        // A3 from the other side: the task book says 剩余量回到冲正前. Reversing the SPEND must
+        // put back what it consumed and drop the batch it created.
+        var buy = TwoPurchases()[0];
+        var spend = LedgerTransaction.FxExchange(Account, Day3, 300_000m, "JPY", 2_000m, "USD", 0m, "");
+
+        var before = FxLotLedger.FromTransactions([buy, spend]);
+        Assert.Equal(300_000m, before.Lots.Single(l => l.Currency == "JPY").RemainingAmount);
+        Assert.Single(before.Lots, l => l.Currency == "USD");
+        Assert.Single(before.Spends);
+
+        var after = FxLotLedger.FromTransactions([buy, spend, LedgerTransaction.Reversal(spend, "换汇输错")]);
+
+        // Back to the state before the spend: full JPY batch, no USD batch, no consumption.
+        var jpy = Assert.Single(after.Lots);
+        Assert.Equal("JPY", jpy.Currency);
+        Assert.Equal(600_000m, jpy.RemainingAmount);
+        Assert.Equal(30_000m, jpy.RemainingCostAmount);
+        Assert.Empty(after.Spends);
+    }
+
+    [Fact]
     public void A4_AThirdCurrencyBatchCostsWhatThisSegmentPaidNotTheOriginalMoney()
     {
         var cnyToJpy = TwoPurchases()[0];                      // 30,000 CNY → 600,000 JPY

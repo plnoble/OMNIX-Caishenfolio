@@ -181,6 +181,26 @@ public class FxCarryPageBatchTests : IDisposable
         });
     }
 
+    [Fact]
+    public void WithoutAHeldPositionTheNewCardsSayNothingRatherThanGuessing()
+    {
+        WpfTestHost.Run(async () =>
+        {
+            // No held pot: the core sends now/future_critical as null. The page must show "—"
+            // instead of inventing a rate, and must not throw.
+            var response = new FxPathsResponse { Ok = true, BaseCurrency = "CNY", TargetCurrency = "USD" };
+            var view = new FxCarryView();
+            view.Bind(() => null, () => "CNY");
+
+            view.RenderPathComparison(response, "CNY");
+
+            Assert.Equal("—", Text(view, "FxNowText"));
+            Assert.Equal("—", Text(view, "FxCriticalText"));
+            Assert.Equal("—", Text(view, "FxBaselineText"));
+            await Task.CompletedTask;
+        });
+    }
+
     private static string Text(FxCarryView view, string name) =>
         ((TextBlock)view.FindName(name)!).Text;
 
