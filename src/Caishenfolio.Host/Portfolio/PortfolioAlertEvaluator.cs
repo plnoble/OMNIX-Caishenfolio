@@ -41,6 +41,18 @@ public sealed record PortfolioAlert
     public string Symbol { get; init; } = "";
     public required string Title { get; init; }
     public required string Message { get; init; }
+
+    /// <summary>
+    /// WP-03 R4/D5: which rule produced this alert. Empty for alerts that are not rule-driven
+    /// (IPO deadlines, price levels) — those keep the old kind|symbol|title identity.
+    /// </summary>
+    public string RuleId { get; init; } = "";
+
+    /// <summary>Bumped when the rule's parameters change; part of the dedupe key.</summary>
+    public int RuleRevision { get; init; }
+
+    /// <summary>The rule's档位 (threshold), so two thresholds of one rule do not collide.</summary>
+    public string RuleLevel { get; init; } = "";
 }
 
 /// <summary>

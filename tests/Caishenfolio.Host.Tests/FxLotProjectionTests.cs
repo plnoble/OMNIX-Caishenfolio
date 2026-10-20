@@ -374,24 +374,30 @@ public class FxLotProjectionTests : IDisposable
     }
 
     /// <summary>
-    /// CHARACTERIZATION, not approval (WP-02 §7/FX-03): an exchange that spends more of a currency
-    /// than the account holds still goes through, leaving a negative balance. The architecture
-    /// review wants this refused for cash/bank accounts, but the task book's own A1–A4 fixtures
-    /// record exchanges without a funding deposit, and no ruling says which exemptions
-    /// (融资/未建账的外币) apply — so this package pins today's behaviour and leaves the decision.
-    /// When the rule is introduced, this test is the one to rewrite on purpose.
+    /// **Rewritten on purpose (WP-03 D8).** This test used to characterise the old behaviour — an
+    /// exchange silently leaving a negative balance. That rule now exists, so the assertions state
+    /// the opposite: the write is REFUSED and says by how much. Nothing is loosened; the pure
+    /// projection still tolerates such a row, because that is how a pre-upgrade ledger replays
+    /// (D2 — history is annotated, never rewritten).
     /// </summary>
     [Fact]
-    public void TodayAnOverspendExchangeSilentlyLeavesANegativeBalance()
+    public void AnOverspendExchangeIsNowRefusedInsteadOfLeavingANegativeBalance()
     {
+        Directory.CreateDirectory(_root);
+        using var store = PortfolioStore.UnderStateRoot(_root);
+        store.SaveAccount(Portfolio.Account.Create("换汇账户", AccountKind.Bank, "CNY", id: Account));
         var exchange = LedgerTransaction.FxExchange(Account, Day1, 100_000m, "CNY", 2_000_000m, "JPY", 0m, "");
+
+        var error = Assert.Throws<LedgerException>(() => store.AddTransaction(exchange));
+
+        Assert.Contains("100,000", error.Message, StringComparison.Ordinal);
+        Assert.Contains("差", error.Message, StringComparison.Ordinal);
+        Assert.Empty(store.ListTransactions());
+
+        // Reading is unchanged: replaying such a row (as an old ledger does) still yields the
+        // negative balance, and the batch still follows the receipt.
         var state = PositionCalculator.Replay([exchange]);
-
-        // No deposit first: CNY is spent that the ledger never held.
         Assert.Equal(-100_000m, state.CashBalances.Single(balance => balance.Currency == "CNY").Amount);
-        Assert.Equal(2_000_000m, state.CashBalances.Single(b => b.Currency == "JPY").Amount);
-
-        // And the batch is created anyway: batches follow the receipts, not the balances.
         var lot = Assert.Single(FxLotLedger.FromTransactions([exchange]).Lots);
         Assert.Equal(2_000_000m, lot.RemainingAmount);
         Assert.Equal(100_000m, lot.CostAmount);

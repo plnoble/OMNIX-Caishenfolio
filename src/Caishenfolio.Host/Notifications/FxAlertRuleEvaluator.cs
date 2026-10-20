@@ -77,8 +77,33 @@ public sealed record FxAlertRule
     /// <summary>True when this rule has the cost inputs its kind needs.</summary>
     public bool HasCostModel => SpreadPct is not null || FixedFee is not null;
 
-    public string Describe() => Kind switch
+    /// <summary>
+    /// R4/D5: the rule's own identity, stable across note edits. Empty <see cref="Id"/> falls back
+    /// to kind + the currencies it watches, so a settings file written before this field existed
+    /// still gets a usable identity.
+    /// </summary>
+    public string StableId => string.IsNullOrWhiteSpace(Id)
+        ? $"{Kind}:{Normalize(Pair)}:{Normalize(BaseCurrency)}/{Normalize(TargetCurrency)}/{Normalize(HeldCurrency)}"
+        : Id.Trim();
+
+    /// <summary>
+    /// R4/D5: the档位 this rule watches at — the threshold, not the whole rule. Two rules that
+    /// differ only here must not share a dedupe key.
+    /// </summary>
+    public string Level => Kind switch
     {
+        FxAlertRuleKind.RateBand =>
+            $"band:{Lower?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) ?? "-"}" +
+            $"~{Upper?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) ?? "-"}",
+        FxAlertRuleKind.HeldAdvantageAbove =>
+            $"pct:{ThresholdPct?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) ?? "-"}",
+        FxAlertRuleKind.NetArrivalAbove =>
+            $"amt:{ThresholdAmount?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) ?? "-"}",
+        FxAlertRuleKind.BreakevenCrossed => "be",
+        _ => "?",
+    };
+
+    public string Describe() => Kind switch    {
         FxAlertRuleKind.RateBand =>
             $"{Normalize(Pair)} 进入区间 [{Lower?.ToString("0.######") ?? "—"}, {Upper?.ToString("0.######") ?? "—"}]",
         FxAlertRuleKind.HeldAdvantageAbove =>
@@ -211,7 +236,7 @@ public static class FxAlertRuleEvaluator
 
             if (alert is not null)
             {
-                alerts.Add(alert);
+                alerts.Add(WithIdentity(alert, rule));
             }
 
             if (note is not null)
@@ -235,7 +260,21 @@ public static class FxAlertRuleEvaluator
     /// message. The outcome uses it so the gatekeeper can match an UNKNOWN evaluation to the
     /// alert it might have produced (R6).
     /// </summary>
-    private static PortfolioAlert Probe(FxAlertRule rule) => rule.Kind switch
+    private static PortfolioAlert Probe(FxAlertRule rule) => WithIdentity(ProbeShape(rule), rule);
+
+    /// <summary>
+    /// R4/D5: stamp the rule's identity and level on every alert it produces, so the dedupe key
+    /// separates two rules that differ only by their threshold and keeps one rule stable across
+    /// note edits.
+    /// </summary>
+    private static PortfolioAlert WithIdentity(PortfolioAlert alert, FxAlertRule rule) => alert with
+    {
+        RuleId = rule.StableId,
+        RuleRevision = rule.Revision,
+        RuleLevel = rule.Level,
+    };
+
+    private static PortfolioAlert ProbeShape(FxAlertRule rule) => rule.Kind switch
     {
         FxAlertRuleKind.RateBand => new PortfolioAlert
         {

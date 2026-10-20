@@ -11,7 +11,7 @@ namespace Caishenfolio.Desktop.Tests;
 /// </summary>
 public class NetBasisConclusionTests
 {
-    private static FxPathsResponse WithNow(decimal? gross, decimal? net, decimal? pnlNet, string? pnlBasis) => new()
+    private static FxPathsResponse WithNow(decimal? gross, decimal? net, decimal? pnlNet, string pnlBasis) => new()
     {
         Ok = true,
         BaseCurrency = "CNY",

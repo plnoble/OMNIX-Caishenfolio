@@ -122,17 +122,41 @@ public sealed record GatekeeperDecision
 /// </summary>
 public static class AlertGatekeeper
 {
-    /// <summary>The stable identity of an event: kind + symbol + title.</summary>
+    /// <summary>
+    /// The stable identity of an event: kind + symbol + title, plus the rule identity when the
+    /// alert came from a rule (WP-03 R4/D5).
+    /// </summary>
     /// <remarks>
     /// The message is excluded on purpose: it embeds the live price, so keying on it would
     /// make every run a "new" alert. Changing a planned level's value keeps the old key —
     /// the exit/re-entry rule still re-fires when the condition genuinely resets.
+    /// Alerts that are not rule-driven (IPO deadlines, price levels) keep exactly the old key,
+    /// so their dedupe behaviour is untouched (R7).
     /// </remarks>
     public static string KeyOf(PortfolioAlert alert) =>
-        $"{alert.Kind}|{alert.Symbol}|{alert.Title}";
+        string.IsNullOrEmpty(alert.RuleId)
+            ? $"{alert.Kind}|{alert.Symbol}|{alert.Title}"
+            : $"{alert.Kind}|{alert.Symbol}|{alert.Title}|rule:{alert.RuleId}@r{alert.RuleRevision}#{alert.RuleLevel}";
 
-    public static GatekeeperDecision Filter(
-        IReadOnlyList<PortfolioAlert> alerts,
+    /// <summary>
+    /// The pre-WP-03 record for a key that now carries a rule identity: the legacy key is exactly
+    /// the new key's prefix (kind|symbol|title). Conservative on purpose (R5/D6) — adopting it can
+    /// at worst delay one repeat, while ignoring it would re-send everything on upgrade day.
+    /// </summary>
+    private static AlertNotificationRecord? AdoptLegacy(
+        IReadOnlyDictionary<string, AlertNotificationRecord> records, string key)
+    {
+        var marker = key.IndexOf("|rule:", StringComparison.Ordinal);
+        if (marker < 0)
+        {
+            return null;
+        }
+
+        var legacyKey = key[..marker];
+        return records.TryGetValue(legacyKey, out var legacy) ? legacy : null;
+    }
+
+    public static GatekeeperDecision Filter(        IReadOnlyList<PortfolioAlert> alerts,
         AlertNotificationState state,
         DateTimeOffset now,
         TimeSpan cooldown,
@@ -151,7 +175,10 @@ public static class AlertGatekeeper
         {
             var key = KeyOf(alert);
             firing.Add(key);
-            var previous = records.GetValueOrDefault(key);
+            // WP-03 R5/D6: a state file written before the key carried a rule identity must not
+            // read as "never sent" — that would re-send everything on the upgrade day. The old
+            // record is adopted as this key's history; it stays in the file until it ages out.
+            var previous = records.GetValueOrDefault(key) ?? AdoptLegacy(records, key);
 
             var send = previous is null
                 || !previous.WasInRange

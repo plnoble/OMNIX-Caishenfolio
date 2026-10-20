@@ -6,7 +6,7 @@ namespace Caishenfolio.Host.Tests;
 /// <summary>
 /// WP-03 A7–A9 (R4/R5/D5/D6): two rules that differ only by their threshold used to share one
 /// dedupe key, so the first delivery silenced the second. The key now carries the rule's
-/// identity, its revision and its level — and an old state file is migrated conservatively so
+/// identity, its revision and its level — and an old state file is adopted conservatively so
 /// upgrading does not re-send everything the user already saw.
 /// </summary>
 public class AlertIdentityTests
@@ -58,7 +58,8 @@ public class AlertIdentityTests
         var first = AlertGatekeeper.Filter([alert], AlertNotificationState.Empty, Monday, Cooldown);
         Assert.Single(first.ToSend);
 
-        var delivered = first.NextState;
+        // The real flow marks what actually left the machine, which is what starts the cooldown.
+        var delivered = AlertGatekeeper.MarkDelivered(first.NextState, first.ToSend, Monday);
         var again = AlertGatekeeper.Filter([alert], delivered, Monday.AddMinutes(30), Cooldown);
         Assert.Empty(again.ToSend);
 
@@ -76,16 +77,17 @@ public class AlertIdentityTests
         var smallAlert = Firing(small);
         var largeAlert = Firing(large);
 
-        // Both delivered, then only the small one keeps firing.
-        var both = AlertGatekeeper.Filter(
-            [smallAlert, largeAlert], AlertNotificationState.Empty, Monday, Cooldown).NextState;
+        var first = AlertGatekeeper.Filter(
+            [smallAlert, largeAlert], AlertNotificationState.Empty, Monday, Cooldown);
+        var both = AlertGatekeeper.MarkDelivered(first.NextState, first.ToSend, Monday);
+
+        // Only the small rule keeps firing this round; the large one has left its range.
         var onlySmall = AlertGatekeeper.Filter([smallAlert], both, Monday.AddHours(1), Cooldown);
         var smallAgain = AlertGatekeeper.Filter(
             [smallAlert], onlySmall.NextState, Monday.AddHours(2), Cooldown);
 
         Assert.Empty(smallAgain.ToSend);
-        // The large rule's record was the one marked as left; the small rule stayed in range.
-        Assert.True(onlySmall.NextState.Records[AlertGatekeeper.KeyOf(largeAlert)].WasInRange == false);
+        Assert.False(onlySmall.NextState.Records[AlertGatekeeper.KeyOf(largeAlert)].WasInRange);
         Assert.True(onlySmall.NextState.Records[AlertGatekeeper.KeyOf(smallAlert)].WasInRange);
     }
 
@@ -96,8 +98,9 @@ public class AlertIdentityTests
         var large = NetArrival(1_000m);
         var smallAlert = Firing(small);
         var largeAlert = Firing(large);
-        var both = AlertGatekeeper.Filter(
-            [smallAlert, largeAlert], AlertNotificationState.Empty, Monday, Cooldown).NextState;
+        var first = AlertGatekeeper.Filter(
+            [smallAlert, largeAlert], AlertNotificationState.Empty, Monday, Cooldown);
+        var both = AlertGatekeeper.MarkDelivered(first.NextState, first.ToSend, Monday);
 
         // The small rule cannot be judged this round; the large one is still firing.
         var decided = AlertGatekeeper.Filter(
@@ -117,7 +120,9 @@ public class AlertIdentityTests
         var rule = NetArrival(10m);
         var alert = Firing(rule);
 
-        // What the previous version wrote: Kind|Symbol|Title, no rule identity.
+        // What the previous version wrote: Kind|Symbol|Title, no rule identity. Delivered an hour
+        // ago, i.e. inside the cooldown — that is the upgrade-day shape: without adoption every
+        // one of these would fire again the moment the new build starts.
         var legacyKey = $"{alert.Kind}|{alert.Symbol}|{alert.Title}";
         Assert.NotEqual(legacyKey, AlertGatekeeper.KeyOf(alert));
         var legacyState = new AlertNotificationState
@@ -126,8 +131,8 @@ public class AlertIdentityTests
             {
                 [legacyKey] = new()
                 {
-                    LastNotifiedAt = Monday.AddDays(-1),
-                    LastSeenAt = Monday.AddDays(-1),
+                    LastNotifiedAt = Monday.AddHours(-1),
+                    LastSeenAt = Monday.AddHours(-1),
                     WasInRange = true,
                 },
             },
@@ -139,7 +144,7 @@ public class AlertIdentityTests
         Assert.Empty(decision.ToSend);
         // …and the new key now owns the remembered verdict, so later rounds behave normally.
         Assert.True(decision.NextState.Records[AlertGatekeeper.KeyOf(alert)].WasInRange);
-        Assert.Equal(Monday.AddDays(-1), decision.NextState.Records[AlertGatekeeper.KeyOf(alert)].LastNotifiedAt);
+        Assert.Equal(Monday.AddHours(-1), decision.NextState.Records[AlertGatekeeper.KeyOf(alert)].LastNotifiedAt);
     }
 
     [Fact]
@@ -153,8 +158,8 @@ public class AlertIdentityTests
             {
                 ["FxBand|USD/CNY|汇率进入你设定的区间"] = new()
                 {
-                    LastNotifiedAt = Monday.AddDays(-1),
-                    LastSeenAt = Monday.AddDays(-1),
+                    LastNotifiedAt = Monday.AddHours(-1),
+                    LastSeenAt = Monday.AddHours(-1),
                     WasInRange = true,
                 },
             },
