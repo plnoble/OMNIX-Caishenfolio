@@ -39,10 +39,12 @@ public class BalanceConstraintTests : IDisposable
         var error = Assert.Throws<LedgerException>(() =>
             store.AddTransaction(Fx(account.Id, Day1, 100_000m, "CNY", 2_000_000m, "JPY")));
 
-        // D4: how much there is, how much it needs, how far short. All three, in the message.
-        Assert.Contains("0", error.Message, StringComparison.Ordinal);
-        Assert.Contains("100,000", error.Message, StringComparison.Ordinal);
-        Assert.Contains("差", error.Message, StringComparison.Ordinal);
+        // D4: how much there is, how much it needs, how far short. All three, FULLY spelled out —
+        // the labels are asserted together with their numbers, so a wrong balance ("100,000") or a
+        // wrong gap ("0") cannot pass by sharing a digit with the right one (Codex review #8).
+        Assert.Contains("账上有 0，", error.Message, StringComparison.Ordinal);
+        Assert.Contains("这笔要 100,000，", error.Message, StringComparison.Ordinal);
+        Assert.Contains("差 100,000。", error.Message, StringComparison.Ordinal);
         // A1: nothing at all may be written.
         Assert.Empty(store.ListTransactions());
     }
@@ -71,9 +73,28 @@ public class BalanceConstraintTests : IDisposable
         var error = Assert.Throws<LedgerException>(() =>
             store.AddTransaction(Fx(account.Id, Day2, 100_001m, "CNY", 2_000_020m, "JPY")));
 
-        Assert.Contains("1", error.Message, StringComparison.Ordinal);
-        Assert.Contains("差", error.Message, StringComparison.Ordinal);
+        Assert.Contains("账上有 100,000，", error.Message, StringComparison.Ordinal);
+        Assert.Contains("这笔要 100,001，", error.Message, StringComparison.Ordinal);
+        Assert.Contains("差 1。", error.Message, StringComparison.Ordinal);
         // The refused row did not sneak in: only the deposit is there.
+        Assert.Single(store.ListTransactions());
+    }
+
+    [Fact]
+    public void A3_TheGapKeepsThePrecisionTheBalanceIsJudgedWith()
+    {
+        // Codex review #7: judging uses exact decimals, so the explanation may not round a real gap
+        // away. A 0.001 CNY fee over the whole balance is a shortfall of exactly 0.001 — printing
+        // "差 0" would explain the refusal with a number the user cannot act on.
+        using var store = NewStore();
+        var account = new PortfolioWorkspace(store).AddAccount("换汇账户", AccountKind.Bank, "CNY");
+        store.AddTransaction(LedgerTransaction.Deposit(account.Id, Day1, 100_000m, "CNY"));
+
+        var error = Assert.Throws<LedgerException>(() => store.AddTransaction(
+            LedgerTransaction.FxExchange(account.Id, Day2, 100_000m, "CNY", 2_000_000m, "JPY", 0.001m, "")));
+
+        Assert.Contains("这笔要 100,000.001，", error.Message, StringComparison.Ordinal);
+        Assert.Contains("差 0.001。", error.Message, StringComparison.Ordinal);
         Assert.Single(store.ListTransactions());
     }
 

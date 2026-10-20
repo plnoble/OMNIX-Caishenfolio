@@ -1313,14 +1313,19 @@ function Invoke-BalanceRefusalCheck {
         throw ("历史负余额：总览没有标注账本里已有的负余额（D2 要求只标注、不拦开门）。" +
             "总览文本样本：$a ｜ 账本页文本样本：$l")
     }
-    if ($annotation -notmatch "现金是 -100（CNY）") {
-        throw "历史负余额：标注没有给出负多少（预期「现金是 -100（CNY）」）。"
+    if ($annotation -notmatch "最低到 -100（CNY）") {
+        throw "历史负余额：标注没有给出最低到多少（预期「最低到 -100（CNY）」）。"
     }
-    if ($annotation -notmatch "自 2026-01-05 起就是负的") {
-        throw "历史负余额：标注没有给出从哪天起的（预期「自 2026-01-05 起就是负的」）。"
+    if ($annotation -notmatch "自 2026-01-05 起变负") {
+        throw "历史负余额：标注没有给出从哪天起的（预期「自 2026-01-05 起变负」）。"
+    }
+    # Codex review #6: by the time this step runs the account has been topped up to +390 CNY, so the
+    # annotation must describe HISTORY — if it claimed a current balance it would be lying here.
+    if ($annotation -match "现金是 -100") {
+        throw "历史负余额：余额已经补回来，标注却还在说当前现金是 -100。"
     }
 
-    Add-Step "historical negative balance e2e" "passed" "预置的历史负余额（CNY -100，自 2026-01-05）在总览被标注为历史负余额，账本照常打开"
+    Add-Step "historical negative balance e2e" "passed" "预置的历史负余额（自 2026-01-05 起变负、最低到 -100 CNY）在总览被标注为历史，账本照常打开；余额已补回仍不谎报当前余额"
 
     $overviewBack = Get-NavButton3 "总览"
     if ($overviewBack) { Start-Sleep -Milliseconds 200 }

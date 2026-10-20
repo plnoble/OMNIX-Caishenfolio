@@ -522,8 +522,8 @@ public sealed class PortfolioStore : IDisposable
 
             var currency = Data.Currencies.Normalize(txn.Currency);
             throw new LedgerException(
-                $"账户 {txn.AccountId} 的 {currency} 不够换汇：账上有 {have:#,0.##}，这笔要 {need:#,0.##}，" +
-                $"差 {(need - have):#,0.##}。先记这笔钱从哪来（入金或期初余额），或把换汇金额改小。");
+                $"账户 {txn.AccountId} 的 {currency} 不够换汇：账上有 {have:#,0.########}，这笔要 {need:#,0.########}，" +
+                $"差 {(need - have):#,0.########}。先记这笔钱从哪来（入金或期初余额），或把换汇金额改小。");
         });
     }
 

@@ -143,17 +143,17 @@ public static class AlertGatekeeper
     /// the new key's prefix (kind|symbol|title). Conservative on purpose (R5/D6) — adopting it can
     /// at worst delay one repeat, while ignoring it would re-send everything on upgrade day.
     /// </summary>
+    private static string LegacyPrefixOf(string key)
+    {
+        var marker = key.IndexOf("|rule:", StringComparison.Ordinal);
+        return marker < 0 ? key : key[..marker];
+    }
+
     private static AlertNotificationRecord? AdoptLegacy(
         IReadOnlyDictionary<string, AlertNotificationRecord> records, string key)
     {
-        var marker = key.IndexOf("|rule:", StringComparison.Ordinal);
-        if (marker < 0)
-        {
-            return null;
-        }
-
-        var legacyKey = key[..marker];
-        return records.TryGetValue(legacyKey, out var legacy) ? legacy : null;
+        var legacyKey = LegacyPrefixOf(key);
+        return legacyKey == key ? null : records.TryGetValue(legacyKey, out var legacy) ? legacy : null;
     }
 
     public static GatekeeperDecision Filter(        IReadOnlyList<PortfolioAlert> alerts,
@@ -208,6 +208,18 @@ public static class AlertGatekeeper
         // record untouched means the outage neither advances the cooldown nor fabricates a
         // re-entry when the quote comes back (A11).
         var unknown = notEvaluated ?? (IReadOnlySet<string>)new HashSet<string>(StringComparer.Ordinal);
+
+        // WP-03 D6, review #3: an old record must not be read as "left the range" merely because the
+        // same condition is now reported under its new rule identity. While any key that adopts the
+        // old one is firing OR un-evaluated, that old prefix is still live. Without this, the first
+        // upgrade-day round that cannot be evaluated writes a fabricated exit, and the next round
+        // re-sends inside the cooldown the adoption was supposed to respect.
+        var livePrefixes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var liveKey in firing.Concat(unknown))
+        {
+            livePrefixes.Add(LegacyPrefixOf(liveKey));
+        }
+
         foreach (var (key, record) in records)
         {
             if (unknown.Contains(key))
@@ -215,7 +227,7 @@ public static class AlertGatekeeper
                 continue;
             }
 
-            if (!firing.Contains(key) && record.WasInRange)
+            if (!firing.Contains(key) && record.WasInRange && !livePrefixes.Contains(key))
             {
                 records[key] = record with { WasInRange = false, LastSeenAt = now };
             }

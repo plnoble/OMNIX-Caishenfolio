@@ -137,6 +137,36 @@ public class HistoricalNegativeBalanceTests : IDisposable
         Assert.Contains("CNY", warning, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task A5_ARecoveredGapIsToldAsHistoryNotAsTheCurrentBalance()
+    {
+        // Codex review #6: the stored amount is the deepest point and the date is when the gap
+        // began. Once a later deposit closes it, the current balance is POSITIVE — so the annotation
+        // may not read as "your cash is -100,000" (the smoke script used to pin exactly that wrong
+        // wording), and it may not invent a cause either.
+        using var store = NewStore();
+        var workspace = new PortfolioWorkspace(store);
+        var account = workspace.AddAccount("换汇账户", AccountKind.Bank, "CNY");
+
+        InsertLegacyRows(
+            store,
+            LedgerTransaction.FxExchange(account.Id, Day1, 100_000m, "CNY", 2_000_000m, "JPY"),
+            LedgerTransaction.Deposit(account.Id, Day2, 150_000m, "CNY"));
+
+        var snapshot = await workspace.RefreshAsync(AsOf);
+
+        // The account really is in the black at the end.
+        Assert.Equal(50_000m, snapshot.CashBalances.Single(b => b.Currency == "CNY").Amount);
+
+        var warning = Assert.Single(
+            snapshot.Warnings.Where(w => w.Contains("历史负余额", StringComparison.Ordinal)));
+        Assert.Contains("自 2026-01-05 起变负", warning, StringComparison.Ordinal);
+        Assert.Contains("最低到 -100,000（CNY）", warning, StringComparison.Ordinal);
+        // No claim about the present, and no guess about who caused it.
+        Assert.DoesNotContain("现金是", warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("不是当前操作造成的", warning, StringComparison.Ordinal);
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();

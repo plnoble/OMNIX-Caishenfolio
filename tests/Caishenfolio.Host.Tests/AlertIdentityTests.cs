@@ -148,6 +148,48 @@ public class AlertIdentityTests
     }
 
     [Fact]
+    public void A9_AnUpgradeWhoseFirstRoundCannotBeEvaluatedStillDoesNotFabricateAReEntry()
+    {
+        // Codex review #3 (D6/A8/A9): the upgrade-day chain is TWO rounds. The old file only knows
+        // the legacy key; the first new-build round cannot be evaluated (no quote), the second can.
+        // The old record must not be read as "left the range" in round one — that fabricated exit
+        // would make round two look like a re-entry and re-send inside the cooldown.
+        var rule = NetArrival(10m);
+        var alert = Firing(rule);
+        var newKey = AlertGatekeeper.KeyOf(alert);
+        var legacyKey = $"{alert.Kind}|{alert.Symbol}|{alert.Title}";
+        Assert.NotEqual(legacyKey, newKey);
+
+        var legacyState = new AlertNotificationState
+        {
+            Records = new Dictionary<string, AlertNotificationRecord>(StringComparer.Ordinal)
+            {
+                [legacyKey] = new()
+                {
+                    LastNotifiedAt = Monday,
+                    LastSeenAt = Monday,
+                    WasInRange = true,
+                },
+            },
+        };
+
+        // Round one, 10 minutes later: the quote is missing, so the rule is reported as NOT evaluated
+        // under its NEW identity. Nothing fires.
+        var roundOne = AlertGatekeeper.Filter(
+            [], legacyState, Monday.AddMinutes(10), Cooldown, new HashSet<string> { newKey });
+
+        // The legacy record keeps its verdict: no fabricated exit.
+        Assert.True(roundOne.NextState.Records[legacyKey].WasInRange);
+
+        // Round two, 20 minutes later: the quote is back and the condition has been true all along.
+        var roundTwo = AlertGatekeeper.Filter([alert], roundOne.NextState, Monday.AddMinutes(20), Cooldown);
+
+        Assert.Empty(roundTwo.ToSend);
+        Assert.True(roundTwo.NextState.Records[newKey].WasInRange);
+        Assert.Equal(Monday, roundTwo.NextState.Records[newKey].LastNotifiedAt);
+    }
+
+    [Fact]
     public void A9_AnOldStateFileWithoutThatAlertStillSpeaks()
     {
         // Conservative must not become "never speaks again": a key the old file never saw is new.

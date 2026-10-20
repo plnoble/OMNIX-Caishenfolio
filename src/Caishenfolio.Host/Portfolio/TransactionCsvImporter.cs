@@ -297,8 +297,8 @@ public static class TransactionCsvImporter
             var currency = Data.Currencies.Normalize(txn.Currency);
             found = new BlockedRow(
                 txn.Id,
-                $"这一行换汇花超了：账户 {txn.AccountId} 的 {currency} 那时只有 {have:#,0.##}，" +
-                $"这笔要 {need:#,0.##}，差 {(need - have):#,0.##}。补上来源（入金或期初余额）再导入。");
+                $"这一行换汇花超了：账户 {txn.AccountId} 的 {currency} 那时只有 {have:#,0.########}，" +
+                $"这笔要 {need:#,0.########}，差 {(need - have):#,0.########}。补上来源（入金或期初余额）再导入。");
         });
 
         return found;
