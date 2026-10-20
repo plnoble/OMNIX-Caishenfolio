@@ -206,7 +206,7 @@
                                             ElementStyle="{StaticResource WealthCellText}" />
                         <DataGridTextColumn Header="总资产" Binding="{Binding TotalValue}" Width="140"
                                             ElementStyle="{StaticResource WealthCellText}" />
-                        <DataGridTextColumn Header="累计收益" Binding="{Binding CumulativePnl}" Width="140"
+                        <DataGridTextColumn Header="累计收益（总资产−净投入）" Binding="{Binding CumulativePnl}" Width="180"
                                             ElementStyle="{StaticResource WealthCellText}" />
                         <DataGridTextColumn Header="资金加权收益率" Binding="{Binding MoneyWeightedReturn}" Width="130"
                                             ElementStyle="{StaticResource WealthCellText}" />

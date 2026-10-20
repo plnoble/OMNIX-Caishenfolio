@@ -190,9 +190,9 @@ public class RecordWindowCashflowTests : IDisposable
             Assert.Equal(Visibility.Visible, VisibilityOf(window, "CounterAmountRow"));
             var rate = (TextBlock)Element(window, "FxRateText");
             Assert.Equal(Visibility.Visible, rate.Visibility);
-            Assert.Contains("21", rate.Text, StringComparison.Ordinal);
-            Assert.Contains("CNY", rate.Text, StringComparison.Ordinal);
-            Assert.Contains("JPY", rate.Text, StringComparison.Ordinal);
+            // The whole line, not "contains 21": that would also pass for 2.1, 210 or 210000.
+            Assert.Equal(
+                "汇率：CNY → JPY ≈ 21（只用于显示，入账按两边金额）", rate.Text);
 
             // Leaving the cross-currency form takes it away again.
             SelectOperation(window, "Deposit");
@@ -294,6 +294,9 @@ public class RecordWindowCashflowTests : IDisposable
             Assert.Equal("明细模式", detailRow.Mode);
             Assert.Equal("100,000 CNY", detailRow.TotalValue);
             Assert.Equal("0 CNY", detailRow.CumulativePnl);
+            // Money in, same value out: 0%. The solver can return a −1e−17 residue, so the sign is not
+            // the point; "0.00%" with a known value is.
+            Assert.EndsWith("0.00%", detailRow.MoneyWeightedReturn, StringComparison.Ordinal);
             Assert.NotEqual("—", detailRow.MoneyWeightedReturn);
             Assert.Equal("", detailRow.Note); // nothing is missing, so nothing is explained away
 

@@ -47,7 +47,7 @@ public sealed record AccountSummary
 
     public required string Name { get; init; }
 
-    /// <summary>The account's own currency; every money figure here is already in the base currency.</summary>
+    /// <summary>The account's own currency. The money figures below are in the base currency.</summary>
     public required string Currency { get; init; }
 
     public required AccountValuationMode Mode { get; init; }

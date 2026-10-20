@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Launches the desktop app and verifies it actually comes up.
 

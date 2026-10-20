@@ -208,6 +208,48 @@ public class TransactionCsvImporterTests : IDisposable
     }
 
     [Fact]
+    public void EveryTemplateRowCarriesEveryColumn()
+    {
+        var lines = TransactionCsvImporter.BuildTemplate()
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.TrimEnd('\r'))
+            .ToArray();
+        var columns = TransactionCsvImporter.TemplateHeader.Count;
+
+        Assert.Equal(columns, Split(lines[0]).Length);
+        // A short row shifts everything after it left: the note of an example row used to land in
+        // 对方账户, which is read as an account id.
+        Assert.All(lines.Skip(1), line => Assert.Equal(columns, Split(line).Length));
+    }
+
+    private static string[] Split(string line)
+    {
+        var cells = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var quoted = false;
+        foreach (var ch in line)
+        {
+            if (ch == '"')
+            {
+                quoted = !quoted;
+                continue;
+            }
+
+            if (ch == ',' && !quoted)
+            {
+                cells.Add(current.ToString());
+                current.Clear();
+                continue;
+            }
+
+            current.Append(ch);
+        }
+
+        cells.Add(current.ToString());
+        return [.. cells];
+    }
+
+    [Fact]
     public void ExportedTransactionsCanBeImportedBack()
     {
         using var store = PortfolioStore.UnderStateRoot(_root);

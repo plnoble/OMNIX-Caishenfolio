@@ -354,7 +354,8 @@ public sealed record TransactionRow(
         new(
             txn.Id,
             txn.TradeDate.ToString("yyyy-MM-dd"),
-            accountNames.TryGetValue(txn.AccountId, out var name) ? name : txn.AccountId,
+            // A move involves two accounts: showing only the source hides where the money went.
+            CounterLabel(txn, accountNames),
             KindLabel(txn.Kind),
             txn.Symbol,
             txn.Quantity == 0m ? "" : PortfolioViewModel.Format(txn.Quantity),
@@ -366,6 +367,21 @@ public sealed record TransactionRow(
             txn.IsReversal,
             reversedIds.Contains(txn.Id),
             !txn.IsReversal && !reversedIds.Contains(txn.Id));
+
+    private static string CounterLabel(
+        LedgerTransaction txn, IReadOnlyDictionary<string, string> accountNames)
+    {
+        var own = accountNames.TryGetValue(txn.AccountId, out var name) ? name : txn.AccountId;
+        if (string.IsNullOrEmpty(txn.CounterAccountId))
+        {
+            return own;
+        }
+
+        var other = accountNames.TryGetValue(txn.CounterAccountId, out var counter)
+            ? counter
+            : txn.CounterAccountId;
+        return $"{own} → {other}";
+    }
 
     /// <summary>An exchange shows both receipt amounts — either side alone is half the fact.</summary>
     private static string AmountLabel(LedgerTransaction txn) => txn.Kind == TransactionKind.FxExchange

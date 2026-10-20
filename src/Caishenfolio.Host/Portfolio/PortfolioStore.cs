@@ -58,6 +58,9 @@ public sealed class PortfolioStore : IDisposable
         {
             using var connection = Open();
             using var command = connection.CreateCommand();
+            // `mode` is written when the account is created and never overwritten afterwards. A rename or
+            // note edit that rebuilds the object with default values would otherwise silently turn a
+            // balance-mode account into a detail-mode one, changing what its value even means.
             command.CommandText = """
                 INSERT INTO accounts (id, name, kind, main_currency, mode, broker, note, archived, created_at)
                 VALUES ($id, $name, $kind, $currency, $mode, $broker, $note, $archived, $created)
@@ -65,7 +68,7 @@ public sealed class PortfolioStore : IDisposable
                     name = excluded.name,
                     kind = excluded.kind,
                     main_currency = excluded.main_currency,
-                    mode = excluded.mode,
+                    mode = accounts.mode,
                     broker = excluded.broker,
                     note = excluded.note,
                     archived = excluded.archived;
@@ -127,6 +130,26 @@ public sealed class PortfolioStore : IDisposable
         lock (_gate)
         {
             using var connection = Open();
+
+            // Deleting only this account's own rows would leave the other leg of a transfer behind,
+            // pointing at an account that no longer exists: the cash would stay in the portfolio
+            // total with no account to explain it. Refuse instead of half-deleting.
+            using (var check = connection.CreateCommand())
+            {
+                check.CommandText = """
+                    SELECT COUNT(*) FROM transactions
+                    WHERE counter_account_id = $id AND counter_account_id <> '';
+                    """;
+                check.Parameters.AddWithValue("$id", accountId);
+                var linked = Convert.ToInt64(check.ExecuteScalar() ?? 0L);
+                if (linked > 0)
+                {
+                    throw new LedgerException(
+                        $"账户 {accountId} 是 {linked} 笔账户间转移的对方账户，先冲正这些转移再删除，" +
+                        "否则转移的另一半会指向一个不存在的账户。");
+                }
+            }
+
             using var tx = connection.BeginTransaction();
             using var command = connection.CreateCommand();
             command.Transaction = tx;

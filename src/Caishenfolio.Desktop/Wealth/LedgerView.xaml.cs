@@ -340,7 +340,12 @@ public partial class LedgerView : UserControl
             TransactionKind.Withdraw =>
                 LedgerTransaction.Withdraw(accountId, date, amount, currency, note),
             TransactionKind.FxExchange => BuildFxExchange(accountId, date, amount, currency, fee, note),
-            _ => LedgerTransaction.OpeningCash(accountId, date, amount, currency, note),
+            TransactionKind.OpeningCash =>
+                LedgerTransaction.OpeningCash(accountId, date, amount, currency, note),
+            // No silent fallback: a kind this form does not offer must say so instead of being
+            // recorded as something else (the same rule the export and the row labels follow).
+            _ => throw new LedgerException(
+                $"这个表单不支持「{kind}」类型的记录，请用「新增记录」对话框或 CSV 导入。"),
         };
     }
 
