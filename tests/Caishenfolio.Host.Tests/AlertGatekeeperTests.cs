@@ -252,7 +252,7 @@ public class HeadlessNotifierLayerTests : IDisposable
             store,
             settings,
             Today,
-            extendedCheck: _ => Task.FromResult<IReadOnlyList<PortfolioAlert>>(extendedAlerts));
+            extendedCheck: _ => Task.FromResult(new BackgroundCheckResult { Alerts = extendedAlerts }));
 
         Assert.Equal(2, result.Alerts.Count);
         Assert.Contains("价格与集中度", result.CheckedScope, StringComparison.Ordinal);
@@ -273,7 +273,7 @@ public class HeadlessNotifierLayerTests : IDisposable
             extendedCheck: _ =>
             {
                 attempted = true;
-                return Task.FromResult<IReadOnlyList<PortfolioAlert>>([]);
+                return Task.FromResult(new BackgroundCheckResult { Alerts = [] });
             });
 
         Assert.False(attempted);

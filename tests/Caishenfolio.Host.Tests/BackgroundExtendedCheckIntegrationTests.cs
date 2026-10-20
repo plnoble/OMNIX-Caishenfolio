@@ -52,7 +52,7 @@ public class BackgroundExtendedCheckIntegrationTests : IDisposable
         var store = PortfolioStore.UnderStateRoot(_root);
         store.SaveAccount(Account.Create("测试账户", AccountKind.Securities, "CNY"));
 
-        var alerts = await BackgroundExtendedCheck.RunAsync(
+        var check = await BackgroundExtendedCheck.RunAsync(
             store,
             repoRoot,
             RealStateRoot(),
@@ -60,7 +60,7 @@ public class BackgroundExtendedCheckIntegrationTests : IDisposable
 
         // An empty ledger has nothing to alert about — what this proves is that the whole
         // chain (runtime → core → health → valuation → teardown) completed without throwing.
-        Assert.NotNull(alerts);
+        Assert.NotNull(check.Alerts);
     }
 
     /// <summary>
@@ -106,7 +106,7 @@ public class BackgroundExtendedCheckIntegrationTests : IDisposable
             },
         };
 
-        var alerts = await BackgroundExtendedCheck.RunAsync(
+        var check = await BackgroundExtendedCheck.RunAsync(
             store,
             repoRoot,
             RealStateRoot(),
@@ -115,10 +115,10 @@ public class BackgroundExtendedCheckIntegrationTests : IDisposable
 
         // The net-arrival rule must have fired through its OWN cost model, not inherited
         // the first rule's cost-less facts (which would leave NetArrival null forever).
-        Assert.Contains(alerts, a => a.Kind == AlertKind.FxNetArrival);
+        Assert.Contains(check.Alerts, a => a.Kind == AlertKind.FxNetArrival);
 
         // And a threshold just out of reach stays silent on the same machinery.
-        var quiet = await BackgroundExtendedCheck.RunAsync(
+        var quietCheck = await BackgroundExtendedCheck.RunAsync(
             store,
             repoRoot,
             RealStateRoot(),
@@ -135,7 +135,7 @@ public class BackgroundExtendedCheckIntegrationTests : IDisposable
                 },
             ]);
 
-        Assert.DoesNotContain(quiet, a => a.Kind == AlertKind.FxNetArrival);
+        Assert.DoesNotContain(quietCheck.Alerts, a => a.Kind == AlertKind.FxNetArrival);
     }
 
     public void Dispose()

@@ -18,12 +18,35 @@ namespace Caishenfolio.Host.Notifications;
 /// Any failure propagates to the caller, which reports it as a limitation — never as a
 /// reason to skip the deadline layer.
 /// </summary>
+/// <summary>
+/// What layer 2 found: the alerts, plus the reasons some things could not be judged. The
+/// reasons used to be dropped here, which is how an unreachable quote became indistinguishable
+/// from "the condition is false" (WP-02 R6/A10).
+/// </summary>
+public sealed record BackgroundCheckResult
+{
+    public required IReadOnlyList<PortfolioAlert> Alerts { get; init; }
+
+    /// <summary>Human-readable notes for whatever could not be evaluated.</summary>
+    public IReadOnlyList<string> Notes { get; init; } = [];
+
+    /// <summary>One outcome per enabled FX rule: met, not met, or unknown.</summary>
+    public IReadOnlyList<FxRuleOutcome> FxOutcomes { get; init; } = [];
+
+    /// <summary>Alert keys whose FX condition could not be judged this run.</summary>
+    public IReadOnlySet<string> UnknownAlertKeys =>
+        FxOutcomes
+            .Where(outcome => outcome.State == FxRuleState.Unknown)
+            .Select(outcome => outcome.AlertKey)
+            .ToHashSet(StringComparer.Ordinal);
+}
+
 public static class BackgroundExtendedCheck
 {
     /// <summary>How long to wait for a freshly started core to answer health.</summary>
     private static readonly TimeSpan CoreStartupTimeout = TimeSpan.FromSeconds(60);
 
-    public static async Task<IReadOnlyList<PortfolioAlert>> RunAsync(
+    public static async Task<BackgroundCheckResult> RunAsync(
         PortfolioStore store,
         string? coreRoot,
         string stateRoot,
@@ -68,6 +91,8 @@ public static class BackgroundExtendedCheck
                 .ConfigureAwait(false);
 
             var alerts = snapshot.Alerts.ToList();
+            var notes = new List<string>();
+            IReadOnlyList<FxRuleOutcome> outcomes = [];
 
             // N2.4 FX watch rules: evaluated on the same core, appended to the same list.
             // Their failures are notes, not exceptions — one unreachable pair must not cost
@@ -78,9 +103,16 @@ public static class BackgroundExtendedCheck
                 var fx = await EvaluateFxRulesAsync(store, client, activeRules, cancellationToken)
                     .ConfigureAwait(false);
                 alerts.AddRange(fx.Alerts);
+                notes.AddRange(fx.Notes);
+                outcomes = fx.Outcomes;
             }
 
-            return alerts;
+            return new BackgroundCheckResult
+            {
+                Alerts = alerts,
+                Notes = notes,
+                FxOutcomes = outcomes,
+            };
         }
         finally
         {

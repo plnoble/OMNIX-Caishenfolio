@@ -45,7 +45,7 @@ public partial class App : Application
 
             // Layer 2 runs only when the user switched it on. Its failures are reported as
             // limitations inside the result, never as an exception past the deadline layer.
-            Func<System.Threading.CancellationToken, Task<IReadOnlyList<PortfolioAlert>>>? extended = null;
+            Func<System.Threading.CancellationToken, Task<BackgroundCheckResult>>? extended = null;
             if (settings.BackgroundExtendedChecks)
             {
                 extended = ct => BackgroundExtendedCheck.RunAsync(

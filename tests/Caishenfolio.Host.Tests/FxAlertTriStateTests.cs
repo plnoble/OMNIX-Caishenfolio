@@ -1,4 +1,6 @@
 using Caishenfolio.Host.Notifications;
+using Caishenfolio.Host.Portfolio;
+using Microsoft.Data.Sqlite;
 
 namespace Caishenfolio.Host.Tests;
 
@@ -7,10 +9,14 @@ namespace Caishenfolio.Host.Tests;
 /// "the condition became false" — the difference decides whether a recovered quote fabricates a
 /// brand-new "it came back" notification.
 /// </summary>
-public class FxAlertTriStateTests
+public class FxAlertTriStateTests : IDisposable
 {
     private static readonly DateTimeOffset Monday = new(2026, 8, 3, 9, 0, 0, TimeSpan.Zero);
     private static readonly TimeSpan Cooldown = TimeSpan.FromHours(12);
+    private static readonly DateOnly Today = new(2026, 8, 3);
+
+    private readonly string _root = Path.Combine(
+        Path.GetTempPath(), "caishenfolio_fx_tristate", Guid.NewGuid().ToString("N"));
 
     private static FxAlertRule Band() => new()
     {
@@ -115,6 +121,91 @@ public class FxAlertTriStateTests
         var decision = AlertGatekeeper.Filter(back.Alerts, gone.NextState, Monday.AddMinutes(10), Cooldown, null);
 
         Assert.Single(decision.ToSend);
+    }
+
+    [Fact]
+    public async Task A10_TheNotifierReportsTheReasonAndKeepsItsCooldownWhileTheQuoteIsMissing()
+    {
+        // The whole chain, not just the two pure pieces: evaluator → notifier → gatekeeper.
+        var rule = Band();
+        var key = KeyOf(rule);
+        Directory.CreateDirectory(_root);
+        using var store = PortfolioStore.UnderStateRoot(_root);
+        var stateStore = new AlertNotificationStateStore(Path.Combine(_root, "alert-state.json"));
+        stateStore.Save(DeliveredOnMonday(key));
+        var settings = NotificationSettings.Default with { BackgroundExtendedChecks = true };
+
+        var unknown = await HeadlessNotifier.RunAsync(
+            store,
+            settings,
+            Today,
+            extendedCheck: _ => Task.FromResult(new BackgroundCheckResult
+            {
+                Alerts = [],
+                Notes = ["规则 USD/CNY：本次未取到该货币对的报价，未评估。"],
+                FxOutcomes =
+                [
+                    new FxRuleOutcome
+                    {
+                        AlertKey = key,
+                        State = FxRuleState.Unknown,
+                        Reason = "本次未取到 USD/CNY 的报价：条件是否成立未知，不是条件不成立。",
+                    },
+                ],
+            }),
+            stateStore: stateStore,
+            now: Monday.AddMinutes(10));
+
+        // The reason is in the report the user actually receives.
+        Assert.Contains(unknown.Limitations, note => note.Contains("报价", StringComparison.Ordinal));
+        Assert.Contains("报价", unknown.Summarize(), StringComparison.Ordinal);
+
+        // And the outage left the remembered verdict alone: still in range, cooldown untouched.
+        var afterOutage = stateStore.Load();
+        Assert.True(afterOutage.Records[key].WasInRange);
+        Assert.Equal(Monday, afterOutage.Records[key].LastNotifiedAt);
+
+        // The quote comes back, still inside the band: suppressed, not re-announced.
+        var recovered = await HeadlessNotifier.RunAsync(
+            store,
+            settings,
+            Today,
+            extendedCheck: _ => Task.FromResult(new BackgroundCheckResult
+            {
+                Alerts =
+                [
+                    new PortfolioAlert
+                    {
+                        Kind = AlertKind.FxBand,
+                        Severity = AlertSeverity.Info,
+                        Symbol = "USD/CNY",
+                        Title = "汇率进入你设定的区间",
+                        Message = "USD/CNY 当前 7.1，在你设定的区间内。",
+                    },
+                ],
+                FxOutcomes = [new FxRuleOutcome { AlertKey = key, State = FxRuleState.Met }],
+            }),
+            stateStore: stateStore,
+            now: Monday.AddMinutes(20));
+
+        Assert.Equal(0, recovered.Dispatch.AlertCount);
+        Assert.Equal(1, recovered.SuppressedByCooldown);
+    }
+
+    public void Dispose()
+    {
+        SqliteConnection.ClearAllPools();
+        try
+        {
+            if (Directory.Exists(_root))
+            {
+                Directory.Delete(_root, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+            // Best-effort cleanup.
+        }
     }
 
     [Fact]
