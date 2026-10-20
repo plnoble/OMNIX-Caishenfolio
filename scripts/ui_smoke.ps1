@@ -800,6 +800,21 @@ function Invoke-FxLotsAndCriticalCheck {
     }
     if ($critical -notmatch "还需") { throw "批次与临界：临界汇率没给「还需变动多少」（$critical）。" }
 
+    # The batch block lives in a collapsed Expander: its content is not in the UIA tree until it
+    # is expanded, so expand it first (that is also the user's real path to the list).
+    $expander = @($main.FindAll(
+        [System.Windows.Automation.TreeScope]::Descendants,
+        (New-Object System.Windows.Automation.PropertyCondition(
+            $automation::AutomationIdProperty, "FxLotsExpander")))) | Select-Object -First 1
+    if (-not $expander) { throw "批次与临界：找不到批次折叠区。" }
+    $expander.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    Start-Sleep -Milliseconds 600
+    $expanderState = $expander.GetCurrentPattern(
+        [System.Windows.Automation.ExpandCollapsePattern]::Pattern).Current.ExpandCollapseState
+    if ($expanderState -ne [System.Windows.Automation.ExpandCollapseState]::Expanded) {
+        throw "批次与临界：批次折叠区展开后状态仍是 $expanderState。"
+    }
+
     $hint = Get-Text "FxLotsHint"
     if ($hint -notmatch "批") { throw "批次与临界：批次说明没有出现（$hint）。" }
     if ($hint -notmatch "先进先出") { throw "批次与临界：批次说明没有写清 FIFO（$hint）。" }
