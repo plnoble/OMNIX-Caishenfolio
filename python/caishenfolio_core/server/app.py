@@ -422,7 +422,6 @@ class AnalyticsApp:
                     amount=str(amount_raw),
                     cost_in_base=None if cost_raw is None else str(cost_raw),
                 )
-
             costs_raw = request.get("costs")
             costs: dict[str, PathCost] = {}
             if isinstance(costs_raw, dict):
@@ -438,7 +437,9 @@ class AnalyticsApp:
 
             split_raw = request.get("split_fraction")
             split_fraction = str(split_raw) if split_raw is not None else None
-        except (ValueError, KeyError) as exc:
+        except (ValueError, KeyError, ArithmeticError) as exc:
+            # ArithmeticError covers decimal.InvalidOperation: a non-numeric amount is a bad
+            # request, not a server crash.
             return {"ok": False, "error": f"输入无法解析：{exc}"}
 
         # Fetch the required quotes: TARGET/BASE, and TARGET/HELD when a held position is

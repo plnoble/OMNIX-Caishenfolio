@@ -147,6 +147,30 @@ public class FxLotProjectionTests : IDisposable
     }
 
     [Fact]
+    public void AnExhaustedBatchNeverAppearsInALaterSpend()
+    {
+        // Spend the whole first batch, then spend again: the second trail must name only what it
+        // actually took, not the empty batch with an amount of 0.
+        var transactions = new[]
+        {
+            TwoPurchases()[0],                                                  // 600,000 JPY
+            TwoPurchases()[1],                                                  // 430,000 JPY
+            LedgerTransaction.FxExchange(Account, Day3, 600_000m, "JPY", 4_000m, "USD", 0m, ""),
+            LedgerTransaction.FxExchange(Account, Day4, 100_000m, "JPY", 660m, "USD", 0m, ""),
+        };
+
+        var ledger = FxLotLedger.FromTransactions(transactions);
+
+        var second = ledger.Spends.Single(spend => spend.Date == Day4);
+        var consumed = Assert.Single(second.Lots);
+        Assert.Equal(100_000m, consumed.Amount);
+        Assert.Equal(Day2, ledger.Lots.Single(l => l.Id == consumed.LotId).AcquiredOn);
+        // No zero-amount ghosts, and nothing left unexplained.
+        Assert.DoesNotContain(second.Lots, lot => lot.Amount <= 0m);
+        Assert.Equal(0m, second.UncoveredAmount);
+    }
+
+    [Fact]
     public void SpendingMoreThanTheBatchesCanExplainIsReportedNotAssigned()
     {
         // An external deposit of JPY has no batch; spending it must not be pinned on a batch.

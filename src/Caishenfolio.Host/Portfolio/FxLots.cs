@@ -214,7 +214,10 @@ public sealed record FxLotLedger
 
         var need = amount;
         foreach (var state in tracked
-                     .Where(s => s.Lot.IsOpen)
+                     // `Lot.IsOpen` is the record's original amount; what matters here is what is
+                     // left NOW, or an exhausted batch would add a zero-amount row to every later
+                     // spend's trail.
+                     .Where(s => s.Remaining > 0m)
                      .OrderBy(s => s.Lot.AcquiredOn)
                      .ThenBy(s => s.Lot.Id, StringComparer.Ordinal)
                      .ToArray())
