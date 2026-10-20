@@ -415,6 +415,8 @@ public class CashflowLedgerAcceptanceTests : IDisposable
             LedgerTransaction.Deposit(yen.Id, new DateOnly(2023, 4, 17), 1_050_000m, "JPY"));
         var noNote = workspace.Record(
             LedgerTransaction.BalanceAssertion(cny.Id, new DateOnly(2025, 6, 30), 195_000.00m, "CNY"));
+        // WP-03 R1: the plain account is funded before it converts anything.
+        workspace.Record(LedgerTransaction.OpeningCash(plain.Id, new DateOnly(2024, 12, 31), 60_000m, "CNY"));
         var noCounterAccount = workspace.Record(
             LedgerTransaction.FxExchange(plain.Id, new DateOnly(2025, 1, 6), 50_000m, "CNY", 1_050_000m, "JPY"));
 

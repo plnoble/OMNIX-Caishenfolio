@@ -229,6 +229,8 @@ public class FxLotProjectionTests : IDisposable
         Directory.CreateDirectory(_root);
         using var store = PortfolioStore.UnderStateRoot(_root);
         store.SaveAccount(Portfolio.Account.Create("换汇账户", AccountKind.Bank, "CNY"));
+        // WP-03 R1: the account is funded first; the cost figures this test pins are unchanged.
+        store.AddTransaction(LedgerTransaction.OpeningCash("acct", Day1, 1_000m, "CNY", "建账余额"));
         store.AddTransaction(LedgerTransaction.FxExchange("acct", Day1, 100m, "CNY", 2_000m, "JPY"));
         store.AddTransaction(LedgerTransaction.FxExchange("acct", Day2, 200m, "CNY", 2_000m, "JPY"));
         store.AddTransaction(LedgerTransaction.FxExchange("acct", Day3, 2_000m, "JPY", 13.33m, "USD"));
@@ -409,6 +411,8 @@ public class FxLotProjectionTests : IDisposable
         using var store = PortfolioStore.UnderStateRoot(_root);
         // Spelled out because this class has a member called Account (the account id).
         store.SaveAccount(Portfolio.Account.Create("换汇账户", AccountKind.Bank, "CNY", id: Account));
+        // WP-03 R1: the two purchases need 50,000 CNY of real money behind them.
+        store.AddTransaction(LedgerTransaction.OpeningCash(Account, Day1, 50_000m, "CNY", "建账余额"));
         foreach (var transaction in TwoPurchases())
         {
             store.AddTransaction(transaction);

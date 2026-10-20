@@ -125,6 +125,8 @@ public class FxCarryPageBatchTests : IDisposable
             var day1 = new DateOnly(2025, 1, 10);
             var day2 = new DateOnly(2025, 3, 15);
             var day3 = new DateOnly(2025, 4, 1);
+            // WP-03 R1: the account holds the money before it converts it.
+            workspace.Record(LedgerTransaction.OpeningCash(account.Id, day1.AddDays(-1), 40_000m, "CNY", "建账余额"));
             workspace.Record(LedgerTransaction.FxExchange(account.Id, day1, 30_000m, "CNY", 600_000m, "JPY"));
             workspace.Record(LedgerTransaction.FxExchange(account.Id, day3, 300_000m, "JPY", 2_000m, "USD"));
             var snapshot = await workspace.RefreshAsync(new DateOnly(2026, 1, 2));
@@ -164,6 +166,7 @@ public class FxCarryPageBatchTests : IDisposable
             var account = workspace.AddAccount("换汇账户", AccountKind.Bank, "CNY");
             // 500,000 JPY bought (with a receipt) on top of 200,000 JPY that just arrived:
             // the batch explains the first, the extra has no purchase cost (WP-02 R5).
+            workspace.Record(LedgerTransaction.OpeningCash(account.Id, new DateOnly(2025, 1, 9), 30_000m, "CNY", "建账余额"));
             workspace.Record(LedgerTransaction.FxExchange(
                 account.Id, new DateOnly(2025, 1, 10), 25_000m, "CNY", 500_000m, "JPY"));
             workspace.Record(LedgerTransaction.Deposit(account.Id, new DateOnly(2025, 2, 1), 200_000m, "JPY"));
@@ -251,6 +254,7 @@ public class FxCarryPageBatchTests : IDisposable
             var workspace = new PortfolioWorkspace(store);
             var account = workspace.AddAccount("换汇账户", AccountKind.Bank, "CNY");
             // Two batches; the second spend crosses both, so the trail must name both.
+            workspace.Record(LedgerTransaction.OpeningCash(account.Id, new DateOnly(2025, 1, 9), 500m, "CNY", "建账余额"));
             workspace.Record(LedgerTransaction.FxExchange(
                 account.Id, new DateOnly(2025, 1, 10), 100m, "CNY", 2_000m, "JPY"));
             workspace.Record(LedgerTransaction.FxExchange(

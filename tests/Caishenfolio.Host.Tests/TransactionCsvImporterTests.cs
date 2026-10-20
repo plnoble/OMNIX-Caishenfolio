@@ -201,10 +201,15 @@ public class TransactionCsvImporterTests : IDisposable
     public void TheShippedTemplateImportsCleanly()
     {
         var preview = TransactionCsvImporter.Preview(TransactionCsvImporter.BuildTemplate(), Account);
+        foreach (var row in preview.Rows)
+        {
+            Console.WriteLine($"ROW {row.LineNumber}: err=[{row.Error}] dup={row.Duplicate} kind={row.Transaction?.Kind}");
+        }
 
         Assert.Equal(0, preview.Invalid);
-        // One example row per common kind, including an exchange with its counter leg.
-        Assert.Equal(7, preview.Importable);
+        // One example row per common kind, including an exchange with its counter leg and the
+        // funding row that has to come before it (WP-03 R1).
+        Assert.Equal(8, preview.Importable);
     }
 
     [Fact]
@@ -272,14 +277,17 @@ public class TransactionCsvImporterTests : IDisposable
     public void ExportedExchangeRowsRoundTripWithTheirCounterLeg()
     {
         using var store = PortfolioStore.UnderStateRoot(_root);
-        var exchange = LedgerTransaction.FxExchange(
+        // WP-03 R1: fund the account before it converts anything.
+        store.AddTransaction(LedgerTransaction.OpeningCash(Account, new DateOnly(2026, 1, 19), 5_000m, "CNY", "建账余额"));
+        var exportExchange = LedgerTransaction.FxExchange(
             Account, new DateOnly(2026, 1, 20), 1000m, "CNY", 155_000m, "JPY", fee: 2m, note: "按回单");
-        store.AddTransaction(exchange);
+        store.AddTransaction(exportExchange);
 
         var csv = PortfolioReportExporter.TransactionsCsv(store.ListTransactions());
         var preview = TransactionCsvImporter.Preview(csv, Account);
 
-        var row = Assert.Single(preview.Rows);
+        // The export now carries the funding row too; pick the exchange row explicitly (WP-03 R1).
+        var row = preview.Rows.Single(r => r.Transaction?.Kind == TransactionKind.FxExchange);
         var rebuilt = row.Transaction;
         Assert.NotNull(rebuilt);
         Assert.Equal(TransactionKind.FxExchange, rebuilt!.Kind);
@@ -336,7 +344,8 @@ public class TransactionCsvImporterTests : IDisposable
         var bank = store.SaveAccount(Host.Portfolio.Account.Create("银行", AccountKind.Bank, "CNY"));
         var broker = store.SaveAccount(Host.Portfolio.Account.Create("券商", AccountKind.Securities, "USD"));
 
-        // Bank sells 7 000 CNY; the USD lands in the broker account.
+        // WP-03 R1: fund the bank account, then let it sell 7 000 CNY to the broker.
+        store.AddTransaction(LedgerTransaction.OpeningCash(bank.Id, new DateOnly(2026, 1, 4), 10_000m, "CNY", "建账余额"));
         store.AddTransaction(LedgerTransaction.FxExchange(
             bank.Id, new DateOnly(2026, 1, 5), 7_000m, "CNY", 1_000m, "USD",
             counterAccountId: broker.Id));
@@ -350,7 +359,8 @@ public class TransactionCsvImporterTests : IDisposable
 
         // The exported row must not import as a duplicate of itself (same economic content).
         Assert.Equal(0, preview.Invalid);
-        var row = Assert.Single(preview.Rows);
+        // The export now carries the funding row too; pick the exchange row explicitly (WP-03 R1).
+        var row = preview.Rows.Single(r => r.Transaction?.Kind == TransactionKind.FxExchange);
         Assert.True(row.Duplicate);
 
         // And a FRESH store importing the same file must land both legs in the right accounts.
@@ -365,8 +375,10 @@ public class TransactionCsvImporterTests : IDisposable
 
         var state = freshRoot.LoadState();
         // Both legs land in the right accounts — the counter account survived the round trip.
+        // The file also carries the 10,000 CNY funding row, so the bank keeps 3,000 after
+        // selling 7,000 (WP-03 R1: an export can no longer imply a negative balance).
         var bankCash = state.CashBalances.Single(b => b.AccountId == freshBank.Id);
-        Assert.Equal(-7_000m, bankCash.Amount);
+        Assert.Equal(3_000m, bankCash.Amount);
         Assert.Equal("CNY", bankCash.Currency);
         var brokerCash = state.CashBalances.Single(b => b.AccountId == freshBroker.Id);
         Assert.Equal(1_000m, brokerCash.Amount);
