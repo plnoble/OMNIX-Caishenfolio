@@ -380,7 +380,12 @@ public partial class PortfolioSettingsWindow : Window
         }
     }
 
-    private FxAlertRule BuildFxRule()
+    /// <summary>
+    /// Builds the rule the form currently describes. Internal so the tests drive the REAL
+    /// construction path (the audit's point: identity must be assigned here, not derived later) —
+    /// the window is never shown and never bound to a real ledger in those tests.
+    /// </summary>
+    internal FxAlertRule BuildFxRule()
     {
         var kind = SelectedFxRuleKind();
         if (kind == FxAlertRuleKind.RateBand)

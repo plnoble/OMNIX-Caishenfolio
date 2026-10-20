@@ -190,6 +190,57 @@ public class AlertIdentityTests
     }
 
     [Fact]
+    public void A7_ALevelKeepsTheFullPrecisionItsThresholdWasParsedWith()
+    {
+        // The audit's follow-up: Level rounded to six decimals while the threshold was parsed with
+        // no such limit, so 7.1000001 and 7.1000002 collapsed into one "band:7.1~…" key — two
+        // watches the user created separately would have shared one cooldown.
+        var fine = new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = 7.1000001m };
+        var finer = new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = 7.1000002m };
+
+        Assert.NotEqual(fine.Level, finer.Level);
+        Assert.Contains("7.1000001", fine.Level, StringComparison.Ordinal);
+        Assert.Contains("7.1000002", finer.Level, StringComparison.Ordinal);
+        Assert.NotEqual(AlertGatekeeper.KeyOf(Probe(fine)), AlertGatekeeper.KeyOf(Probe(finer)));
+
+        // A key is not a display string: never scientific notation, whatever the magnitude.
+        var huge = new FxAlertRule
+        {
+            Kind = FxAlertRuleKind.NetArrivalAbove,
+            ThresholdAmount = 100_000_000_000_000_000_000_000_000m,
+        };
+        Assert.DoesNotContain("E", huge.Level, StringComparison.OrdinalIgnoreCase);
+
+        // And no key churn for the values users already have: trailing zeros stay trimmed, so an
+        // existing record keeps matching its rule after this change.
+        Assert.Equal(
+            "amt:1000",
+            new FxAlertRule { Kind = FxAlertRuleKind.NetArrivalAbove, ThresholdAmount = 1_000m }.Level);
+        Assert.Equal(
+            "amt:0",
+            new FxAlertRule { Kind = FxAlertRuleKind.NetArrivalAbove, ThresholdAmount = 0.00m }.Level);
+        Assert.Equal(
+            "pct:3",
+            new FxAlertRule { Kind = FxAlertRuleKind.HeldAdvantageAbove, ThresholdPct = 3.0m }.Level);
+        Assert.Equal(
+            "band:7.1~8",
+            new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = 7.10m, Upper = 8m }.Level);
+    }
+
+    /// <summary>The alert a rule would produce when it fires — identity only.</summary>
+    private static PortfolioAlert Probe(FxAlertRule rule) => new()
+    {
+        Kind = AlertKind.FxBand,
+        Severity = AlertSeverity.Info,
+        Symbol = "USD/CNY",
+        Title = "汇率进入你设定的区间",
+        Message = "（身份探针，不发送）",
+        RuleId = rule.StableId,
+        RuleRevision = rule.Revision,
+        RuleLevel = rule.Level,
+    };
+
+    [Fact]
     public void A9_AnOldStateFileWithoutThatAlertStillSpeaks()
     {
         // Conservative must not become "never speaks again": a key the old file never saw is new.
