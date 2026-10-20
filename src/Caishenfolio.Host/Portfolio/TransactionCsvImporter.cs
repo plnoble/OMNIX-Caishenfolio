@@ -123,6 +123,9 @@ public static class TransactionCsvImporter
         ["2026-01-02", "华泰证券", "入金", "", "", "", "", "CNY", "", "", "50000", "", "", "", "银证转入"],
         ["2026-01-05", "天天基金", "买入", "FUND:110022", "易方达消费行业", "1000.25", "3.5012", "CNY", "1.5", "", "", "", "", "", "定投"],
         ["2026-01-06", "盈透证券", "期初持仓", "NASDAQ:AAPL", "Apple", "10", "180", "USD", "", "", "", "", "", "", "建账前持有"],
+        // WP-03 R1: the exchange row below spends CNY, so the account must be funded first —
+        // the template teaches the order instead of shipping a row that cannot be imported.
+        ["2026-01-15", "盈透证券", "入金", "", "", "", "", "CNY", "", "", "20000", "", "", "", "换汇前先有余额"],
         ["2026-01-20", "盈透证券", "换汇", "", "", "", "", "CNY", "2", "", "1000", "JPY", "155000", "", "按回单两边金额填写"],
     ]);
 
@@ -214,7 +217,91 @@ public static class TransactionCsvImporter
             }
         }
 
-        return new CsvImportPreview { BatchId = batchId, Rows = parsed, Warnings = warnings };
+        return new CsvImportPreview
+        {
+            BatchId = batchId,
+            Rows = MarkUnaffordable(stored, parsed),
+            Warnings = warnings,
+        };
+    }
+
+    private sealed record BlockedRow(string TransactionId, string Message);
+
+    /// <summary>
+    /// WP-03 A6/R1: an import row that spends money the account will not have is marked with the
+    /// same "有多少/要多少/差多少" the form would show, so the preview is where the user sees it —
+    /// instead of the whole batch failing at commit time. Rows are judged in replay order and a
+    /// rejected row does not fund the next one.
+    /// </summary>
+    private static IReadOnlyList<CsvImportRow> MarkUnaffordable(
+        IReadOnlyList<LedgerTransaction> existing, List<CsvImportRow> rows)
+    {
+        // Every usable row takes part in the replay — a deposit in the same file is exactly what
+        // makes the exchange after it affordable. Only the exchanges are judged.
+        var replay = rows.Where(row => row.Usable).Select(row => row.Transaction!).ToList();
+        var judged = replay
+            .Where(txn => txn.Kind == TransactionKind.FxExchange)
+            .Select(txn => txn.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        if (judged.Count == 0)
+        {
+            return rows;
+        }
+
+        var rejected = new Dictionary<string, string>(StringComparer.Ordinal);
+        while (judged.Count > 0)
+        {
+            var blocked = FindUnaffordable(existing, replay, judged);
+            if (blocked is null)
+            {
+                break;
+            }
+
+            rejected[blocked.TransactionId] = blocked.Message;
+            judged.Remove(blocked.TransactionId);
+            replay.RemoveAll(txn => string.Equals(txn.Id, blocked.TransactionId, StringComparison.Ordinal));
+        }
+
+        if (rejected.Count == 0)
+        {
+            return rows;
+        }
+
+        return rows
+            .Select(row => row.Transaction is { } txn && rejected.TryGetValue(txn.Id, out var message)
+                ? new CsvImportRow { LineNumber = row.LineNumber, Error = message }
+                : row)
+            .ToArray();
+    }
+
+    private static BlockedRow? FindUnaffordable(
+        IReadOnlyList<LedgerTransaction> existing,
+        IReadOnlyList<LedgerTransaction> replay,
+        IReadOnlySet<string> judged)
+    {
+        BlockedRow? found = null;
+        PositionCalculator.Replay(existing.Concat(replay).ToArray(), (txn, available) =>
+        {
+            if (found is not null || !judged.Contains(txn.Id) || txn.Kind != TransactionKind.FxExchange)
+            {
+                return;
+            }
+
+            var need = txn.CashAmount + txn.Fee;
+            var have = available((txn.AccountId, txn.Currency));
+            if (need <= have)
+            {
+                return;
+            }
+
+            var currency = Data.Currencies.Normalize(txn.Currency);
+            found = new BlockedRow(
+                txn.Id,
+                $"这一行换汇花超了：账户 {txn.AccountId} 的 {currency} 那时只有 {have:#,0.##}，" +
+                $"这笔要 {need:#,0.##}，差 {(need - have):#,0.##}。补上来源（入金或期初余额）再导入。");
+        });
+
+        return found;
     }
 
     /// <summary>

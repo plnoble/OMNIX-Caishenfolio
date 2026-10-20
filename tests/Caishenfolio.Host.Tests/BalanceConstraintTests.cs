@@ -97,13 +97,12 @@ public class BalanceConstraintTests : IDisposable
         var workspace = new PortfolioWorkspace(store);
         var account = workspace.AddAccount("换汇账户", AccountKind.Bank, "CNY");
 
-        // The real template header (15 columns): one good deposit and one exchange that spends
-        // 900,000 JPY the ledger does not have.
-        const string csv = """
-            日期,账户,类型,标的,名称,数量,价格,货币,手续费,税费,金额,对方货币,对方金额,对方账户,备注
-            2026-01-05,换汇账户,入金,,,,,,,50000,,,,
-            2026-01-06,换汇账户,换汇,,,,,,,900000,JPY,1000000,,
-            """;
+        // Built from the importer's own template header, so the column positions cannot drift:
+        // a 50,000 CNY deposit, then an exchange that tries to spend 90,000 CNY.
+        var header = string.Join(",", TransactionCsvImporter.TemplateHeader);
+        var deposit = string.Join(",", "2026-01-05", "换汇账户", "入金", "", "", "", "", "CNY", "", "", "50000", "", "", "", "");
+        var overspend = string.Join(",", "2026-01-06", "换汇账户", "换汇", "", "", "", "", "CNY", "", "", "90000", "USD", "12500", "", "花超的一行");
+        var csv = header + Environment.NewLine + deposit + Environment.NewLine + overspend;
 
         var preview = workspace.PreviewImport(csv, account.Id);
         // A6: the bad row is rejected with a visible reason, the good row lands.
@@ -111,7 +110,7 @@ public class BalanceConstraintTests : IDisposable
 
         Assert.Equal(1, written);
         Assert.Single(store.ListTransactions());
-        Assert.Contains(preview.Rows, row => row.Error is not null);
+        Assert.Contains(preview.Rows, row => row.Error is not null && row.Error.Contains("差", StringComparison.Ordinal));
     }
 
     public void Dispose()

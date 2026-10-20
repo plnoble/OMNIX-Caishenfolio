@@ -257,6 +257,7 @@ public sealed class PortfolioStore : IDisposable
             using var tx = connection.BeginTransaction();
             ValidateReversals(connection, tx, transactions);
             ValidateValuationModes(connection, tx, transactions);
+            ValidateBalances(connection, tx, transactions);
             var inserted = 0;
             foreach (var item in transactions)
             {
@@ -477,6 +478,96 @@ public sealed class PortfolioStore : IDisposable
 
             return results;
         }
+    }
+
+    /// <summary>
+    /// WP-03 R1/D1/D4 — an exchange may not spend money the account does not have at that point.
+    /// Enforced at the WRITE boundary (not in the UI), so a CSV import and the form obey the same
+    /// rule. Only rows in this batch are judged: a ledger that is already negative keeps opening
+    /// and keeps accepting valid new rows (D2). Opening balances and margin buys are sources of
+    /// money, not spends, so they are untouched (D3).
+    /// </summary>
+    private static void ValidateBalances(
+        SqliteConnection connection,
+        SqliteTransaction tx,
+        IReadOnlyCollection<LedgerTransaction> batch)
+    {
+        var watched = batch
+            .Where(t => t.Kind == TransactionKind.FxExchange)
+            .Select(t => t.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        if (watched.Count == 0)
+        {
+            return;
+        }
+
+        var existing = ReadTransactions(connection, tx);
+        var all = existing.Concat(batch).ToArray();
+
+        // Replay once with the ledger's own ordering and cancellation rules, so the balance a
+        // row is judged against is exactly the balance the user sees at that date.
+        PositionCalculator.Replay(all, (txn, available) =>
+        {
+            if (!watched.Contains(txn.Id) || txn.Kind != TransactionKind.FxExchange)
+            {
+                return;
+            }
+
+            var need = txn.CashAmount + txn.Fee;
+            var have = available((txn.AccountId, txn.Currency));
+            if (need <= have)
+            {
+                return;
+            }
+
+            var currency = Data.Currencies.Normalize(txn.Currency);
+            throw new LedgerException(
+                $"账户 {txn.AccountId} 的 {currency} 不够换汇：账上有 {have:#,0.##}，这笔要 {need:#,0.##}，" +
+                $"差 {(need - have):#,0.##}。先记这笔钱从哪来（入金或期初余额），或把换汇金额改小。");
+        });
+    }
+
+    /// <summary>Every row currently stored, read on the caller's connection (inside its transaction).</summary>
+    private static IReadOnlyList<LedgerTransaction> ReadTransactions(SqliteConnection connection, SqliteTransaction? tx)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = """
+            SELECT id, account_id, kind, trade_date, symbol, quantity, price, currency,
+                   fee, tax, cash_amount, counter_currency, counter_amount, fx_rate,
+                   reverses_transaction_id, counter_account_id, note, import_batch_id, recorded_at
+            FROM transactions
+            ORDER BY trade_date, recorded_at, id;
+            """;
+        using var reader = command.ExecuteReader();
+        var results = new List<LedgerTransaction>();
+        while (reader.Read())
+        {
+            results.Add(new LedgerTransaction
+            {
+                Id = reader.GetString(0),
+                AccountId = reader.GetString(1),
+                Kind = Enum.Parse<TransactionKind>(reader.GetString(2)),
+                TradeDate = DateOnly.ParseExact(reader.GetString(3), "yyyy-MM-dd"),
+                Symbol = reader.GetString(4),
+                Quantity = reader.GetDecimal(5),
+                Price = reader.GetDecimal(6),
+                Currency = reader.GetString(7),
+                Fee = reader.GetDecimal(8),
+                Tax = reader.GetDecimal(9),
+                CashAmount = reader.GetDecimal(10),
+                CounterCurrency = reader.GetString(11),
+                CounterAmount = reader.GetDecimal(12),
+                FxRate = reader.GetDecimal(13),
+                ReversesTransactionId = reader.GetString(14),
+                CounterAccountId = reader.GetString(15),
+                Note = reader.GetString(16),
+                ImportBatchId = reader.GetString(17),
+                RecordedAt = DateTimeOffset.Parse(reader.GetString(18)),
+            });
+        }
+
+        return results;
     }
 
     /// <summary>Ids of rows that already carry a reversal, so listings can mark them.</summary>
