@@ -30,7 +30,7 @@ Thumbs.db
 release-private-key.txt
 *.pem
 *.pfx
-
-# WPF writes a temporary project next to the real one during build. It embeds absolute NuGet
-# paths, so committing it leaks the local account name — it reached WP-02's history that way.
+# WPF writes a generated *_wpftmp.csproj beside the project during XAML compilation. It embeds
+# absolute NuGet paths, so committing it leaks the local account name — it reached WP-02's
+# history that way before being caught.
 *_wpftmp.csproj

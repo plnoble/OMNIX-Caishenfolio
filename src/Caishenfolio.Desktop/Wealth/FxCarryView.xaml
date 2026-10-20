@@ -245,6 +245,8 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
@@ -275,10 +277,67 @@
                         </StackPanel>
                     </Border>
 
-                    <TextBlock Grid.Row="1" x:Name="FxQuoteInfoText" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,8"
+                    <!-- WP-02: the "convert now" answer, the future critical rate, and the batches
+                         the held pot is made of. Numbers only — no advice. -->
+                    <Grid Grid.Row="1" Grid.ColumnSpan="3" Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="#121A24" CornerRadius="8" Padding="10,8" Margin="0,0,8,0">
+                            <StackPanel>
+                                <TextBlock Text="现在换能到手（含基准对比）" FontSize="11"
+                                           Foreground="{StaticResource BrushFgMuted}" TextWrapping="Wrap" />
+                                <TextBlock x:Name="FxNowText" Text="—" FontSize="13" FontWeight="SemiBold"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                        <Border Grid.Column="1" Background="#121A24" CornerRadius="8" Padding="10,8" Margin="0,0,8,0">
+                            <StackPanel>
+                                <TextBlock Text="未来临界汇率（到多少与基准打平）" FontSize="11"
+                                           Foreground="{StaticResource BrushFgMuted}" TextWrapping="Wrap" />
+                                <TextBlock x:Name="FxCriticalText" Text="—" FontSize="13" FontWeight="SemiBold"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                        <Border Grid.Column="2" Background="#121A24" CornerRadius="8" Padding="10,8">
+                            <StackPanel>
+                                <TextBlock Text="比较基准（名称与冻结时点）" FontSize="11"
+                                           Foreground="{StaticResource BrushFgMuted}" TextWrapping="Wrap" />
+                                <TextBlock x:Name="FxBaselineText" Text="—" FontSize="12" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <Expander Grid.Row="2" Grid.ColumnSpan="3" x:Name="FxLotsExpander" IsExpanded="False"
+                              Margin="0,26,0,8" Background="#16202B"
+                              Header="我的换汇批次（按取得日先进先出，冲正的那笔不会出现）">
+                        <StackPanel Margin="12,0,12,10">
+                            <TextBlock x:Name="FxLotsHint" TextWrapping="Wrap" FontSize="11" Margin="0,6,0,6"
+                                       Foreground="{StaticResource BrushFgSecondary}" />
+                            <DataGrid x:Name="FxLotGrid" Style="{StaticResource WealthGrid}" Height="170"
+                                      IsReadOnly="True" AutomationProperties.Name="换汇批次列表">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="取得日" Binding="{Binding Date}" Width="90" />
+                                    <DataGridTextColumn Header="币种" Binding="{Binding Currency}" Width="60" />
+                                    <DataGridTextColumn Header="付出（本段）" Binding="{Binding Paid}" Width="130" />
+                                    <DataGridTextColumn Header="得到" Binding="{Binding Received}" Width="130" />
+                                    <DataGridTextColumn Header="现在还剩" Binding="{Binding Remaining}" Width="130" />
+                                    <DataGridTextColumn Header="剩余部分的成本" Binding="{Binding RemainingCost}" Width="150" />
+                                    <DataGridTextColumn Header="原始投入（另一条链路，不混算）" Binding="{Binding Upstream}" Width="220" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock x:Name="FxSpendList" TextWrapping="Wrap" FontSize="11" Margin="0,8,0,0"
+                                       Foreground="{StaticResource BrushFgSecondary}"
+                                       AutomationProperties.Name="部分换出的消耗明细" />
+                        </StackPanel>
+                    </Expander>
+
+                    <TextBlock Grid.Row="3" x:Name="FxQuoteInfoText" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,8"
                                Foreground="{StaticResource BrushFgSecondary}" Grid.ColumnSpan="3" />
 
-                    <ScrollViewer Grid.Row="2" Grid.ColumnSpan="3" VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer Grid.Row="4" Grid.ColumnSpan="3" VerticalScrollBarVisibility="Auto">
                         <ItemsControl x:Name="FxPathList" KeyboardNavigation.TabNavigation="Continue">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>

@@ -18,12 +18,35 @@ namespace Caishenfolio.Host.Notifications;
 /// Any failure propagates to the caller, which reports it as a limitation — never as a
 /// reason to skip the deadline layer.
 /// </summary>
+/// <summary>
+/// What layer 2 found: the alerts, plus the reasons some things could not be judged. The
+/// reasons used to be dropped here, which is how an unreachable quote became indistinguishable
+/// from "the condition is false" (WP-02 R6/A10).
+/// </summary>
+public sealed record BackgroundCheckResult
+{
+    public required IReadOnlyList<PortfolioAlert> Alerts { get; init; }
+
+    /// <summary>Human-readable notes for whatever could not be evaluated.</summary>
+    public IReadOnlyList<string> Notes { get; init; } = [];
+
+    /// <summary>One outcome per enabled FX rule: met, not met, or unknown.</summary>
+    public IReadOnlyList<FxRuleOutcome> FxOutcomes { get; init; } = [];
+
+    /// <summary>Alert keys whose FX condition could not be judged this run.</summary>
+    public IReadOnlySet<string> UnknownAlertKeys =>
+        FxOutcomes
+            .Where(outcome => outcome.State == FxRuleState.Unknown)
+            .Select(outcome => outcome.AlertKey)
+            .ToHashSet(StringComparer.Ordinal);
+}
+
 public static class BackgroundExtendedCheck
 {
     /// <summary>How long to wait for a freshly started core to answer health.</summary>
     private static readonly TimeSpan CoreStartupTimeout = TimeSpan.FromSeconds(60);
 
-    public static async Task<IReadOnlyList<PortfolioAlert>> RunAsync(
+    public static async Task<BackgroundCheckResult> RunAsync(
         PortfolioStore store,
         string? coreRoot,
         string stateRoot,
@@ -68,6 +91,8 @@ public static class BackgroundExtendedCheck
                 .ConfigureAwait(false);
 
             var alerts = snapshot.Alerts.ToList();
+            var notes = new List<string>();
+            IReadOnlyList<FxRuleOutcome> outcomes = [];
 
             // N2.4 FX watch rules: evaluated on the same core, appended to the same list.
             // Their failures are notes, not exceptions — one unreachable pair must not cost
@@ -78,9 +103,16 @@ public static class BackgroundExtendedCheck
                 var fx = await EvaluateFxRulesAsync(store, client, activeRules, cancellationToken)
                     .ConfigureAwait(false);
                 alerts.AddRange(fx.Alerts);
+                notes.AddRange(fx.Notes);
+                outcomes = fx.Outcomes;
             }
 
-            return alerts;
+            return new BackgroundCheckResult
+            {
+                Alerts = alerts,
+                Notes = notes,
+                FxOutcomes = outcomes,
+            };
         }
         finally
         {
@@ -210,13 +242,13 @@ public static class BackgroundExtendedCheck
             rule.FixedFee?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) ?? "-");
 
     /// <summary>
-    /// The held pot from the ledger: what the user actually holds in the currency, and what
-    /// it actually cost. The cost is the moving-weighted blend of every exchange that built
-    /// the balance (P1-07) — batches at different rates blend, partial releases release the
-    /// average — not the last purchase's rate stretched over the whole pot.
-    /// Null when no priced cost exists — the rule is then reported as not evaluated.
+    /// The held pot from the ledger, and what the batches say the still-held part cost:
+    /// FIFO, the same cost the page shows (WP-02 R3/D8 — a moving average here would quietly
+    /// disagree with the batch list). Null cost means "not fully known in the base currency"
+    /// (money without a receipt, or a third-currency chain) and must NOT drop the pot: the
+    /// paths that do not need a cost are still answerable (R5).
     /// </summary>
-    private static (decimal amount, decimal cost)? HeldPositionOf(
+    internal static (decimal amount, decimal? cost)? HeldPositionOf(
         PortfolioStore store, string baseCurrency, string heldCurrency)
     {
         var transactions = store.ListTransactions();
@@ -229,13 +261,20 @@ public static class BackgroundExtendedCheck
             return null;
         }
 
-        var cost = HeldCurrencyCostCalculator.CostOf(transactions, baseCurrency, heldCurrency, amount);
-        if (cost.BlendedCostInBase is not { } blended || blended <= 0m)
-        {
-            return null;
-        }
-
-        return (amount, blended);
+        var open = FxLotLedger.FromTransactions(transactions).Lots
+            .Where(lot => lot.IsOpen
+                          && string.Equals(lot.Currency, heldCurrency, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var covered = open.Sum(lot => lot.RemainingAmount);
+        var pricedInBase = open.Length > 0
+                           && open.All(lot => string.Equals(
+                               lot.CostCurrency, baseCurrency, StringComparison.OrdinalIgnoreCase));
+        // The whole pot must be explained by batches priced in the base currency: a partly
+        // uncovered pot has an unknown cost, and half a cost is worse than none.
+        decimal? cost = pricedInBase && covered >= amount - 0.005m
+            ? open.Sum(lot => lot.RemainingCostAmount)
+            : null;
+        return (amount, cost);
     }
 
     private static async Task<AnalyticsCoreProcessBroker> StartCoreAsync(

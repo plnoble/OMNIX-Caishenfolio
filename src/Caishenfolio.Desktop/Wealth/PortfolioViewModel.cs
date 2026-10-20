@@ -215,7 +215,12 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
         TotalValueText = $"{Format(valuation.TotalValue.Amount)} {ccy}";
         CostText = $"{Format(valuation.CostBasis.Amount)} {ccy}";
         CashText = $"{Format(valuation.CashValue.Amount)} {ccy}";
-        TotalPnlText = FormatSigned(valuation.TotalPnl.Amount, ccy);
+        // 累计收益 has exactly one definition now (WP-02 裁决): Σ 账户（总资产 − 净投入), the
+        // same number the ledger page shows per account. `valuation.TotalPnl`
+        // (未实现+已实现+分红) is a different quantity and is no longer this headline.
+        TotalPnlText = snapshot.CumulativePnlBase is { } cumulative
+            ? FormatSigned(cumulative.Amount, ccy)
+            : "未知";
         XirrText = snapshot.Xirr is { } xirr
             ? (xirr * 100).ToString("+0.00;-0.00", CultureInfo.InvariantCulture) + "%"
             : "—";

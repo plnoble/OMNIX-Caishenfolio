@@ -78,6 +78,47 @@ public sealed record CarryRow
         value is null ? "—" : (value.Value * 100m).ToString("0.##", CultureInfo.InvariantCulture) + "%";
 }
 
+/// <summary>
+/// One batch row (WP-02 目标 1): when it was acquired, what this segment paid, what it bought, what
+/// is left and what that remainder cost, plus the original money one hop further up the chain —
+/// shown beside, never added to, the segment cost (R4).
+/// </summary>
+public sealed record FxLotRow
+{
+    public required string Date { get; init; }
+    public required string Currency { get; init; }
+    public required string Paid { get; init; }
+    public required string Received { get; init; }
+    public required string Remaining { get; init; }
+    public required string RemainingCost { get; init; }
+    public required string Upstream { get; init; }
+    /// <summary>Raw remaining amount, used only to count how many batches are still open.</summary>
+    public required string RemainingValue { get; init; }
+
+    public static FxLotRow From(FxLot lot, FxLotLedger ledger)
+    {
+        var upstream = FxLotLedger.UpstreamCosts(ledger, lot);
+        return new FxLotRow
+        {
+            Date = lot.AcquiredOn.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            Currency = lot.Currency,
+            Paid = $"{Number(lot.CostAmount)} {lot.CostCurrency}",
+            Received = $"{Number(lot.OriginalAmount)} {lot.Currency}",
+            Remaining = $"{Number(lot.RemainingAmount)} {lot.Currency}",
+            RemainingCost = $"{Number(lot.RemainingCostAmount)} {lot.CostCurrency}",
+            Upstream = upstream.Count == 0
+                ? "—（用新资金买入）"
+                // "、" not "+": these are different currencies at different levels, so adding
+                // them is meaningless and a plus sign would suggest otherwise (review #5).
+                : string.Join("、", upstream.Select(pair => $"{Number(pair.Value)} {pair.Key}")),
+            RemainingValue = lot.RemainingAmount.ToString(CultureInfo.InvariantCulture),
+        };
+    }
+
+    private static string Number(decimal value) =>
+        value.ToString("#,0.##", CultureInfo.InvariantCulture);
+}
+
 /// <summary>One path card on the comparison list — display-only projection of an FxPathDto.</summary>
 public sealed record FxPathCard
 {
@@ -446,6 +487,11 @@ public partial class FxCarryView : UserControl
             FxAdvantageNetText.Text = "—";
             FxBreakevenText.Text = "—";
             FxQuoteInfoText.Text = "";
+            // Review #10: the new cards must not keep the PREVIOUS run's numbers next to a
+            // changed input — a stale rate reads exactly like a fresh one.
+            FxNowText.Text = "—";
+            FxCriticalText.Text = "—";
+            FxBaselineText.Text = "—";
             return;
         }
 
@@ -480,6 +526,9 @@ public partial class FxCarryView : UserControl
             quoteParts.Add($"隐含 {cross.Direction}（{cross.Provider}）");
         }
 
+        RenderNowAndCritical(response);
+        RefreshLots();
+
         FxQuoteInfoText.Text = "报价：" + string.Join("；", quoteParts);
         foreach (var warning in response.Warnings)
         {
@@ -489,6 +538,193 @@ public partial class FxCarryView : UserControl
         DisclaimerText.Text = response.Disclaimer;
         StatusText.Text = $"已比较 {response.Paths.Count} 条路径。结果为研究模拟，不写入账本。";
     }
+
+    /// <summary>
+    /// WP-02 A5–A7 on screen: what converting now yields against a NAMED, DATED baseline, and the
+    /// future pair value at which the two paths tie. The baseline travels with the number it
+    /// explains — "+3% against what?" has to be answerable without guessing.
+    /// </summary>
+    private void RenderNowAndCritical(FxPathsResponse response)
+    {
+        var now = response.Now;
+        if (now is null)
+        {
+            FxNowText.Text = "—";
+        }
+        else
+        {
+            var parts = new List<string>();
+            if (now.GrossAmount is { } gross)
+            {
+                parts.Add($"{Format(gross)} {now.TargetCurrency}");
+            }
+
+            if (now.NetAmount is { } net && now.NetAmount != now.GrossAmount)
+            {
+                parts.Add($"净 {Format(net)} {now.TargetCurrency}");
+            }
+
+            if (now.AdvantageVsBaselinePct is { } advantage)
+            {
+                parts.Add($"比基准 {FormatPct(advantage)}");
+            }
+
+            if (now.PnlVsCostInBase is { } pnl)
+            {
+                // Review #9: the number is GROSS (before costs) and in the base currency. Saying
+                // just "盈亏 +0.8" next to a net arrival one line up reads as net profit, and the
+                // user has no way to tell that a fee already turned it negative.
+                var basis = string.Equals(now.PnlBasis, "gross", StringComparison.OrdinalIgnoreCase)
+                    ? "毛额"
+                    : now.PnlBasis;
+                parts.Add($"盈亏（{basis}，{response.BaseCurrency}）{FormatSigned(pnl)}");
+            }
+
+            if (!now.CostKnown)
+            {
+                parts.Add("买入成本未知，只算到账额");
+            }
+
+            // Nothing computable (e.g. the TARGET/HELD quote is missing): say so instead of
+            // leaving an empty card that looks like a rendering bug.
+            FxNowText.Text = parts.Count == 0 ? "—（缺报价，无法给到账额）" : string.Join("；", parts);
+        }
+
+        var critical = response.FutureCritical;
+        if (critical is null)
+        {
+            FxCriticalText.Text = "—";
+        }
+        else if (!critical.Solvable || critical.Rate is not { } rate)
+        {
+            FxCriticalText.Text = string.IsNullOrWhiteSpace(critical.Reason)
+                ? "无法计算"
+                : $"无法计算（{critical.Reason}）";
+        }
+        else
+        {
+            // The unit is the pair's own: "1 USD = X JPY" — not the old JPY/CNY tie rate.
+            var text = $"{critical.Unit.Replace("X", FormatRate(rate))}";
+            if (critical.CurrentRate is { } current)
+            {
+                text += $"（现价 {FormatRate(current)}";
+                if (critical.RequiredMovePct is { } move)
+                {
+                    text += $"，还需{(move < 0m ? "上升" : "下降")} {Format(Math.Abs(move))}%";
+                }
+
+                text += "）";
+            }
+
+            FxCriticalText.Text = text;
+        }
+
+        FxBaselineText.Text = now?.Baseline is { } b
+            ? $"{b.Name}；{b.QuotePair} = {(b.Rate is { } baselineRate ? FormatRate(baselineRate) : "—")}，冻结于 " +
+              (string.IsNullOrWhiteSpace(b.FrozenAt) ? "—" : b.FrozenAt)
+            : "—";
+    }
+
+    /// <summary>
+    /// The batches the held pot is made of (WP-02 目标 1). Read straight from the ledger's exchange
+    /// rows, so a reversed exchange disappears here like anywhere else.
+    /// </summary>
+    private void RefreshLots()
+    {
+        var snapshot = _snapshotAccessor?.Invoke();
+        if (snapshot is null)
+        {
+            FxLotGrid.ItemsSource = Array.Empty<FxLotRow>();
+            FxLotsHint.Text = "账本尚未刷新，暂时看不到换汇批次。";
+            return;
+        }
+
+        var ledger = FxLotLedger.FromTransactions(snapshot.Transactions);
+        var rows = ledger.Lots
+            .OrderBy(lot => lot.AcquiredOn)
+            .ThenBy(lot => lot.Id, StringComparer.Ordinal)
+            .Select(lot => FxLotRow.From(lot, ledger))
+            .ToArray();
+        FxLotGrid.ItemsSource = rows;
+
+        var open = rows.Count(row => row.RemainingValue != "0");
+        var baseCurrency = _baseCurrencyAccessor?.Invoke() ?? "CNY";
+        FxLotsHint.Text = rows.Length == 0
+            ? "账本里还没有换汇记录。每换一次就形成一批，冲正的那一笔不会留下来。"
+            : $"共 {rows.Length} 批，其中 {open} 批还有剩余。部分换出按取得日先进先出（FIFO）：从最早的一批开始扣；" +
+              "「原始投入」是这条链更早一层的钱，与「剩余部分的成本」是两个币种的数，不要相加。";
+
+        // WP-02 R5 on screen: when the ledger holds more of a currency than the batches can
+        // explain, that extra money has no purchase receipt. Say it here, where the user is
+        // looking at the batches — silently absorbing it would be the "0 as unknown" mistake.
+        foreach (var (currency, heldAmount) in HeldCash(snapshot, baseCurrency))
+        {
+            var explained = ledger.Lots
+                .Where(lot => string.Equals(lot.Currency, currency, StringComparison.OrdinalIgnoreCase))
+                .Sum(lot => lot.RemainingAmount);
+            var gap = heldAmount - explained;
+            if (Math.Abs(gap) < 0.005m)
+            {
+                continue;
+            }
+
+            FxLotsHint.Text += Environment.NewLine +
+                $"· 账本里 {currency} 共 {Number(heldAmount)}，批次能对上 {Number(explained)}：" +
+                $"差 {Number(Math.Abs(gap))} 不是换汇买来的（存入、利息或第三方转入），没有买入成本，" +
+                "所以只算到账额，不算收益。";
+        }
+
+        foreach (var warning in ledger.Warnings)
+        {
+            FxLotsHint.Text += Environment.NewLine + "· " + warning;
+        }
+
+        // A2/R3: "which batch, how much" — the FIFO trail itself, not just the totals. Without
+        // this the user sees batches and a remaining balance but never which one a spend ate.
+        var lines = new List<string>();
+        foreach (var spend in ledger.Spends.Where(s => s.Lots.Count > 0))
+        {
+            var parts = spend.Lots.Select(consumed =>
+            {
+                var from = ledger.Lots.FirstOrDefault(lot => lot.Id == consumed.LotId);
+                var acquired = from is null
+                    ? consumed.LotId
+                    : from.AcquiredOn.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                return $"{acquired} 那批 {Number(consumed.Amount)} {consumed.Currency}" +
+                       $"（成本 {Number(consumed.CostAmount)} {consumed.CostCurrency}）";
+            });
+            var uncovered = spend.UncoveredAmount > 0m
+                ? $"；另有 {Number(spend.UncoveredAmount)} {spend.Currency} 没有批次覆盖"
+                : "";
+            lines.Add($"{spend.Date:yyyy-MM-dd} 换出 {Number(spend.Amount)} {spend.Currency}：消耗 " +
+                      string.Join("、", parts) + uncovered + "。");
+        }
+
+        FxSpendList.Text = lines.Count == 0
+            ? "还没有换出记录：换出一部分时会按取得日先进先出，从最早的一批开始扣。"
+            : string.Join(Environment.NewLine, lines);
+    }
+
+    /// <summary>Non-base cash the ledger reports, by currency — the ground truth for the gap note.</summary>
+    private static IEnumerable<(string Currency, decimal Amount)> HeldCash(
+        WorkspaceSnapshot snapshot, string baseCurrency) =>
+        snapshot.CashBalances
+            .Where(balance => balance.Amount > 0m
+                              && !string.Equals(balance.Currency, baseCurrency, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(balance => balance.Currency, StringComparer.OrdinalIgnoreCase)
+            .Select(group => (Currency: group.Key.ToUpperInvariant(), Amount: group.Sum(b => b.Amount)))
+            .OrderBy(pair => pair.Currency, StringComparer.Ordinal);
+
+    private static string Number(decimal value) => value.ToString("#,0.##", CultureInfo.InvariantCulture);
+
+    private static string Format(decimal value) =>
+        value.ToString("#,0.##", CultureInfo.InvariantCulture);
+
+    private static string FormatSigned(decimal value) =>
+        value.ToString("+#,0.##;-#,0.##;0", CultureInfo.InvariantCulture);
+
+    private static string FormatRate(decimal value) =>
+        value.ToString("0.####", CultureInfo.InvariantCulture);
 
     private static string FormatPct(decimal percent) =>
         percent.ToString("+0.###;-0.###;0", CultureInfo.InvariantCulture) + "%";

@@ -104,6 +104,46 @@ public sealed record FxRuleEvaluationResult
 {
     public required IReadOnlyList<PortfolioAlert> Alerts { get; init; }
     public required IReadOnlyList<string> Notes { get; init; }
+
+    /// <summary>
+    /// One entry per enabled rule, saying whether the condition was met, was not met, or could
+    /// not be judged at all (WP-02 R6). Without this a missing quote is indistinguishable from
+    /// "condition false", which is what let a recovery look like a fresh re-entry.
+    /// </summary>
+    public IReadOnlyList<FxRuleOutcome> Outcomes { get; init; } = [];
+
+    /// <summary>The alert keys whose condition could not be judged this run.</summary>
+    public IReadOnlySet<string> UnknownAlertKeys =>
+        Outcomes
+            .Where(outcome => outcome.State == FxRuleState.Unknown)
+            .Select(outcome => outcome.AlertKey)
+            .ToHashSet(StringComparer.Ordinal);
+}
+
+/// <summary>The three states a rule can be in after one evaluation (R6/A10).</summary>
+public enum FxRuleState
+{
+    /// <summary>The condition holds now.</summary>
+    Met,
+    /// <summary>The condition was judged and does not hold.</summary>
+    NotMet,
+    /// <summary>It could not be judged (quote missing, cost unknown): neither met nor false.</summary>
+    Unknown,
+}
+
+/// <summary>
+/// The outcome for one rule, carrying the alert identity it would have used when met, so the
+/// gatekeeper can tell "left the band" apart from "could not look" (R6/A11).
+/// </summary>
+public sealed record FxRuleOutcome
+{
+    /// <summary>Same identity <see cref="AlertGatekeeper.KeyOf"/> gives the alert when it fires.</summary>
+    public required string AlertKey { get; init; }
+
+    public required FxRuleState State { get; init; }
+
+    /// <summary>Why it is UNKNOWN — the failing input, in the user's words. Empty otherwise.</summary>
+    public string Reason { get; init; } = "";
 }
 
 /// <summary>
@@ -114,6 +154,23 @@ public sealed record FxRuleEvaluationResult
 /// </summary>
 public static class FxAlertRuleEvaluator
 {
+    /// <summary>
+    /// The alert identities these rules would own. Used when a whole evaluation round could not
+    /// run: every one of them is UNKNOWN, and the gatekeeper must keep their last verdict
+    /// instead of recording an exit that never happened (WP-02 R6).
+    /// </summary>
+    public static IReadOnlySet<string> KnownKeys(IEnumerable<FxAlertRule> rules)
+    {
+        ArgumentNullException.ThrowIfNull(rules);
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var rule in rules.Where(rule => rule.Enabled))
+        {
+            keys.Add(AlertGatekeeper.KeyOf(Probe(rule)));
+        }
+
+        return keys;
+    }
+
     public static FxRuleEvaluationResult Evaluate(
         IReadOnlyList<FxAlertRule> rules,
         Func<FxAlertRule, (decimal Rate, string Source)?> rateOf,
@@ -125,62 +182,120 @@ public static class FxAlertRuleEvaluator
 
         var alerts = new List<PortfolioAlert>();
         var notes = new List<string>();
+        var outcomes = new List<FxRuleOutcome>();
 
         foreach (var rule in rules.Where(r => r.Enabled))
         {
-            switch (rule.Kind)
+            var (state, reason, alert, note) = rule.Kind switch
             {
-                case FxAlertRuleKind.RateBand:
-                    EvaluateBand(rule, rateOf, alerts, notes);
-                    break;
-                case FxAlertRuleKind.HeldAdvantageAbove:
-                    EvaluateAdvantage(rule, factsOf, alerts, notes);
-                    break;
-                case FxAlertRuleKind.NetArrivalAbove:
-                    EvaluateNetArrival(rule, factsOf, alerts, notes);
-                    break;
-                case FxAlertRuleKind.BreakevenCrossed:
-                    EvaluateBreakeven(rule, factsOf, alerts, notes);
-                    break;
+                FxAlertRuleKind.RateBand => EvaluateBand(rule, rateOf),
+                FxAlertRuleKind.HeldAdvantageAbove => EvaluateAdvantage(rule, factsOf),
+                FxAlertRuleKind.NetArrivalAbove => EvaluateNetArrival(rule, factsOf),
+                FxAlertRuleKind.BreakevenCrossed => EvaluateBreakeven(rule, factsOf),
+                _ => (FxRuleState.Unknown, $"未知的规则类型 {rule.Kind}，未评估。", (PortfolioAlert?)null, (string?)null),
+            };
+
+            if (alert is not null)
+            {
+                alerts.Add(alert);
             }
+
+            if (note is not null)
+            {
+                notes.Add(note);
+            }
+
+            outcomes.Add(new FxRuleOutcome
+            {
+                AlertKey = AlertGatekeeper.KeyOf(Probe(rule)),
+                State = state,
+                Reason = reason,
+            });
         }
 
-        return new FxRuleEvaluationResult { Alerts = alerts, Notes = notes };
+        return new FxRuleEvaluationResult { Alerts = alerts, Notes = notes, Outcomes = outcomes };
     }
 
-    private static void EvaluateBand(
+    /// <summary>
+    /// The identity this rule's alert has when it fires — kind, symbol and title only, no live
+    /// message. The outcome uses it so the gatekeeper can match an UNKNOWN evaluation to the
+    /// alert it might have produced (R6).
+    /// </summary>
+    private static PortfolioAlert Probe(FxAlertRule rule) => rule.Kind switch
+    {
+        FxAlertRuleKind.RateBand => new PortfolioAlert
+        {
+            Kind = AlertKind.FxBand,
+            Severity = AlertSeverity.Info,
+            Symbol = FxAlertRule.Normalize(rule.Pair),
+            Title = "汇率进入你设定的区间",
+            Message = "",
+        },
+        FxAlertRuleKind.HeldAdvantageAbove => new PortfolioAlert
+        {
+            Kind = AlertKind.FxAdvantage,
+            Severity = AlertSeverity.Info,
+            Symbol = $"{rule.HeldCurrency}/{rule.TargetCurrency}",
+            Title = "已持有路径优势达到阈值",
+            Message = "",
+        },
+        FxAlertRuleKind.NetArrivalAbove => new PortfolioAlert
+        {
+            Kind = AlertKind.FxNetArrival,
+            Severity = AlertSeverity.Info,
+            Symbol = $"{rule.HeldCurrency}/{rule.TargetCurrency}",
+            Title = "净到账达到你设定的目标",
+            Message = "",
+        },
+        FxAlertRuleKind.BreakevenCrossed => new PortfolioAlert
+        {
+            Kind = AlertKind.FxBreakeven,
+            Severity = AlertSeverity.Info,
+            Symbol = $"{rule.HeldCurrency}/{rule.TargetCurrency}",
+            Title = "已持有路径越过盈亏平衡",
+            Message = "",
+        },
+        _ => new PortfolioAlert
+        {
+            Kind = AlertKind.FxBand,
+            Severity = AlertSeverity.Info,
+            Symbol = "",
+            Title = "未知规则",
+            Message = "",
+        },
+    };
+
+    private static (FxRuleState State, string Reason, PortfolioAlert? Alert, string? Note) EvaluateBand(
         FxAlertRule rule,
-        Func<FxAlertRule, (decimal Rate, string Source)?> rateOf,
-        List<PortfolioAlert> alerts,
-        List<string> notes)
+        Func<FxAlertRule, (decimal Rate, string Source)?> rateOf)
     {
         var pair = FxAlertRule.Normalize(rule.Pair);
         if (pair == "?")
         {
-            notes.Add("一条汇率区间规则没有货币对，已跳过。");
-            return;
+            return (FxRuleState.Unknown, "这条汇率区间规则没有货币对，无法判断。", null,
+                "一条汇率区间规则没有货币对，已跳过。");
         }
 
         if (rule.Lower is null && rule.Upper is null)
         {
-            notes.Add($"规则 {pair}：区间上下限都为空，已跳过。");
-            return;
+            return (FxRuleState.Unknown, $"规则 {pair} 的区间上下限都为空，无法判断。", null,
+                $"规则 {pair}：区间上下限都为空，已跳过。");
         }
 
         if (rateOf(rule) is not { } quote)
         {
-            notes.Add($"规则 {pair}：本次未取到该货币对的报价，未评估。");
-            return;
+            return (FxRuleState.Unknown, $"本次未取到 {pair} 的报价：条件是否成立未知，不是条件不成立。", null,
+                $"规则 {pair}：本次未取到该货币对的报价，未评估。");
         }
 
         var inBand = (rule.Lower is null || quote.Rate >= rule.Lower)
                      && (rule.Upper is null || quote.Rate <= rule.Upper);
         if (!inBand)
         {
-            return;
+            return (FxRuleState.NotMet, "", null, null);
         }
 
-        alerts.Add(new PortfolioAlert
+        return (FxRuleState.Met, "", new PortfolioAlert
         {
             Kind = AlertKind.FxBand,
             Severity = AlertSeverity.Info,
@@ -189,35 +304,33 @@ public static class FxAlertRuleEvaluator
             Message = $"{pair} 当前 {quote.Rate:0.######}，在你设定的区间 " +
                       $"[{rule.Lower?.ToString("0.######") ?? "—"}, {rule.Upper?.ToString("0.######") ?? "—"}] 内" +
                       $"（{quote.Source}）。这只是你设定的事实被触发，不代表现在是换汇的好时机。",
-        });
+        }, null);
     }
 
-    private static void EvaluateAdvantage(
+    private static (FxRuleState State, string Reason, PortfolioAlert? Alert, string? Note) EvaluateAdvantage(
         FxAlertRule rule,
-        Func<FxAlertRule, FxPathFacts?> factsOf,
-        List<PortfolioAlert> alerts,
-        List<string> notes)
+        Func<FxAlertRule, FxPathFacts?> factsOf)
     {
         if (rule.ThresholdPct is not { } threshold)
         {
-            notes.Add("一条优势阈值规则没有阈值，已跳过。");
-            return;
+            return (FxRuleState.Unknown, "这条优势阈值规则没有阈值，无法判断。", null,
+                "一条优势阈值规则没有阈值，已跳过。");
         }
 
         if (factsOf(rule)?.AdvantagePct is not { } advantage)
         {
-            notes.Add(
+            return (FxRuleState.Unknown,
+                $"未能计算相对优势（缺报价，或账本里没有 {rule.HeldCurrency} 的持仓成本），条件是否成立未知。", null,
                 $"规则（{rule.BaseCurrency}→{rule.HeldCurrency}→{rule.TargetCurrency}）：" +
                 "本次未能计算相对优势（缺报价，或账本里没有该外币的持仓成本），未评估。");
-            return;
         }
 
         if (advantage < threshold)
         {
-            return;
+            return (FxRuleState.NotMet, "", null, null);
         }
 
-        alerts.Add(new PortfolioAlert
+        return (FxRuleState.Met, "", new PortfolioAlert
         {
             Kind = AlertKind.FxAdvantage,
             Severity = AlertSeverity.Info,
@@ -226,19 +339,17 @@ public static class FxAlertRuleEvaluator
             Message = $"已持有 {rule.HeldCurrency} 换 {rule.TargetCurrency}，相对新 {rule.BaseCurrency} 直换的" +
                       $"毛额优势为 {advantage:+0.###;-0.###}%，达到你设定的阈值 {threshold:0.###}%。" +
                       "毛额未计点差与手续费；实际到手以银行报价为准，软件不判断换汇时点。",
-        });
+        }, null);
     }
 
-    private static void EvaluateNetArrival(
+    private static (FxRuleState State, string Reason, PortfolioAlert? Alert, string? Note) EvaluateNetArrival(
         FxAlertRule rule,
-        Func<FxAlertRule, FxPathFacts?> factsOf,
-        List<PortfolioAlert> alerts,
-        List<string> notes)
+        Func<FxAlertRule, FxPathFacts?> factsOf)
     {
         if (rule.ThresholdAmount is not { } threshold)
         {
-            notes.Add("一条净到账目标规则没有目标金额，已跳过。");
-            return;
+            return (FxRuleState.Unknown, "这条净到账目标规则没有目标金额，无法判断。", null,
+                "一条净到账目标规则没有目标金额，已跳过。");
         }
 
         // Remediation WP2: the VARIABLE cost must be explicitly stated — None means unknown,
@@ -246,35 +357,35 @@ public static class FxAlertRuleEvaluator
         // the spread away, so the rule is refused until the user states it (0 counts).
         if (rule.SpreadPct is null)
         {
-            notes.Add(
+            return (FxRuleState.Unknown,
+                "净到账规则需要显式填写比例成本（点差等，填 0 表示确认无点差）；未填写是未知而不是零，条件是否成立未知。", null,
                 $"规则（{rule.BaseCurrency}→{rule.HeldCurrency}→{rule.TargetCurrency}）：" +
                 "净到账规则需要显式填写比例成本（点差等，填 0 表示确认无点差）；" +
                 "未填写的比例成本是未知而不是零，净额未评估。");
-            return;
         }
 
         if (rule.FixedFee is null)
         {
-            notes.Add(
+            return (FxRuleState.Unknown,
+                "固定手续费未填写（未知≠0），净到账算不出来，条件是否成立未知。", null,
                 $"规则（{rule.BaseCurrency}→{rule.HeldCurrency}→{rule.TargetCurrency}）：" +
                 "固定手续费未填写（未知≠0）；请填 0 表示确认无固定费，或填写实际金额。");
-            return;
         }
 
         if (factsOf(rule)?.NetArrival is not { } net)
         {
-            notes.Add(
+            return (FxRuleState.Unknown,
+                "未能计算净到账（缺报价、缺成本输入，或账本里没有该外币的持仓），条件是否成立未知。", null,
                 $"规则（{rule.BaseCurrency}→{rule.HeldCurrency}→{rule.TargetCurrency}）：" +
                 "本次未能计算净到账（缺报价、缺成本输入，或账本里没有该外币的持仓），未评估。");
-            return;
         }
 
         if (net < threshold)
         {
-            return;
+            return (FxRuleState.NotMet, "", null, null);
         }
 
-        alerts.Add(new PortfolioAlert
+        return (FxRuleState.Met, "", new PortfolioAlert
         {
             Kind = AlertKind.FxNetArrival,
             Severity = AlertSeverity.Info,
@@ -283,32 +394,32 @@ public static class FxAlertRuleEvaluator
             Message = $"按你输入的费率模型，已持有 {rule.HeldCurrency} 全部换成 {TargetText(rule)} 的净到账约 " +
                       $"{net:#,0.##} {rule.TargetCurrency}，达到你设定的目标 {threshold:#,0.##} {rule.TargetCurrency}。" +
                       "净额取决于你填写的点差与手续费；实际到手以银行报价为准，软件不判断换汇时点。",
-        });
+        }, null);
     }
 
-    private static void EvaluateBreakeven(
+    private static (FxRuleState State, string Reason, PortfolioAlert? Alert, string? Note) EvaluateBreakeven(
         FxAlertRule rule,
-        Func<FxAlertRule, FxPathFacts?> factsOf,
-        List<PortfolioAlert> alerts,
-        List<string> notes)
+        Func<FxAlertRule, FxPathFacts?> factsOf)
     {
         var facts = factsOf(rule);
-        if (facts?.AdvantagePct is not { } advantage || facts.HeldCostRate is not { } cost || facts.BreakevenRate is not { } breakeven)
+        if (facts?.AdvantagePct is not { } advantage
+            || facts.HeldCostRate is not { } cost
+            || facts.BreakevenRate is not { } breakeven)
         {
-            notes.Add(
+            return (FxRuleState.Unknown,
+                "未能计算盈亏平衡（缺报价，或账本里没有该外币的持仓成本），条件是否成立未知。", null,
                 $"规则（{rule.BaseCurrency}→{rule.HeldCurrency}→{rule.TargetCurrency}）：" +
                 "本次未能计算盈亏平衡（缺报价，或账本里没有该外币的持仓成本），未评估。");
-            return;
         }
 
         // The condition "not behind anymore" is advantage >= 0; re-entry semantics in the
         // gatekeeper make this fire again each time the sign flips back.
         if (advantage < 0m)
         {
-            return;
+            return (FxRuleState.NotMet, "", null, null);
         }
 
-        alerts.Add(new PortfolioAlert
+        return (FxRuleState.Met, "", new PortfolioAlert
         {
             Kind = AlertKind.FxBreakeven,
             Severity = AlertSeverity.Info,
@@ -318,7 +429,7 @@ public static class FxAlertRuleEvaluator
                       $"当前隐含的盈亏平衡价是 1 {rule.BaseCurrency} = {breakeven:0.######} {rule.HeldCurrency}。" +
                       $"按当前参考价，已持有 {rule.HeldCurrency} 换 {TargetText(rule)} 的毛额优势为 {advantage:+0.###;-0.###}%（不再吃亏）。" +
                       "这只说明历史成本与当前参考价的关系，不预测未来汇率，也不构成换汇建议。",
-        });
+        }, null);
     }
 
     private static string TargetText(FxAlertRule rule) => rule.TargetCurrency;

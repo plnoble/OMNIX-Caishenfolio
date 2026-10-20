@@ -67,7 +67,7 @@ public static class HeadlessNotifier
         NotificationSettings settings,
         DateOnly? asOf = null,
         HttpClient? http = null,
-        Func<CancellationToken, Task<IReadOnlyList<PortfolioAlert>>>? extendedCheck = null,
+        Func<CancellationToken, Task<BackgroundCheckResult>>? extendedCheck = null,
         AlertNotificationStateStore? stateStore = null,
         DateTimeOffset? now = null,
         CancellationToken cancellationToken = default)
@@ -83,6 +83,7 @@ public static class HeadlessNotifier
         var limitations = new List<string>();
         var scope = "打新时限";
         DateOnly? dataAsOf = null;
+        IReadOnlySet<string> unknownFxKeys = new HashSet<string>(StringComparer.Ordinal);
 
         // ---- Layer 2: optional, isolated. Its failure is information, never a blocker. ----
         if (settings.BackgroundExtendedChecks && extendedCheck is not null)
@@ -92,9 +93,17 @@ public static class HeadlessNotifier
                 var extended = await extendedCheck(cancellationToken).ConfigureAwait(false);
                 // The extended run evaluates the IPO deadlines too (same evaluator); merging
                 // by key keeps each fact in the message exactly once.
-                alerts = MergeBy(alerts, extended);
+                alerts = MergeBy(alerts, extended.Alerts);
                 scope = "打新时限、价格与集中度（含数据质量）";
                 dataAsOf = today;
+                unknownFxKeys = extended.UnknownAlertKeys;
+
+                // WP-02 R6/A10: a rule we could not judge says so, in the same report as the
+                // alerts — a silent outage is indistinguishable from "nothing to report".
+                foreach (var note in extended.Notes)
+                {
+                    limitations.Add(note);
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -103,6 +112,10 @@ public static class HeadlessNotifier
             catch (Exception ex)
             {
                 limitations.Add($"扩展检查失败（价格/集中度）：{ex.Message}。打新时限提醒不受影响。");
+                // WP-02 R6/A10 (review #6): a whole round that could not run is UNKNOWN for
+                // every FX rule — not "the condition went away". Without this the gatekeeper
+                // records a fake exit and the next successful round announces a fake re-entry.
+                unknownFxKeys = FxAlertRuleEvaluator.KnownKeys(settings.FxAlertRules);
             }
         }
         else if (!settings.BackgroundExtendedChecks)
@@ -112,7 +125,7 @@ public static class HeadlessNotifier
 
         // ---- Dedup / cooldown against what was already delivered. ----
         var state = stateStore?.Load().Pruned(at) ?? AlertNotificationState.Empty;
-        var decision = AlertGatekeeper.Filter(alerts, state, at, CooldownOf(settings));
+        var decision = AlertGatekeeper.Filter(alerts, state, at, CooldownOf(settings), unknownFxKeys);
 
         // ---- Dispatch what is due. ----
         DispatchReport report;

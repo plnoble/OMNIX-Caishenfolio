@@ -135,7 +135,8 @@ public static class AlertGatekeeper
         IReadOnlyList<PortfolioAlert> alerts,
         AlertNotificationState state,
         DateTimeOffset now,
-        TimeSpan cooldown)
+        TimeSpan cooldown,
+        IReadOnlySet<string>? notEvaluated = null)
     {
         ArgumentNullException.ThrowIfNull(alerts);
         ArgumentNullException.ThrowIfNull(state);
@@ -175,8 +176,18 @@ public static class AlertGatekeeper
 
         // Conditions that are no longer firing have left their range; the next time they
         // fire is a re-entry and must notify immediately.
+        //
+        // A condition we could not evaluate is not "left the range" (WP-02 R6/A10). Keeping its
+        // record untouched means the outage neither advances the cooldown nor fabricates a
+        // re-entry when the quote comes back (A11).
+        var unknown = notEvaluated ?? (IReadOnlySet<string>)new HashSet<string>(StringComparer.Ordinal);
         foreach (var (key, record) in records)
         {
+            if (unknown.Contains(key))
+            {
+                continue;
+            }
+
             if (!firing.Contains(key) && record.WasInRange)
             {
                 records[key] = record with { WasInRange = false, LastSeenAt = now };
