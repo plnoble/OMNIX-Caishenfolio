@@ -121,6 +121,32 @@ public sealed record FxAlertRule
     private static string LevelKey(decimal? value) =>
         value?.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture) ?? "-";
 
+    /// <summary>
+    /// The level this rule's notifications were recorded under **before** the key format was fixed:
+    /// rounded to six decimals, which is what every record written by the earlier build used. Frozen
+    /// on purpose — it is here to find old records during an upgrade, never to build a new key — and
+    /// it equals <see cref="Level"/> whenever no precision was ever lost.
+    /// </summary>
+    public string LegacyLevel => Kind switch
+    {
+        FxAlertRuleKind.RateBand => $"band:{LegacyLevelKey(Lower)}~{LegacyLevelKey(Upper)}",
+        FxAlertRuleKind.HeldAdvantageAbove => $"pct:{LegacyLevelKey(ThresholdPct)}",
+        FxAlertRuleKind.NetArrivalAbove => $"amt:{LegacyLevelKey(ThresholdAmount)}",
+        FxAlertRuleKind.BreakevenCrossed => "be",
+        _ => "?",
+    };
+
+    /// <summary>
+    /// Level strings this rule may already have been recorded under, from frozen older key formats
+    /// (see <see cref="LegacyLevel"/>). The gatekeeper looks each of them up as a COMPLETE old key
+    /// when adopting a record, so an upgrade never re-sends something the user already received
+    /// (D6) — the level is part of the key, so an identity alone is not enough.
+    /// </summary>
+    public IReadOnlyList<string> LegacyLevels { get; init; } = [];
+
+    private static string LegacyLevelKey(decimal? value) =>
+        value?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) ?? "-";
+
     public string Describe() => Kind switch    {
         FxAlertRuleKind.RateBand =>
             $"{Normalize(Pair)} 进入区间 [{Lower?.ToString("0.######") ?? "—"}, {Upper?.ToString("0.######") ?? "—"}]",
@@ -290,6 +316,7 @@ public static class FxAlertRuleEvaluator
         RuleId = rule.StableId,
         RuleRevision = rule.Revision,
         RuleLevel = rule.Level,
+        LegacyRuleLevels = rule.LegacyLevels,
     };
 
     private static PortfolioAlert ProbeShape(FxAlertRule rule) => rule.Kind switch

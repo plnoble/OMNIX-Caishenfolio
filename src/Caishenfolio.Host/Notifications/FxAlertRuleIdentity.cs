@@ -36,10 +36,9 @@ public static class FxAlertRuleIdentity
 
     /// <summary>
     /// Migration: keeps the identity the rule was already deduped by (its derived identity), so
-    /// upgrading does not change a single notification key. Two legacy rules that were identical in
-    /// every watched field were already sharing one key, and the state file cannot tell them apart —
-    /// the first keeps that key (its history stays attached), and <see cref="Reconcile"/> gives the
-    /// duplicate an identity of its own instead of leaving it suppressed forever.
+    /// upgrading does not change its notification key. Whether it keeps that identity is decided per
+    /// (identity, level) in <see cref="Reconcile"/>: two legacy rules that differ only by their
+    /// threshold were two independent watches, and both keep their own key.
     /// </summary>
     public static FxAlertRule AdoptInheritedIdentity(FxAlertRule rule)
     {
@@ -92,53 +91,137 @@ public static class FxAlertRuleIdentity
         ArgumentNullException.ThrowIfNull(stored);
 
         var previousById = new Dictionary<string, FxAlertRule>(StringComparer.Ordinal);
+        var disambiguated = new Dictionary<string, Queue<FxAlertRule>>(StringComparer.Ordinal);
         foreach (var rule in stored)
         {
-            if (!string.IsNullOrWhiteSpace(rule.Id))
+            if (string.IsNullOrWhiteSpace(rule.Id))
             {
-                previousById[rule.Id.Trim()] = rule;
+                continue;
+            }
+
+            previousById[rule.Id.Trim()] = rule;
+
+            // A rule that owns an identity of its own (not the inherited one) is what a previous
+            // round handed to one member of a colliding group. Remember it so a retry of the SAME
+            // identity-less batch lands on the same identity instead of inventing another one.
+            if (!string.Equals(rule.Id.Trim(), rule.DerivedId, StringComparison.Ordinal))
+            {
+                var signature = Signature(rule);
+                if (!disambiguated.TryGetValue(signature, out var queue))
+                {
+                    disambiguated[signature] = queue = new Queue<FxAlertRule>();
+                }
+
+                queue.Enqueue(rule);
             }
         }
 
         var settled = new List<FxAlertRule>(incoming.Count);
-        var taken = new HashSet<string>(StringComparer.Ordinal);
+        var claimed = new HashSet<string>(StringComparer.Ordinal);
         foreach (var rule in incoming)
         {
-            var assigned = AdoptInheritedIdentity(rule);
-            if (string.IsNullOrWhiteSpace(rule.Id) && taken.Contains(assigned.Id.Trim()))
-            {
-                // A second rule that used to share this inherited identity: under the old fallback
-                // the two suppressed each other, so it gets an id of its own (which at worst
-                // delivers the alert it was being denied). Only the first one keeps the inherited
-                // key, so the notification history that existed stays attached to a rule.
-                assigned = AssignNewIdentity(rule);
-            }
+            var assigned = string.IsNullOrWhiteSpace(rule.Id)
+                ? AdoptForMigration(rule, claimed, disambiguated)
+                : rule;
 
-            taken.Add(assigned.Id.Trim());
-
-            if (previousById.TryGetValue(assigned.Id.Trim(), out var previous))
-            {
-                if (WatchChanged(previous, assigned) && assigned.Revision <= previous.Revision)
-                {
-                    // The editor did not account for this change (it arrived with an equal or older
-                    // revision), so this is where the revision advances. If it already did, its
-                    // larger revision stands — never bump twice for one edit.
-                    assigned = assigned with { Revision = previous.Revision + 1 };
-                }
-                else if (assigned.Revision < previous.Revision)
-                {
-                    // A caller that hands back a stale copy must not roll the stored revision back:
-                    // the revision is part of the notification key, so going backwards would look
-                    // like a new watch and re-send.
-                    assigned = assigned with { Revision = previous.Revision };
-                }
-            }
-
+            assigned = SettleLegacyLevels(assigned, previousById);
+            assigned = SettleRevision(assigned, previousById);
             settled.Add(assigned);
         }
 
         return settled;
     }
+
+    /// <summary>
+    /// Migration for a rule that carries no identity. The inherited identity is claimed per
+    /// <b>(identity, level)</b> — not per identity — because the complete key contains both: two
+    /// legacy rules that differ only by their threshold were two independent watches, and giving the
+    /// second one a fresh identity would throw away the key its cooldown lives under (audited
+    /// regression). Only a genuine duplicate of the same identity AND level takes a fresh identity,
+    /// and even then a previously assigned one is reused so retrying a save is idempotent.
+    /// </summary>
+    private static FxAlertRule AdoptForMigration(
+        FxAlertRule rule,
+        HashSet<string> claimed,
+        Dictionary<string, Queue<FxAlertRule>> disambiguated)
+    {
+        var inherited = AdoptInheritedIdentity(rule);
+        var signature = Signature(inherited);
+        if (claimed.Add(signature))
+        {
+            return inherited;
+        }
+
+        if (disambiguated.TryGetValue(signature, out var queue) && queue.Count > 0)
+        {
+            var previous = queue.Dequeue();
+            return inherited with { Id = previous.Id.Trim(), Revision = previous.Revision };
+        }
+
+        // A genuine duplicate: nothing in the state file can tell these two apart, and under the old
+        // fallback they suppressed each other. It gets an identity of its own — from the id-less
+        // incoming rule, because the inherited one already carries the shared identity.
+        return AssignNewIdentity(rule);
+    }
+
+    /// <summary>
+    /// Keeps every level string this rule may already have been recorded under, so the upgrade can
+    /// find its old key even after the level format changed (a threshold with more than six decimals
+    /// went from "band:7.1~-" to "band:7.1000001~-"). Merges what a stored copy already knew.
+    /// </summary>
+    private static FxAlertRule SettleLegacyLevels(
+        FxAlertRule rule,
+        Dictionary<string, FxAlertRule> previousById)
+    {
+        var levels = new List<string>(rule.LegacyLevels);
+        if (!string.Equals(rule.LegacyLevel, rule.Level, StringComparison.Ordinal)
+            && !levels.Contains(rule.LegacyLevel, StringComparer.Ordinal))
+        {
+            levels.Add(rule.LegacyLevel);
+        }
+
+        if (previousById.TryGetValue(rule.Id.Trim(), out var previous))
+        {
+            foreach (var level in previous.LegacyLevels)
+            {
+                if (!levels.Contains(level, StringComparer.Ordinal))
+                {
+                    levels.Add(level);
+                }
+            }
+        }
+
+        return levels.Count == rule.LegacyLevels.Count ? rule : rule with { LegacyLevels = levels };
+    }
+
+    /// <summary>
+    /// One revision bump per edit, and never backwards: a caller that hands back a stale copy must
+    /// not roll the stored revision down, because the revision is part of the key.
+    /// </summary>
+    private static FxAlertRule SettleRevision(
+        FxAlertRule assigned,
+        Dictionary<string, FxAlertRule> previousById)
+    {
+        if (!previousById.TryGetValue(assigned.Id.Trim(), out var previous))
+        {
+            return assigned;
+        }
+
+        if (WatchChanged(previous, assigned) && assigned.Revision <= previous.Revision)
+        {
+            return assigned with { Revision = previous.Revision + 1 };
+        }
+
+        return assigned.Revision < previous.Revision
+            ? assigned with { Revision = previous.Revision }
+            : assigned;
+    }
+
+    /// <summary>
+    /// What makes two rules the same watch for migration purposes: the identity they inherit plus
+    /// the level that is part of their notification key.
+    /// </summary>
+    private static string Signature(FxAlertRule rule) => $"{rule.DerivedId}\u0001{rule.Level}";
 
     /// <summary>
     /// True when the two rules watch for different things. Deliberately blind to <c>Id</c>,

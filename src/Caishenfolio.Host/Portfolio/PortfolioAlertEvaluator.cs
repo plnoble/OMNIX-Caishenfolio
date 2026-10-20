@@ -53,6 +53,14 @@ public sealed record PortfolioAlert
 
     /// <summary>The rule's档位 (threshold), so two thresholds of one rule do not collide.</summary>
     public string RuleLevel { get; init; } = "";
+
+    /// <summary>
+    /// WP-03 D6: level strings this alert's rule may have been recorded under in older key formats
+    /// (the level is part of the complete key). The gatekeeper looks them up as complete old keys
+    /// when adopting a record, so an upgrade cannot re-send an alert the user already received
+    /// inside its cooldown.
+    /// </summary>
+    public IReadOnlyList<string> LegacyRuleLevels { get; init; } = [];
 }
 
 /// <summary>

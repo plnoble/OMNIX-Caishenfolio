@@ -150,10 +150,42 @@ public static class AlertGatekeeper
     }
 
     private static AlertNotificationRecord? AdoptLegacy(
-        IReadOnlyDictionary<string, AlertNotificationRecord> records, string key)
+        IReadOnlyDictionary<string, AlertNotificationRecord> records,
+        string key,
+        IReadOnlyList<string> legacyLevels)
     {
         var legacyKey = LegacyPrefixOf(key);
-        return legacyKey == key ? null : records.TryGetValue(legacyKey, out var legacy) ? legacy : null;
+        if (legacyKey == key)
+        {
+            return null;
+        }
+
+        // Pre-WP-03: the record was filed under the bare kind|symbol|title key.
+        if (records.TryGetValue(legacyKey, out var bare))
+        {
+            return bare;
+        }
+
+        // WP-03 before the level format was fixed: same prefix, same identity, same revision, but a
+        // level string the rule no longer produces (e.g. "band:7.1~-" for a threshold that now keeps
+        // "band:7.1000001~-"). The level is part of the key, so without this lookup the rule misses
+        // the record holding its cooldown and is delivered again inside it (review #2).
+        var separator = key.IndexOf('#', key.IndexOf("|rule:", StringComparison.Ordinal));
+        if (separator < 0)
+        {
+            return null;
+        }
+
+        var head = key[..(separator + 1)];
+        foreach (var level in legacyLevels)
+        {
+            if (records.TryGetValue(head + level, out var aliased))
+            {
+                return aliased;
+            }
+        }
+
+        return null;
     }
 
     public static GatekeeperDecision Filter(        IReadOnlyList<PortfolioAlert> alerts,
@@ -178,7 +210,8 @@ public static class AlertGatekeeper
             // WP-03 R5/D6: a state file written before the key carried a rule identity must not
             // read as "never sent" — that would re-send everything on the upgrade day. The old
             // record is adopted as this key's history; it stays in the file until it ages out.
-            var previous = records.GetValueOrDefault(key) ?? AdoptLegacy(records, key);
+            var previous = records.GetValueOrDefault(key)
+                ?? AdoptLegacy(records, key, alert.LegacyRuleLevels);
 
             var send = previous is null
                 || !previous.WasInRange
