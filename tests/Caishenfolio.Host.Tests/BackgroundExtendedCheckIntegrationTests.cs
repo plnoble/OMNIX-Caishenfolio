@@ -1,4 +1,5 @@
 using Caishenfolio.Host.Notifications;
+using Caishenfolio.Host.Python;
 using Caishenfolio.Host.Portfolio;
 
 namespace Caishenfolio.Host.Tests;
@@ -136,6 +137,97 @@ public class BackgroundExtendedCheckIntegrationTests : IDisposable
             ]);
 
         Assert.DoesNotContain(quietCheck.Alerts, a => a.Kind == AlertKind.FxNetArrival);
+    }
+
+    /// <summary>
+    /// WP-02 A5–A7 through the REAL client/core pair: the new JSON fields must survive the wire.
+    /// A unit test can only prove the two sides agree if it also pins the names, and this is the
+    /// one place that would catch a `[JsonPropertyName]` typo (which would silently show "—" on
+    /// the page instead of failing anywhere).
+    /// </summary>
+    [Fact]
+    public async Task TheNowAndCriticalFieldsSurviveTheRealClientAndCore()
+    {
+        if (!Enabled)
+        {
+            return;
+        }
+
+        var repoRoot = FindRepoRoot();
+        Assert.NotNull(repoRoot);
+
+        // Start a core the same way the production path does, so this proves the CLIENT/CORE
+        // pair (JSON names included), not just the two in-process halves.
+        var previousProvider = Environment.GetEnvironmentVariable("CAISHENFOLIO_MARKET_PROVIDER");
+        Environment.SetEnvironmentVariable("CAISHENFOLIO_MARKET_PROVIDER", "fixture");
+        AnalyticsCoreProcessBroker? broker = null;
+        try
+        {
+            broker = await StartCoreAsync(repoRoot, RealStateRoot(), 8767);
+            using var client = new AnalyticsCoreClient(broker.BaseAddress);
+            await WaitForHealthAsync(client);
+
+            var response = await client.PostFxPathsAsync(
+                "CNY", "USD", baseAmount: 100m,
+                heldCurrency: "JPY", heldAmount: 2_000m, heldCostInBase: 100m);
+
+            Assert.True(response.Ok, response.Error);
+            // 100 CNY bought 2,000 JPY → 20 JPY per CNY. Fixture quotes: USD/CNY 7.2, USD/JPY 150.
+            Assert.NotNull(response.Now);
+            Assert.True(response.Now!.CostKnown);
+            Assert.Equal("USD", response.Now.TargetCurrency);
+            Assert.NotNull(response.Now.Baseline);
+            Assert.Equal("USD/CNY", response.Now.Baseline!.QuotePair);
+            Assert.False(string.IsNullOrWhiteSpace(response.Now.Baseline.FrozenAt));
+            Assert.NotNull(response.Now.PnlVsCostInBase);
+
+            Assert.NotNull(response.FutureCritical);
+            Assert.True(response.FutureCritical!.Solvable);
+            Assert.Equal("USD/JPY", response.FutureCritical.Pair);
+            // T = 20 × 7.2 = 144 JPY per USD.
+            Assert.Equal(144m, response.FutureCritical.Rate!.Value, 3);
+            Assert.NotNull(response.FutureCritical.RequiredMovePct);
+            // The old tie rate is a different number in a different unit and must still be there.
+            Assert.NotNull(response.BreakevenHeldRate);
+            Assert.NotEqual(response.BreakevenHeldRate!.Value, response.FutureCritical.Rate!.Value);
+        }
+        finally
+        {
+            broker?.Dispose();
+            Environment.SetEnvironmentVariable("CAISHENFOLIO_MARKET_PROVIDER", previousProvider);
+        }
+    }
+
+    private static async Task<AnalyticsCoreProcessBroker> StartCoreAsync(
+        string coreRoot, string stateRoot, int port)
+    {
+        var provisioner = new PythonRuntimeProvisioner(new PythonRuntimeOptions
+        {
+            StateRoot = stateRoot,
+            PythonProjectDirectory = Path.Combine(coreRoot, "python"),
+        });
+        var runtime = await provisioner.ProvisionAsync();
+        Assert.True(runtime.CanRun, runtime.Summary);
+        var broker = new AnalyticsCoreProcessBroker(port: port);
+        broker.Start(runtime.Interpreter!, coreRoot, credentialsStore: null);
+        return broker;
+    }
+
+    private static async Task WaitForHealthAsync(AnalyticsCoreClient client)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        while (!cts.IsCancellationRequested)
+        {
+            try
+            {
+                await client.GetHealthAsync(cts.Token);
+                return;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                await Task.Delay(500, cts.Token);
+            }
+        }
     }
 
     public void Dispose()
