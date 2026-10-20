@@ -301,5 +301,80 @@ class A9PartialCostsStayGrossTests(unittest.TestCase):
         self.assertIsNotNone(by_key["held_to_target"]["gross_amount"])
 
 
+class A10NetBasisNowResultTests(unittest.TestCase):
+    """WP-03 R6/D7: 「现在换」的盈亏按净额口径给出；净额不可知时必须是 None（不是 0，也不是毛额）。
+
+    这些断言钉的是 Python 侧的字段本身——桌面端只是把它显示出来。合成数字沿用任务书的
+    固定算例（100 CNY、2,450 JPY、USD/CNY 7.2、USD/JPY 150）。
+    """
+
+    def _costs(self, fixed_fee: Decimal | None) -> dict[str, PathCost]:
+        return {
+            "held_to_target": PathCost(spread_pct=Decimal("0"), fixed_fee=fixed_fee),
+            "base_to_target": PathCost(spread_pct=Decimal("0"), fixed_fee=Decimal("0")),
+        }
+
+    def test_complete_costs_give_a_net_pnl_that_differs_from_the_gross_one(self) -> None:
+        panel = compare_paths(
+            Decimal("100"),
+            "CNY",
+            "USD",
+            _fixture_quotes(),
+            _held(),
+            costs=self._costs(Decimal("1")),
+        )
+
+        now = panel.now
+        # Gross arrival 2,450 ÷ 150 = 16.333333 USD → +17.6 CNY against a 100 CNY cost.
+        self.assertAlmostEqual(float(now.pnl_vs_cost_in_base), 17.6, places=6)
+        # Net arrival 16.333333 − 1 USD fee = 15.333333 USD → 110.4 − 100 = +10.4 CNY.
+        self.assertAlmostEqual(float(now.pnl_vs_cost_net_in_base), 10.4, places=6)
+        # The two are MEASURABLY different: the net figure is not the gross one relabelled.
+        self.assertNotAlmostEqual(
+            float(now.pnl_vs_cost_net_in_base), float(now.pnl_vs_cost_in_base), places=6
+        )
+
+    def test_an_unknown_net_arrival_leaves_the_net_pnl_unknown(self) -> None:
+        panel = compare_paths(
+            Decimal("100"),
+            "CNY",
+            "USD",
+            _fixture_quotes(),
+            _held(),
+            costs=self._costs(None),
+        )
+
+        now = panel.now
+        # Gross is computable and stays reported as context…
+        self.assertAlmostEqual(float(now.pnl_vs_cost_in_base), 17.6, places=6)
+        # …but the net answer must be UNKNOWN: never 0, and never the gross number.
+        self.assertIsNone(now.pnl_vs_cost_net_in_base)
+        self.assertNotEqual(now.pnl_vs_cost_net_in_base, Decimal(0))
+
+    def test_the_route_serializes_the_net_pnl_under_its_own_key(self) -> None:
+        app = AnalyticsApp(market=FixtureMarketDataProvider())
+        status, payload = dispatch(
+            app,
+            "POST",
+            "/research/fx-paths",
+            body={
+                "base_currency": "CNY",
+                "target_currency": "USD",
+                "base_amount": 100,
+                "held": {"currency": "JPY", "amount": 2450, "cost_in_base": 100},
+                "costs": {
+                    "held_to_target": {"spread_pct": 0, "fixed_fee": 1, "fee_currency": "USD"},
+                },
+            },
+        )
+
+        self.assertEqual(status, 200)
+        now = payload["now"]
+        self.assertIn("pnl_vs_cost_net_in_base", now)
+        self.assertAlmostEqual(now["pnl_vs_cost_net_in_base"], 10.4, places=6)
+        # The gross figure keeps its own key and its own value (context, not the verdict).
+        self.assertAlmostEqual(now["pnl_vs_cost_in_base"], 17.6, places=6)
+
+
 if __name__ == "__main__":
     unittest.main()

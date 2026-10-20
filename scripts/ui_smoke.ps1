@@ -57,7 +57,7 @@ function Test-CriticalSmokeSkipped($steps) {
             "navigate pages", "fx cost input layout", "fx cost input focus",
             "fx form to net e2e", "fx lots and critical e2e", "fx range switch e2e",
             "ledger type switch e2e", "core health reachable", "seed isolated ledger",
-            "onboarding guide"
+            "onboarding guide", "balance refusal e2e", "historical negative balance e2e"
         ) -and $_.status -eq "skipped"
     })
 }
@@ -580,6 +580,18 @@ function Invoke-FxFormToNetEndToEnd {
         return $labelEl.Current.Name
     }
 
+    function Get-NowText {
+        # WP-03: the 「现在换」 verdict is its own element; reading it by AutomationId keeps the
+        # assertion about the verdict, never about some other card's number.
+        $found = @($main.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)))) |
+            Where-Object { $_.Current.AutomationId -eq "FxNowText" } | Select-Object -First 1
+        if (-not $found) { throw "表单端到端：找不到结论文本 FxNowText。" }
+        return $found.Current.Name
+    }
+
     # ---------- Scenario A: 0 pct + 0 fee on ALL paths → per-card net == gross ----------
     foreach ($id in @("FxHeldCostPctBox","FxNewCostPctBox","FxDetourCostPctBox",
                       "FxHeldFeeBox","FxNewFeeBox","FxDetourFeeBox")) {
@@ -695,6 +707,46 @@ function Invoke-FxFormToNetEndToEnd {
         throw "表单端到端（持仓成本留空）：持仓卡消失，但结果不是只剩 1 条其他路径。"
     }
 
+    # ---------- Scenario E: 成本已知、净额不可知 → 结论必须说「净额未知」（WP-03 D7）----------
+    # 持仓成本 100 填了（所以历史盈亏算得出来），但固定费留空 → 净到账未知。结论卡必须明说
+    # 「净额未知（成本未填）」：不许把毛额盈亏顶上来当答案，也不许给 0 让未知看起来像已知。
+    Set-EditValue "FxHeldCostBox" "100"
+    Set-EditValue "FxHeldCostPctBox" "0"
+    Set-EditValue "FxHeldFeeBox" ""
+    Set-EditValue "FxNewCostPctBox" "0"
+    Set-EditValue "FxNewFeeBox" "0"
+    Set-EditValue "FxDetourCostPctBox" "0"
+    Set-EditValue "FxDetourFeeBox" "0"
+    Invoke-Compare
+    # This scenario's cost model is INCOMPLETE on purpose, and the view then puts its "成本未填"
+    # completeness note in the status line instead of "已比较 N 条路径". So wait on the verdict
+    # text itself — and it is a fresh-render-only marker: no earlier scenario can produce it.
+    $deadline = (Get-Date).AddSeconds(40)
+    $nowE = ""
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 900
+        $joinedE = ($main.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text))) |
+            ForEach-Object { $_.Current.Name }) -join "`n"
+        if ($joinedE -match "路径比较失败") { throw "表单端到端（净额未知）：路径比较失败。" }
+        try { $nowE = Get-NowText } catch { $nowE = "" }
+        if ($nowE -match "净额未知（成本未填）") { break }
+    }
+    if ($nowE -notmatch "净额未知（成本未填）") {
+        throw "表单端到端（净额未知）：结论没有说明净额不可知（$nowE）。"
+    }
+    if ($nowE -match "盈亏（毛额") {
+        throw "表单端到端（净额未知）：结论回落到毛额盈亏（$nowE）——D7 明令禁止。"
+    }
+    if ($nowE -match "盈亏（净额") {
+        throw "表单端到端（净额未知）：净额算不出来却报了净额盈亏（$nowE）。"
+    }
+    if ($nowE -match "盈亏（净额，[A-Z]{3}）\s*0([^\.\d]|$)") {
+        throw "表单端到端（净额未知）：把未知显示成了 0（$nowE）。"
+    }
+
     # Cleanup: blank the form for the next run.
     foreach ($id in @("FxHeldAmountBox","FxHeldCostBox","FxHeldCostPctBox","FxNewCostPctBox",
                       "FxDetourCostPctBox","FxHeldFeeBox","FxNewFeeBox","FxDetourFeeBox")) {
@@ -707,7 +759,7 @@ function Invoke-FxFormToNetEndToEnd {
         Start-Sleep -Milliseconds 600
     }
 
-    Add-Step "fx form to net e2e" "passed" "逐卡：0+0 净=毛；0+1USD 净=毛−1；防串线差额 3 与 2；绕行留空与持仓成本留空已覆盖"
+    Add-Step "fx form to net e2e" "passed" "逐卡：0+0 净=毛；0+1USD 净=毛−1；防串线差额 3 与 2；绕行留空与持仓成本留空已覆盖；净额不可知时结论说「净额未知」（不回退毛额）"
 }
 
 function Invoke-FxLotsAndCriticalCheck {
@@ -771,6 +823,10 @@ function Invoke-FxLotsAndCriticalCheck {
     # something to show. (The isolated smoke ledger holds one 100 CNY → 2,100 JPY receipt.)
     Set-EditValue "FxHeldAmountBox" "2100"
     Set-EditValue "FxHeldCostBox" "100"
+    # WP-03 D7: a net verdict only exists when the cost model is COMPLETE — 0 is a real answer
+    # ("confirmed none"), a blank field is not. Fill both so the comparison really is net.
+    Set-EditValue "FxHeldCostPctBox" "0"
+    Set-EditValue "FxHeldFeeBox" "0"
     $compare = Get-Buttons | Where-Object { $_.Current.Name -like "*比较兑换路径*" } | Select-Object -First 1
     if (-not $compare) { throw "批次与临界：找不到「比较兑换路径」按钮。" }
     $compare.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
@@ -789,6 +845,14 @@ function Invoke-FxLotsAndCriticalCheck {
     if ($nowText -eq "—" -or $nowText -eq "") { throw "批次与临界：现在换的结果卡是空的。" }
     if ($nowText -notmatch "USD") { throw "批次与临界：结果卡没有目标币种金额（$nowText）。" }
     if ($nowText -notmatch "比基准") { throw "批次与临界：结果卡没给相对基准的盈亏（$nowText）。" }
+    # WP-03 R6/D7 in the running app: with a complete cost model the verdict is the NET one and
+    # says so — the gross comparison may not be quoted here as the answer.
+    if ($nowText -notmatch "盈亏（净额") {
+        throw "批次与临界：成本齐全时结果卡没有用净额口径给出盈亏（$nowText）。"
+    }
+    if ($nowText -match "盈亏（毛额") {
+        throw "批次与临界：结果卡把毛额盈亏当成了答案（$nowText）。"
+    }
 
     $baseline = Get-Text "FxBaselineText"
     if ($baseline -notmatch "冻结于") { throw "批次与临界：基准没有随结果给出冻结时点（$baseline）。" }
@@ -1098,6 +1162,170 @@ function Invoke-LedgerTypeSwitchCheck {
     Add-Step "ledger type switch e2e" "passed" "入金 500 入账；买入在残留禁用金额文本（500）下仍入账，流水表可见 SSE:600000"
 }
 
+function Invoke-BalanceRefusalCheck {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId
+    )
+
+    # WP-03 R1/R3/D4 at PAGE level: an exchange that spends money the account does not have is
+    # refused at the write boundary (not hidden in the UI), the refusal says 有多少/要多少/差多少,
+    # and NOTHING reaches the ledger. Then D2: a ledger that was already negative keeps opening and
+    # is ANNOTATED on the overview — history is never rewritten and never blocked.
+    #
+    # The isolated smoke ledger is seeded (raw SQL, pre-upgrade shape) with an exchange of 100 CNY
+    # that had no funding row, so it already holds a historical negative CNY balance. That is the
+    # real D2 fixture: it must open, and the overview must name the shortfall.
+    try {
+        Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes -ErrorAction Stop
+    }
+    catch {
+        Add-Step "balance refusal e2e" "skipped" "UIAutomation 不可用"
+        Add-Step "historical negative balance e2e" "skipped" "UIAutomation 不可用"
+        return
+    }
+
+    $automation = [System.Windows.Automation.AutomationElement]
+    $byPid = New-Object System.Windows.Automation.PropertyCondition(
+        $automation::ProcessIdProperty, $ProcessId)
+    $main = $automation::RootElement.FindFirst(
+        [System.Windows.Automation.TreeScope]::Children, $byPid)
+    if (-not $main) { throw "余额拒绝：未找到主窗口自动化节点。" }
+
+    function Find-ById3([string]$automationId) {
+        $main.FindFirst(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::AutomationIdProperty, $automationId)))
+    }
+    function Set-EditById3([string]$automationId, [string]$value) {
+        $edit = Find-ById3 $automationId
+        if (-not $edit) { throw "余额拒绝：找不到输入框 $automationId。" }
+        $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value)
+    }
+    function Get-AllTexts3 {
+        @($main.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text))))
+    }
+    function Get-Joined3 {
+        # Every element, not only ControlType=Text: the 总览 warning banner renders each warning
+        # through an ItemsControl ItemTemplate, and its item elements are not all exposed as Text.
+        $all = @($main.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.Condition]::TrueCondition))
+        ($all | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) -join "`n"
+    }
+    function Get-Status3 {
+        $status = Find-ById3 "ImportStatusText"
+        if ($status) { $status.Current.Name } else { "" }
+    }
+    function Wait-ForStatus3([string]$marker, [int]$seconds = 20) {
+        $deadline = (Get-Date).AddSeconds($seconds)
+        while ((Get-Date) -lt $deadline) {
+            $text = Get-Status3
+            if ($text -match [regex]::Escape($marker)) { return $text }
+            Start-Sleep -Milliseconds 400
+        }
+        return (Get-Status3)
+    }
+    function Invoke-Record3 {
+        $buttons = @($main.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button))))
+        $record = $buttons | Where-Object { $_.Current.Name -eq "记账" } | Select-Object -First 1
+        if (-not $record) { throw "余额拒绝：找不到「记账」按钮。" }
+        $record.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    }
+    function Select-Kind3([string]$kindName) {
+        $combo = Find-ById3 "EntryKind"
+        if (-not $combo) { throw "余额拒绝：找不到类型下拉 EntryKind。" }
+        $expand = $combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+        $expand.Expand()
+        Start-Sleep -Milliseconds 300
+        $item = $combo.FindFirst(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition($automation::NameProperty, $kindName)))
+        if (-not $item) {
+            $expand.Collapse()
+            throw "余额拒绝：类型下拉里没有「$kindName」。"
+        }
+        $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+        Start-Sleep -Milliseconds 100
+        try { $expand.Collapse() } catch { }
+        Start-Sleep -Milliseconds 200
+    }
+    function Get-NavButton3([string]$name) {
+        @($main.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)))) |
+            Where-Object { $_.Current.Name -like "*$name*" } | Select-Object -First 1
+    }
+
+    $ledgerButton = Get-NavButton3 "账本"
+    if (-not $ledgerButton) { throw "余额拒绝：找不到「账本」导航按钮。" }
+    $ledgerButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 900
+
+    # 1) Ask to exchange 100,000 CNY into the JPY the account cannot possibly fund.
+    Select-Kind3 "换汇"
+    Set-EditById3 "EntryAmount" "100000"
+    Set-EditById3 "EntryCounterAmount" "2000000"
+    Set-EditById3 "EntryNote" "冒烟换汇超支"
+    Invoke-Record3
+
+    $refusal = Wait-ForStatus3 "不够换汇"
+    if ($refusal -notmatch "不够换汇") {
+        throw "余额拒绝：超额换汇没有被拒绝（状态栏：$refusal）——钱没到账却可能已经记账。"
+    }
+    if ($refusal -notmatch "账上有") { throw "余额拒绝：拒绝理由没说「有多少」（$refusal）。" }
+    if ($refusal -notmatch "这笔要") { throw "余额拒绝：拒绝理由没说「要多少」（$refusal）。" }
+    if ($refusal -notmatch "差") { throw "余额拒绝：拒绝理由没说「差多少」（$refusal）。" }
+    if ($refusal -match "已记账") { throw "余额拒绝：同一状态里出现了「已记账」（$refusal）。" }
+
+    # Nothing may have been written: the note that was typed must not appear in the ledger.
+    Start-Sleep -Milliseconds 1200
+    function Get-GridText3 { Get-Joined3 }
+    if ((Get-GridText3) -match "冒烟换汇超支") {
+        throw "余额拒绝：被拒绝的换汇仍然出现在流水表里。"
+    }
+
+    Add-Step "balance refusal e2e" "passed" "超额换汇被拒且状态栏给出有多少/要多少/差多少；被拒记录未进流水表"
+
+    # 2) D2: the pre-upgrade negative balance still opens, and the overview names it.
+    $ledgerSample = Get-Joined3
+    $overviewButton = Get-NavButton3 "总览"
+    if (-not $overviewButton) { throw "历史负余额：找不到「总览」导航按钮。" }
+    $overviewButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+
+    $deadline = (Get-Date).AddSeconds(25)
+    $annotation = ""
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 500
+        $annotation = Get-Joined3
+        if ($annotation -match "历史负余额") { break }
+    }
+    if ($annotation -notmatch "历史负余额") {
+        $a = if ($annotation.Length -gt 500) { $annotation.Substring(0, 500) } else { $annotation }
+        $l = if ($ledgerSample.Length -gt 300) { $ledgerSample.Substring(0, 300) } else { $ledgerSample }
+        throw ("历史负余额：总览没有标注账本里已有的负余额（D2 要求只标注、不拦开门）。" +
+            "总览文本样本：$a ｜ 账本页文本样本：$l")
+    }
+    if ($annotation -notmatch "现金是 -100（CNY）") {
+        throw "历史负余额：标注没有给出负多少（预期「现金是 -100（CNY）」）。"
+    }
+    if ($annotation -notmatch "自 2026-01-05 起就是负的") {
+        throw "历史负余额：标注没有给出从哪天起的（预期「自 2026-01-05 起就是负的」）。"
+    }
+
+    Add-Step "historical negative balance e2e" "passed" "预置的历史负余额（CNY -100，自 2026-01-05）在总览被标注为历史负余额，账本照常打开"
+
+    $overviewBack = Get-NavButton3 "总览"
+    if ($overviewBack) { Start-Sleep -Milliseconds 200 }
+}
+
 function Invoke-RecordDialogCheck {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId
@@ -1206,16 +1434,26 @@ function Invoke-RecordDialogCheck {
     }
 
     # The four operations must all be on offer (disabled ones still enumerate while expanded).
+    # The popup is a separate HWND and UIA sometimes reports it empty for the first few hundred
+    # milliseconds after Expand(); that is enumeration timing, NOT the page's behaviour — so wait
+    # for it, and keep the assertion itself strict (all four items, no filtering).
     $operations = Find-ById $dialog "OperationCombo"
     if (-not $operations) { throw "新增记录：找不到操作下拉。" }
     $expand = $operations.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
-    $expand.Expand()
-    Start-Sleep -Milliseconds 400
-    $items = @($operations.FindAll(
-        [System.Windows.Automation.TreeScope]::Descendants,
-        (New-Object System.Windows.Automation.PropertyCondition(
-            $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem))))
-    $names = @($items | ForEach-Object { $_.Current.Name })
+    $names = @()
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline) {
+        $expand.Expand()
+        Start-Sleep -Milliseconds 400
+        $items = @($operations.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem))))
+        $names = @($items | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
+        if ($names.Count -gt 0) { break }
+        try { $expand.Collapse() } catch { }
+        Start-Sleep -Milliseconds 300
+    }
     foreach ($expected in @("投入", "转出", "转到我的另一个账户", "当天资产金额")) {
         if (-not ($names | Where-Object { $_ -like "*$expected*" })) {
             throw "新增记录：操作下拉里没有「$expected」（实际：$($names -join ' / ')）。"
@@ -1604,6 +1842,12 @@ conn.close()
     # disable/restore on the FX page, then type switching + recording on the ledger page.
     Invoke-FxRangeSwitchCheck -ProcessId $appProcess.Id
     Invoke-LedgerTypeSwitchCheck -ProcessId $appProcess.Id
+
+    # WP-03: the write boundary's refusal and the historical-negative annotation are page
+    # behaviour (the dialog/status surfaces are where the user meets the rule), so they are
+    # checked in the running app as well as in unit tests.
+    Invoke-BalanceRefusalCheck -ProcessId $appProcess.Id
+
     Invoke-RecordDialogCheck -ProcessId $appProcess.Id
 
     # A dialog's BAML is only parsed when it is shown, so opening it is the only way to catch a
