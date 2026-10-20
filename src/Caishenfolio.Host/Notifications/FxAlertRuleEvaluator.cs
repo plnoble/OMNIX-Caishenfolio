@@ -104,6 +104,46 @@ public sealed record FxRuleEvaluationResult
 {
     public required IReadOnlyList<PortfolioAlert> Alerts { get; init; }
     public required IReadOnlyList<string> Notes { get; init; }
+
+    /// <summary>
+    /// One entry per enabled rule, saying whether the condition was met, was not met, or could
+    /// not be judged at all (WP-02 R6). Without this a missing quote is indistinguishable from
+    /// "condition false", which is what let a recovery look like a fresh re-entry.
+    /// </summary>
+    public IReadOnlyList<FxRuleOutcome> Outcomes { get; init; } = [];
+
+    /// <summary>The alert keys whose condition could not be judged this run.</summary>
+    public IReadOnlySet<string> UnknownAlertKeys =>
+        Outcomes
+            .Where(outcome => outcome.State == FxRuleState.Unknown)
+            .Select(outcome => outcome.AlertKey)
+            .ToHashSet(StringComparer.Ordinal);
+}
+
+/// <summary>The three states a rule can be in after one evaluation (R6/A10).</summary>
+public enum FxRuleState
+{
+    /// <summary>The condition holds now.</summary>
+    Met,
+    /// <summary>The condition was judged and does not hold.</summary>
+    NotMet,
+    /// <summary>It could not be judged (quote missing, cost unknown): neither met nor false.</summary>
+    Unknown,
+}
+
+/// <summary>
+/// The outcome for one rule, carrying the alert identity it would have used when met, so the
+/// gatekeeper can tell "left the band" apart from "could not look" (R6/A11).
+/// </summary>
+public sealed record FxRuleOutcome
+{
+    /// <summary>Same identity <see cref="AlertGatekeeper.KeyOf"/> gives the alert when it fires.</summary>
+    public required string AlertKey { get; init; }
+
+    public required FxRuleState State { get; init; }
+
+    /// <summary>Why it is UNKNOWN — the failing input, in the user's words. Empty otherwise.</summary>
+    public string Reason { get; init; } = "";
 }
 
 /// <summary>

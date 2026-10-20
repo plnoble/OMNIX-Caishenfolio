@@ -135,7 +135,8 @@ public static class AlertGatekeeper
         IReadOnlyList<PortfolioAlert> alerts,
         AlertNotificationState state,
         DateTimeOffset now,
-        TimeSpan cooldown)
+        TimeSpan cooldown,
+        IReadOnlySet<string>? notEvaluated = null)
     {
         ArgumentNullException.ThrowIfNull(alerts);
         ArgumentNullException.ThrowIfNull(state);
