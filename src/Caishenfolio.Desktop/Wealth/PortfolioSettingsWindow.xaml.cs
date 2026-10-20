@@ -51,10 +51,32 @@ public sealed class ChannelRow
 }
 
 /// <summary>One FX watch rule as the editable grid shows it. Enabled toggles in place.</summary>
-public sealed class FxRuleRow
+public sealed class FxRuleRow : System.ComponentModel.INotifyPropertyChanged
 {
-    /// <summary>Settable so the grid's checkbox can flip Enabled without rebuilding the row.</summary>
-    public required FxAlertRule Rule { get; set; }
+    private FxAlertRule _rule = null!;
+
+    /// <summary>
+    /// Settable so the grid's checkbox can flip Enabled without rebuilding the row — and it notifies,
+    /// so an in-place edit (which changes what the row DESCRIBES) is visible to the user instead of
+    /// leaving the old parameters on screen while the new ones are what gets saved.
+    /// </summary>
+    public required FxAlertRule Rule
+    {
+        get => _rule;
+        set
+        {
+            _rule = value;
+            Raise(nameof(Rule));
+            Raise(nameof(KindLabel));
+            Raise(nameof(Describe));
+            Raise(nameof(Enabled));
+        }
+    }
+
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+    private void Raise(string name) =>
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
 
     public string KindLabel => Rule.Kind switch
     {
@@ -96,14 +118,32 @@ public partial class PortfolioSettingsWindow : Window
     private readonly ObservableCollection<FxRuleRow> _fxRules = [];
     private readonly NotificationSettingsStore _notifications;
 
+    /// <summary>False in tests: this window then reads no host-level status at all.</summary>
+    private readonly bool _readHostStatus;
+
     /// <summary>The identity of the rule currently loaded into the form for editing, if any.</summary>
     private string? _editingRuleId;
 
     public PortfolioSettingsWindow(PortfolioWorkspace workspace, PricePlanStore? planStore = null)
+        : this(workspace, planStore, readHostStatus: true)
+    {
+    }
+
+    /// <summary>
+    /// <paramref name="readHostStatus"/> false skips the host-level reads this window normally does
+    /// (whether the daily check is registered, and the notification log). Tests build it that way so
+    /// they stay inside their isolated state root instead of reading the developer's own
+    /// <c>%LOCALAPPDATA%</c> log and scheduled tasks (Codex review #7).
+    /// </summary>
+    internal PortfolioSettingsWindow(
+        PortfolioWorkspace workspace,
+        PricePlanStore? planStore,
+        bool readHostStatus)
     {
         InitializeComponent();
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _planStore = planStore;
+        _readHostStatus = readHostStatus;
         _notifications = new NotificationSettingsStore(workspace.Store);
 
         Load(workspace.Settings);
@@ -296,6 +336,15 @@ public partial class PortfolioSettingsWindow : Window
             _fxRules.Add(new FxRuleRow { Rule = rule });
         }
 
+        if (!_readHostStatus)
+        {
+            // Tests: no scheduled-task query and no read of the real notification log.
+            NotifyStatusText.Text = "（测试模式：未读取本机后台检查状态）";
+            BackgroundScopeText.Text = "";
+            BackgroundCheckText.Text = "";
+            return;
+        }
+
         NotifyStatusText.Text = ScheduledCheckInstaller.IsInstalled()
             ? "每日后台检查已注册。"
             : "尚未注册后台检查——软件关着时不会有任何提醒。";
@@ -321,8 +370,13 @@ public partial class PortfolioSettingsWindow : Window
     }
 
     /// <summary>The capability statement must follow the switch the moment it flips.</summary>
-    private void BackgroundExtendedBox_OnChanged(object sender, RoutedEventArgs e) =>
-        RenderBackgroundCheckStatus();
+    private void BackgroundExtendedBox_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_readHostStatus)
+        {
+            RenderBackgroundCheckStatus();
+        }
+    }
 
     // --- FX watch rules (N2.4) ---------------------------------------------------------
 
@@ -381,9 +435,10 @@ public partial class PortfolioSettingsWindow : Window
             // cost model silence each other.
             if (_editingRuleId is { } editing && _fxRules.FirstOrDefault(r => r.Rule.Id == editing) is { } row)
             {
+                var before = row.Rule.Revision;
                 var updated = FxAlertRuleIdentity.WithEditedParameters(row.Rule, built);
                 row.Rule = updated;
-                var bumped = updated.Revision > row.Rule.Revision;
+                var bumped = updated.Revision > before;
                 EndRuleEdit();
                 NotifyStatusText.Text = bumped
                     ? $"已更新规则：{updated.Describe()}。（提醒身份不变，版本推进到 r{updated.Revision}）记得点「保存」。"

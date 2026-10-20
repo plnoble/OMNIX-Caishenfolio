@@ -78,13 +78,19 @@ public sealed record FxAlertRule
     public bool HasCostModel => SpreadPct is not null || FixedFee is not null;
 
     /// <summary>
-    /// R4/D5: the rule's own identity, stable across note edits. Empty <see cref="Id"/> falls back
-    /// to kind + the currencies it watches, so a settings file written before this field existed
-    /// still gets a usable identity.
+    /// The identity a rule written before <see cref="Id"/> existed was already deduped by:
+    /// kind + the currencies it watches. Kept as its own member because it is also the value the
+    /// upgrade migration adopts (assigning a fresh random id instead would change every such
+    /// rule's notification key on upgrade day and re-send what the user already saw).
     /// </summary>
-    public string StableId => string.IsNullOrWhiteSpace(Id)
-        ? $"{Kind}:{Normalize(Pair)}:{Normalize(BaseCurrency)}/{Normalize(TargetCurrency)}/{Normalize(HeldCurrency)}"
-        : Id.Trim();
+    public string DerivedId =>
+        $"{Kind}:{Normalize(Pair)}:{Normalize(BaseCurrency)}/{Normalize(TargetCurrency)}/{Normalize(HeldCurrency)}";
+
+    /// <summary>
+    /// R4/D5: the rule's own identity, stable across note edits. Empty <see cref="Id"/> falls back
+    /// to the derived identity, so a rule that has not been through the migration yet still has one.
+    /// </summary>
+    public string StableId => string.IsNullOrWhiteSpace(Id) ? DerivedId : Id.Trim();
 
     /// <summary>
     /// R4/D5: the档位 this rule watches at — the threshold, not the whole rule. Two rules that
@@ -93,9 +99,10 @@ public sealed record FxAlertRule
     /// <remarks>
     /// Rounded to six decimals this collapsed distinct thresholds into one band (audit: 7.1000001
     /// and 7.1000002 both became "band:7.1~…"), while the threshold itself was parsed with no such
-    /// limit. The key therefore keeps the full value, with trailing zeros trimmed so the levels
-    /// users already have (1000, 0.00, 3.0) keep exactly the strings they had — a key is not a
-    /// display string, and it must not churn for values that did not change.
+    /// limit. The key therefore keeps every significant digit, in FIXED point: the "G" format with
+    /// an explicit precision switches to scientific notation below 1e-4, which would churn the key
+    /// of an ordinary band rule (0.00001 → "1E-05"). Trailing zeros are still trimmed, so values
+    /// with six decimals or fewer keep exactly the string they had.
     /// </remarks>
     public string Level => Kind switch
     {
@@ -107,11 +114,12 @@ public sealed record FxAlertRule
     };
 
     /// <summary>
-    /// "G29" is the round-trip form for <see cref="decimal"/>: it never uses scientific notation
-    /// and never drops a significant digit, while still trimming trailing zeros.
+    /// Fixed point with decimal's full 28-digit scale, never scientific notation, trailing zeros
+    /// dropped — a key, not a display string, and one that does not move for values that did not
+    /// change.
     /// </summary>
     private static string LevelKey(decimal? value) =>
-        value?.ToString("G29", System.Globalization.CultureInfo.InvariantCulture) ?? "-";
+        value?.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture) ?? "-";
 
     public string Describe() => Kind switch    {
         FxAlertRuleKind.RateBand =>

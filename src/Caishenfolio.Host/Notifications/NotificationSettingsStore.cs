@@ -21,14 +21,35 @@ public sealed class NotificationSettingsStore
         _store = store;
     }
 
-    public NotificationSettings Load() =>
-        NotificationSettings.FromJson(_store.LoadRawSetting(SettingKey));
+    /// <summary>
+    /// Reads the settings, settling rule identity on the way out (WP-03 D5, review #1): a rule
+    /// written before identity existed is given the identity it was already deduped by, and the
+    /// result is written back **once**, so ids are stable from the first read. Doing it here — not
+    /// only on save — is what keeps the background check and the settings grid from ever running a
+    /// rule with no identity, and it is idempotent: an already-settled store is not rewritten.
+    /// </summary>
+    public NotificationSettings Load()
+    {
+        var stored = NotificationSettings.FromJson(_store.LoadRawSetting(SettingKey));
+        var settled = stored with
+        {
+            FxAlertRules = FxAlertRuleIdentity.Reconcile(stored.FxAlertRules, stored.FxAlertRules).ToList(),
+        };
+
+        if (NeedsRewrite(stored.FxAlertRules, settled.FxAlertRules))
+        {
+            _store.SaveRawSetting(SettingKey, settled.ToJson());
+        }
+
+        return settled;
+    }
 
     /// <summary>
     /// Writes the settings, settling every FX rule's identity first (WP-03 D5, audit): rules that
-    /// came from a settings file written before identity existed get an id, and a rule whose
-    /// parameters changed outside the editor gets its revision advanced. Doing it here rather than
-    /// only in the settings page means no caller can persist an identity-less rule.
+    /// came from a settings file written before identity existed get an identity, and a rule whose
+    /// parameters changed outside the editor gets its revision advanced — never twice, never
+    /// backwards. Doing it here rather than only in the settings page means no caller can persist an
+    /// identity-less rule.
     /// </summary>
     public NotificationSettings Save(NotificationSettings settings)
     {
@@ -43,5 +64,26 @@ public sealed class NotificationSettingsStore
 
         _store.SaveRawSetting(SettingKey, settled.ToJson());
         return settled;
+    }
+
+    private static bool NeedsRewrite(
+        IReadOnlyList<FxAlertRule> before,
+        IReadOnlyList<FxAlertRule> after)
+    {
+        if (before.Count != after.Count)
+        {
+            return true;
+        }
+
+        for (var i = 0; i < before.Count; i++)
+        {
+            if (!string.Equals(before[i].Id, after[i].Id, StringComparison.Ordinal)
+                || before[i].Revision != after[i].Revision)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

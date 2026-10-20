@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using Caishenfolio.Desktop.Wealth;
 using Caishenfolio.Host.Notifications;
 using Caishenfolio.Host.Portfolio;
@@ -45,7 +46,7 @@ public class FxRuleIdentityTests : IDisposable
         {
             Directory.CreateDirectory(_root);
             using var store = PortfolioStore.UnderStateRoot(_root);
-            var window = new PortfolioSettingsWindow(new PortfolioWorkspace(store));
+            var window = NewWindow(new PortfolioWorkspace(store));
 
             FillNetArrivalForm(window, 0m);
             var rule = window.BuildFxRule();
@@ -76,7 +77,7 @@ public class FxRuleIdentityTests : IDisposable
         {
             Directory.CreateDirectory(_root);
             using var store = PortfolioStore.UnderStateRoot(_root);
-            var window = new PortfolioSettingsWindow(new PortfolioWorkspace(store));
+            var window = NewWindow(new PortfolioWorkspace(store));
 
             FillNetArrivalForm(window, 0m);
             var noFee = window.BuildFxRule();
@@ -129,7 +130,7 @@ public class FxRuleIdentityTests : IDisposable
         {
             Directory.CreateDirectory(_root);
             using var store = PortfolioStore.UnderStateRoot(_root);
-            var window = new PortfolioSettingsWindow(new PortfolioWorkspace(store));
+            var window = NewWindow(new PortfolioWorkspace(store));
 
             FillNetArrivalForm(window, 0m);
             Click(window, "AddFxRuleButton");
@@ -175,6 +176,111 @@ public class FxRuleIdentityTests : IDisposable
     private static void Click(PortfolioSettingsWindow window, string buttonName) =>
         ((Button)window.FindName(buttonName)).RaiseEvent(
             new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+
+    /// <summary>
+    /// Builds the window the way tests must: inside its own state root, and without reading any
+    /// host-level status (Codex review #7 — the production overload reads the real notification log
+    /// and queries the machine's scheduled tasks).
+    /// </summary>
+    private static PortfolioSettingsWindow NewWindow(PortfolioWorkspace workspace) =>
+        new(workspace, planStore: null, readHostStatus: false);
+
+    /// <summary>The single settings key <c>NotificationSettingsStore</c> reads and writes.</summary>
+    private const string NotificationSettingsKey = "notifications.json";
+
+    /// <summary>
+    /// Two CNY/JPY/USD net-arrival rules as the pre-WP-03 settings file held them: no id, no
+    /// revision, same 1,000 USD threshold, fixed fees 0 and 2 USD.
+    /// </summary>
+    private static void WriteLegacyRules(PortfolioStore store)
+    {
+        store.SaveRawSetting(
+            NotificationSettingsKey,
+            """
+            {"Enabled":true,"IncludeRoutineAlerts":true,"BackgroundExtendedChecks":true,
+             "AlertCooldownHours":12,
+             "FxAlertRules":[
+               {"Kind":2,"Pair":"","BaseCurrency":"CNY","TargetCurrency":"USD","HeldCurrency":"JPY",
+                "ThresholdAmount":1000,"SpreadPct":0,"FixedFee":0,"Enabled":true},
+               {"Kind":2,"Pair":"","BaseCurrency":"CNY","TargetCurrency":"USD","HeldCurrency":"JPY",
+                "ThresholdAmount":1000,"SpreadPct":0,"FixedFee":2,"Enabled":false}],
+             "Webhooks":[]}
+            """);
+    }
+
+    [Fact]
+    public void LegacyRulesReachTheGridWithIdentitiesAndEditsHitTheSelectedRow()
+    {
+        // Codex review #1: an empty id is the normal upgrade input, so it must be settled before a
+        // rule is shown or edited — otherwise `FirstOrDefault(r => r.Rule.Id == "")` edits the FIRST
+        // legacy rule no matter which one the user selected.
+        WpfTestHost.Run(async () =>
+        {
+            Directory.CreateDirectory(_root);
+            using var store = PortfolioStore.UnderStateRoot(_root);
+            WriteLegacyRules(store);
+            var window = NewWindow(new PortfolioWorkspace(store));
+
+            var rows = window.RuleRows;
+            Assert.Equal(2, rows.Count);
+            Assert.All(rows, row => Assert.False(string.IsNullOrWhiteSpace(row.Rule.Id)));
+            Assert.NotEqual(rows[0].Rule.Id, rows[1].Rule.Id);
+
+            // Nothing read host status: the machine's log and scheduled tasks were left alone.
+            Assert.Equal("（测试模式：未读取本机后台检查状态）", ((TextBlock)window.FindName("NotifyStatusText")).Text);
+
+            // Select the SECOND rule and edit it: only that one may change.
+            Grid(window).SelectedItem = rows[1];
+            Click(window, "EditFxRuleButton");
+            ((TextBox)window.FindName("FxRuleThresholdBox")).Text = "1200";
+            Click(window, "AddFxRuleButton");
+
+            Assert.Equal(1_000m, rows[0].Rule.ThresholdAmount);
+            Assert.Equal(1_200m, rows[1].Rule.ThresholdAmount);
+            Assert.Equal(0m, rows[0].Rule.FixedFee);
+            Assert.Equal(2m, rows[1].Rule.FixedFee);
+            Assert.Equal(1, rows[1].Rule.Revision);
+            Assert.Equal(0, rows[0].Rule.Revision);
+            // The row the user switched off stays switched off through a parameter edit (review #5).
+            Assert.True(rows[0].Rule.Enabled);
+            Assert.False(rows[1].Rule.Enabled);
+
+            window.Close();
+            await Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public void EditingARuleRefreshesWhatTheGridShows()
+    {
+        // Codex review #6: the grid binds Describe/KindLabel/Enabled, so an in-place edit has to
+        // notify or the user reads stale parameters while the new ones are what gets saved.
+        WpfTestHost.Run(async () =>
+        {
+            Directory.CreateDirectory(_root);
+            using var store = PortfolioStore.UnderStateRoot(_root);
+            var window = NewWindow(new PortfolioWorkspace(store));
+
+            FillNetArrivalForm(window, 0m);
+            Click(window, "AddFxRuleButton");
+            var row = Assert.Single(window.RuleRows);
+            var before = row.Describe;
+
+            var changed = new List<string>();
+            row.PropertyChanged += (_, args) => changed.Add(args.PropertyName ?? "");
+            Grid(window).SelectedItem = row;
+            Click(window, "EditFxRuleButton");
+            ((TextBox)window.FindName("FxRuleThresholdBox")).Text = "1200";
+            Click(window, "AddFxRuleButton");
+
+            Assert.Contains(nameof(FxRuleRow.Describe), changed);
+            Assert.NotEqual(before, row.Describe);
+            Assert.Contains("1,200", row.Describe, StringComparison.Ordinal);
+
+            window.Close();
+            await Task.CompletedTask;
+        });
+    }
 
     /// <summary>The alert a rule would produce when it fires — only its identity matters here.</summary>
     private static PortfolioAlert Probe(FxAlertRule rule) => new()

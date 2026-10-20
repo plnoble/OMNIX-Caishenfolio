@@ -120,6 +120,85 @@ public class FxRuleIdentityPersistenceTests : IDisposable
         Assert.Equal(0, third[0].Revision);
     }
 
+    [Fact]
+    public void LoadingMigratesTheIdentityOnceAndKeepsTheKeyTheRuleAlreadyHad()
+    {
+        // Codex review #1/#2: identity has to exist BEFORE the rule is consumed (the background
+        // check reads through Load, never through Save), and the migration must not change a key the
+        // state file already holds — otherwise upgrading re-sends what the user already saw.
+        var store = new NotificationSettingsStore(NewStore());
+        WriteRawSettings(store, LegacyTwoRuleBlob());
+
+        var first = store.Load().FxAlertRules;
+        Assert.Equal(2, first.Count);
+        foreach (var rule in first)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(rule.Id));
+        }
+
+        // The rule that owned the shared key keeps it — its notification history stays attached, so
+        // upgrading cannot re-send what the user already saw.
+        Assert.Equal("NetArrivalAbove:?:CNY/USD/JPY", first[0].StableId);
+        // The duplicate it used to be suppressed by now owns an identity of its own: it was being
+        // denied its alert, and one extra delivery is the honest outcome of separating them.
+        Assert.NotEqual("NetArrivalAbove:?:CNY/USD/JPY", first[1].StableId);
+        Assert.NotEqual(first[0].StableId, first[1].StableId);
+        Assert.StartsWith("rule-", first[1].Id, StringComparison.Ordinal);
+
+        // Migrating is a one-off write: a second read sees the same ids and rewrites nothing.
+        var second = store.Load().FxAlertRules;
+        Assert.Equal(first[0].Id, second[0].Id);
+        Assert.Equal(first[1].Id, second[1].Id);
+        Assert.Equal(first[0].Revision, second[0].Revision);
+    }
+
+    [Fact]
+    public void AStaleCopyCannotRollTheStoredRevisionBack()
+    {
+        // Codex review #4: the revision is part of the key. A caller that keeps handing back the
+        // copy it built before the first save must not undo the bump — that would look like a new
+        // watch and re-send.
+        var store = new NotificationSettingsStore(NewStore());
+        var first = Assert.Single(store
+            .Save(new NotificationSettings { FxAlertRules = [NetArrival(1_000m, 0m)] })
+            .FxAlertRules);
+
+        var stale = first with { ThresholdAmount = 1_200m };   // still revision 0
+        var bumped = Assert.Single(store
+            .Save(new NotificationSettings { FxAlertRules = [stale] })
+            .FxAlertRules);
+        Assert.Equal(1, bumped.Revision);
+
+        // The same stale input again: still revision 1 on disk, never back to 0.
+        var again = Assert.Single(store
+            .Save(new NotificationSettings { FxAlertRules = [stale] })
+            .FxAlertRules);
+        Assert.Equal(1, again.Revision);
+        Assert.Equal(1, Assert.Single(store.Load().FxAlertRules).Revision);
+    }
+
+    /// <summary>Two rules as the pre-WP-03 settings file wrote them: no id, no revision.</summary>
+    private static string LegacyTwoRuleBlob() =>
+        """
+        {"Enabled":true,"IncludeRoutineAlerts":true,"BackgroundExtendedChecks":true,
+         "AlertCooldownHours":12,
+         "FxAlertRules":[
+           {"Kind":2,"Pair":"","BaseCurrency":"CNY","TargetCurrency":"USD","HeldCurrency":"JPY",
+            "ThresholdAmount":1000,"SpreadPct":0,"FixedFee":0,"Enabled":true},
+           {"Kind":2,"Pair":"","BaseCurrency":"CNY","TargetCurrency":"USD","HeldCurrency":"JPY",
+            "ThresholdAmount":1000,"SpreadPct":0,"FixedFee":2,"Enabled":true}],
+         "Webhooks":[]}
+        """;
+
+    private static void WriteRawSettings(NotificationSettingsStore store, string json)
+    {
+        // Straight into the same settings row the store reads, i.e. the real old-file shape.
+        var portfolioStore = (PortfolioStore)typeof(NotificationSettingsStore)
+            .GetField("_store", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(store)!;
+        portfolioStore.SaveRawSetting(NotificationSettingsStore.SettingKey, json);
+    }
+
     public void Dispose()
     {
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();

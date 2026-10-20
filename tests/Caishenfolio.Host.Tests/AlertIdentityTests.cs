@@ -203,7 +203,21 @@ public class AlertIdentityTests
         Assert.Contains("7.1000002", finer.Level, StringComparison.Ordinal);
         Assert.NotEqual(AlertGatekeeper.KeyOf(Probe(fine)), AlertGatekeeper.KeyOf(Probe(finer)));
 
-        // A key is not a display string: never scientific notation, whatever the magnitude.
+        // A key is not a display string: never scientific notation, at either end of the scale.
+        // ("G29" would have printed 0.00001 as 1E-05 — a key change for an ordinary band rule.)
+        var tiny = new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = 0.00001m };
+        Assert.Equal("band:0.00001~-", tiny.Level);
+        Assert.Equal(
+            "band:-0.00001~-",
+            new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = -0.00001m }.Level);
+        Assert.Equal(
+            "band:0.0000000000000000000000000001~-",
+            new FxAlertRule
+            {
+                Kind = FxAlertRuleKind.RateBand,
+                Pair = "USD/CNY",
+                Lower = 0.0000000000000000000000000001m,
+            }.Level);
         var huge = new FxAlertRule
         {
             Kind = FxAlertRuleKind.NetArrivalAbove,
@@ -211,8 +225,8 @@ public class AlertIdentityTests
         };
         Assert.DoesNotContain("E", huge.Level, StringComparison.OrdinalIgnoreCase);
 
-        // And no key churn for the values users already have: trailing zeros stay trimmed, so an
-        // existing record keeps matching its rule after this change.
+        // And no key churn for the values users already have: six decimals or fewer keep exactly the
+        // string the old 0.###### format produced, so an existing record keeps matching its rule.
         Assert.Equal(
             "amt:1000",
             new FxAlertRule { Kind = FxAlertRuleKind.NetArrivalAbove, ThresholdAmount = 1_000m }.Level);
@@ -225,6 +239,9 @@ public class AlertIdentityTests
         Assert.Equal(
             "band:7.1~8",
             new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = 7.10m, Upper = 8m }.Level);
+        Assert.Equal(
+            "band:7.1~-",
+            new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = 7.100000m }.Level);
     }
 
     /// <summary>The alert a rule would produce when it fires — identity only.</summary>
