@@ -298,15 +298,53 @@ public sealed record FxLotLedger
             .ToArray();
 
     /// <summary>
-    /// Every coupon of every batch this one was ultimately paid with, keyed by currency — the
-    /// "original investment chain" R4 keeps apart from the segment's own cost. For a USD lot
-    /// bought with JPY bought with CNY this yields JPY (the segment's payment) and CNY (the
-    /// original money), so the two can be shown separately and never added together.
+    /// What this batch was ultimately paid with, keyed by the currency each hop actually paid —
+    /// the "original investment chain" R4 keeps apart from the segment's own cost. For a USD lot
+    /// bought with JPY bought with CNY it yields CNY (the original money), while
+    /// <see cref="FxLot.CostCurrency"/> on the lot itself answers JPY (this segment's payment).
+    /// The two are shown separately and never added together.
     /// </summary>
     public static IReadOnlyDictionary<string, decimal> UpstreamCosts(FxLotLedger ledger, FxLot lot)
     {
         ArgumentNullException.ThrowIfNull(ledger);
         ArgumentNullException.ThrowIfNull(lot);
-        throw new NotImplementedException("WP-02 P2：链路成本尚未实现。");
+
+        var byId = new Dictionary<string, FxLot>(StringComparer.Ordinal);
+        foreach (var candidate in ledger.Lots)
+        {
+            byId[candidate.Id] = candidate;
+        }
+
+        var totals = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<FxLotConsumption>(lot.FundedBy);
+        while (queue.Count > 0)
+        {
+            var step = queue.Dequeue();
+
+            // One hop per lot: an ancestor cannot legitimately appear twice, and the guard keeps a
+            // malformed projection from looping instead of answering.
+            if (!seen.Add(step.LotId))
+            {
+                continue;
+            }
+
+            if (!byId.TryGetValue(step.LotId, out var ancestor))
+            {
+                // The ancestor is gone (its exchange was reversed): the share is still part of the
+                // story, recorded under the currency the consumption itself named.
+                totals[step.CostCurrency] = totals.GetValueOrDefault(step.CostCurrency) + step.CostAmount;
+                continue;
+            }
+
+            totals[ancestor.CostCurrency] =
+                totals.GetValueOrDefault(ancestor.CostCurrency) + step.CostAmount;
+            foreach (var next in ancestor.FundedBy)
+            {
+                queue.Enqueue(next);
+            }
+        }
+
+        return totals;
     }
 }
