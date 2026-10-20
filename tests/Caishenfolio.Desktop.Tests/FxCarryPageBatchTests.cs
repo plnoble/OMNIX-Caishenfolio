@@ -153,6 +153,34 @@ public class FxCarryPageBatchTests : IDisposable
         });
     }
 
+    [Fact]
+    public void HeldCashWithNoReceiptIsCalledOutBesideTheBatches()
+    {
+        WpfTestHost.Run(async () =>
+        {
+            Directory.CreateDirectory(_root);
+            using var store = PortfolioStore.UnderStateRoot(_root);
+            var workspace = new PortfolioWorkspace(store);
+            var account = workspace.AddAccount("换汇账户", AccountKind.Bank, "CNY");
+            // 500,000 JPY bought (with a receipt) on top of 200,000 JPY that just arrived:
+            // the batch explains the first, the extra has no purchase cost (WP-02 R5).
+            workspace.Record(LedgerTransaction.FxExchange(
+                account.Id, new DateOnly(2025, 1, 10), 25_000m, "CNY", 500_000m, "JPY"));
+            workspace.Record(LedgerTransaction.Deposit(account.Id, new DateOnly(2025, 2, 1), 200_000m, "JPY"));
+            var snapshot = await workspace.RefreshAsync(new DateOnly(2026, 1, 2));
+
+            var view = new FxCarryView();
+            view.Bind(() => null, () => "CNY", () => snapshot);
+            view.RenderPathComparison(SampleResponse(), "CNY");
+
+            var hint = Text(view, "FxLotsHint");
+            Assert.Contains("共 1 批", hint, StringComparison.Ordinal);
+            // 700,000 held, 500,000 explained → 200,000 has no receipt and is called out.
+            Assert.Contains("差 200,000", hint, StringComparison.Ordinal);
+            Assert.Contains("没有买入成本", hint, StringComparison.Ordinal);
+        });
+    }
+
     private static string Text(FxCarryView view, string name) =>
         ((TextBlock)view.FindName(name)!).Text;
 

@@ -632,15 +632,49 @@ public partial class FxCarryView : UserControl
         FxLotGrid.ItemsSource = rows;
 
         var open = rows.Count(row => row.RemainingValue != "0");
+        var baseCurrency = _baseCurrencyAccessor?.Invoke() ?? "CNY";
         FxLotsHint.Text = rows.Length == 0
             ? "账本里还没有换汇记录。每换一次就形成一批，冲正的那一笔不会留下来。"
             : $"共 {rows.Length} 批，其中 {open} 批还有剩余。部分换出按取得日先进先出（FIFO）：从最早的一批开始扣；" +
               "「原始投入」是这条链更早一层的钱，与「剩余部分的成本」是两个币种的数，不要相加。";
+
+        // WP-02 R5 on screen: when the ledger holds more of a currency than the batches can
+        // explain, that extra money has no purchase receipt. Say it here, where the user is
+        // looking at the batches — silently absorbing it would be the "0 as unknown" mistake.
+        foreach (var (currency, heldAmount) in HeldCash(snapshot, baseCurrency))
+        {
+            var explained = ledger.Lots
+                .Where(lot => string.Equals(lot.Currency, currency, StringComparison.OrdinalIgnoreCase))
+                .Sum(lot => lot.RemainingAmount);
+            var gap = heldAmount - explained;
+            if (Math.Abs(gap) < 0.005m)
+            {
+                continue;
+            }
+
+            FxLotsHint.Text += Environment.NewLine +
+                $"· 账本里 {currency} 共 {Number(heldAmount)}，批次能对上 {Number(explained)}：" +
+                $"差 {Number(Math.Abs(gap))} 不是换汇买来的（存入、利息或第三方转入），没有买入成本，" +
+                "所以只算到账额，不算收益。";
+        }
+
         foreach (var warning in ledger.Warnings)
         {
             FxLotsHint.Text += Environment.NewLine + "· " + warning;
         }
     }
+
+    /// <summary>Non-base cash the ledger reports, by currency — the ground truth for the gap note.</summary>
+    private static IEnumerable<(string Currency, decimal Amount)> HeldCash(
+        WorkspaceSnapshot snapshot, string baseCurrency) =>
+        snapshot.CashBalances
+            .Where(balance => balance.Amount > 0m
+                              && !string.Equals(balance.Currency, baseCurrency, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(balance => balance.Currency, StringComparer.OrdinalIgnoreCase)
+            .Select(group => (Currency: group.Key.ToUpperInvariant(), Amount: group.Sum(b => b.Amount)))
+            .OrderBy(pair => pair.Currency, StringComparer.Ordinal);
+
+    private static string Number(decimal value) => value.ToString("#,0.##", CultureInfo.InvariantCulture);
 
     private static string Format(decimal value) =>
         value.ToString("#,0.##", CultureInfo.InvariantCulture);
