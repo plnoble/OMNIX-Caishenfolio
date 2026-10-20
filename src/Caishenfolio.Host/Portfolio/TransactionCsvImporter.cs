@@ -96,6 +96,12 @@ public static class TransactionCsvImporter
         ["购汇"] = TransactionKind.FxExchange, ["fx"] = TransactionKind.FxExchange,
         ["期初持仓"] = TransactionKind.OpeningPosition, ["opening_position"] = TransactionKind.OpeningPosition,
         ["期初现金"] = TransactionKind.OpeningCash, ["opening_cash"] = TransactionKind.OpeningCash,
+        // Recognised so the refusal can explain itself (see BuildTransaction); WP-01 does not
+        // require CSV import of these, only that they never crash or get misread.
+        ["当天资产金额"] = TransactionKind.BalanceAssertion, ["balance_assertion"] = TransactionKind.BalanceAssertion,
+        ["余额断言"] = TransactionKind.BalanceAssertion,
+        ["账户间转移"] = TransactionKind.Transfer, ["transfer"] = TransactionKind.Transfer,
+        ["内部转移"] = TransactionKind.Transfer,
     };
 
     private static readonly string[] DateFormats =
@@ -103,16 +109,20 @@ public static class TransactionCsvImporter
         "yyyy-MM-dd", "yyyy/M/d", "yyyy.MM.dd", "yyyyMMdd", "d/M/yyyy", "MM/dd/yyyy",
     ];
 
-    /// <summary>Blank template with the header and one example row per common kind.</summary>
+    /// <summary>
+    /// Blank template with the header and one example row per common kind. Every row carries exactly
+    /// <see cref="TemplateHeader"/>'s columns: a short row shifts the rest of the line left, which
+    /// used to drop the note of every example into 对方账户.
+    /// </summary>
     public static string BuildTemplate() => DelimitedText.Write(
     [
         TemplateHeader,
-        ["2026-01-05", "华泰证券", "买入", "SSE:600000", "浦发银行", "1000", "10.05", "CNY", "5", "0", "", "", "", "首建仓"],
-        ["2026-02-09", "华泰证券", "卖出", "SSE:600000", "浦发银行", "400", "12.00", "CNY", "4", "6", "", "", "", ""],
-        ["2026-03-10", "华泰证券", "分红", "SSE:600000", "浦发银行", "", "", "CNY", "", "20", "320", "", "", "每10股3元"],
-        ["2026-01-02", "华泰证券", "入金", "", "", "", "", "CNY", "", "", "50000", "", "", "银证转入"],
-        ["2026-01-05", "天天基金", "买入", "FUND:110022", "易方达消费行业", "1000.25", "3.5012", "CNY", "1.5", "", "", "", "", "定投"],
-        ["2026-01-06", "盈透证券", "期初持仓", "NASDAQ:AAPL", "Apple", "10", "180", "USD", "", "", "", "", "", "建账前持有"],
+        ["2026-01-05", "华泰证券", "买入", "SSE:600000", "浦发银行", "1000", "10.05", "CNY", "5", "0", "", "", "", "", "首建仓"],
+        ["2026-02-09", "华泰证券", "卖出", "SSE:600000", "浦发银行", "400", "12.00", "CNY", "4", "6", "", "", "", "", ""],
+        ["2026-03-10", "华泰证券", "分红", "SSE:600000", "浦发银行", "", "", "CNY", "", "20", "320", "", "", "", "每10股3元"],
+        ["2026-01-02", "华泰证券", "入金", "", "", "", "", "CNY", "", "", "50000", "", "", "", "银证转入"],
+        ["2026-01-05", "天天基金", "买入", "FUND:110022", "易方达消费行业", "1000.25", "3.5012", "CNY", "1.5", "", "", "", "", "", "定投"],
+        ["2026-01-06", "盈透证券", "期初持仓", "NASDAQ:AAPL", "Apple", "10", "180", "USD", "", "", "", "", "", "", "建账前持有"],
         ["2026-01-20", "盈透证券", "换汇", "", "", "", "", "CNY", "2", "", "1000", "JPY", "155000", "", "按回单两边金额填写"],
     ]);
 
@@ -319,6 +329,14 @@ public static class TransactionCsvImporter
                     ParseDecimal(Cell(cells, columns, "counter_amount")),
                     Cell(cells, columns, "counter_currency"), fee, note,
                     ResolveAccount(Cell(cells, columns, "counter_account"), accountId, accountNameToId)),
+            // WP-01: neither of these is a standalone fact, so a CSV row cannot rebuild them.
+            // Say so plainly instead of failing as "unknown type".
+            TransactionKind.BalanceAssertion =>
+                throw new LedgerException(
+                    "「当天资产金额」不能通过 CSV 导入——它是对账户市值的断言，请在账户页按余额模式录入。"),
+            TransactionKind.Transfer =>
+                throw new LedgerException(
+                    "「账户间转移」不能通过 CSV 导入——两条腿必须成对写入，请在「新增记录」里录入。"),
             _ => throw new LedgerException($"暂不支持导入 {kind} 类型。"),
         };
 

@@ -86,7 +86,7 @@
                 Background="#3A2A20" BorderBrush="{StaticResource BrushDanger}" BorderThickness="1"
                 CornerRadius="8" Padding="12,10">
             <StackPanel>
-                <TextBlock Text="估值不完整 —— 以下项目未计入合计（不会按 0 计算）"
+                <TextBlock Text="估值不完整 —— 以下项目需要你知道（缺价格/汇率的不计入合计，不会按 0 计算）"
                            Foreground="{StaticResource BrushDanger}" FontWeight="SemiBold" />
                 <ItemsControl x:Name="WarningList" Margin="0,6,0,0">
                     <ItemsControl.ItemTemplate>

@@ -194,6 +194,13 @@ public sealed class PortfolioPricingService(IMarketPricingSource source, Portfol
             currencies.Add(balance.Currency);
         }
 
+        // A balance-mode account reports a total in its own currency, and that figure needs a
+        // rate even when the account holds no priced instrument and no tracked cash.
+        foreach (var assertion in state.BalanceAssertions.Values)
+        {
+            currencies.Add(assertion.Value.Currency);
+        }
+
         currencies.Remove(baseCurrency);
         return currencies.OrderBy(c => c, StringComparer.Ordinal).ToArray();
     }

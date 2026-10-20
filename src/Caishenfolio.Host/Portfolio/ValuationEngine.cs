@@ -81,6 +81,21 @@ public sealed record AllocationSlice
     public required decimal Weight { get; init; }
 }
 
+/// <summary>One account's worth, after the valuation-mode rules have been applied.</summary>
+public sealed record AccountValue
+{
+    public required string AccountId { get; init; }
+    public required AccountValuationMode Mode { get; init; }
+    /// <summary>False when a balance-mode account never reported a total: unknown, not zero (D3).</summary>
+    public required bool ValueKnown { get; init; }
+    /// <summary>Base-currency value; <see cref="Money.Zero"/> when <see cref="ValueKnown"/> is false.</summary>
+    public required Money TotalValue { get; init; }
+    /// <summary>Base-currency cash held in this account; always zero for a balance-mode account.</summary>
+    public required Money CashValue { get; init; }
+    /// <summary>Base-currency market value of holdings; always zero for a balance-mode account.</summary>
+    public required Money HoldingsValue { get; init; }
+}
+
 public sealed record PortfolioValuation
 {
     public required string BaseCurrency { get; init; }
@@ -93,6 +108,8 @@ public sealed record PortfolioValuation
     public required Money UnrealizedPnl { get; init; }
     public required Money RealizedPnl { get; init; }
     public required Money Dividends { get; init; }
+    /// <summary>Per-account totals; the sum of the known ones is <see cref="TotalValue"/>.</summary>
+    public required IReadOnlyList<AccountValue> AccountValues { get; init; }
     public required IReadOnlyList<AllocationSlice> ByAssetClass { get; init; }
     public required IReadOnlyList<AllocationSlice> ByRegion { get; init; }
     public required IReadOnlyList<AllocationSlice> ByCurrency { get; init; }
@@ -137,9 +154,30 @@ public static class ValuationEngine
         var unrealized = Money.Zero(baseCcy);
         var realized = Money.Zero(baseCcy);
         var dividends = Money.Zero(baseCcy);
+        var holdingsByAccount = new Dictionary<string, Money>(StringComparer.Ordinal);
+        var cashByAccountBase = new Dictionary<string, Money>(StringComparer.Ordinal);
 
         foreach (var position in state.Positions)
         {
+            if (IsBalanceAccount(accounts, position.AccountId))
+            {
+                // WP-01 R2/D1. A balance-mode account's worth is the number it reports, so a
+                // holding inside it must not be valued and added a second time. Writers refuse
+                // such a row; this guard is what keeps a hand-edited or imported file honest.
+                warnings.Add(
+                    $"账户 {AccountLabel(accounts, position.AccountId)} 是余额模式，但仍存在 {position.Symbol} 的持仓记录；" +
+                    "已按余额模式估值，这份持仓没有重复计入总资产。");
+                valuations.Add(new PositionValuation
+                {
+                    Position = position,
+                    Priced = false,
+                    CostBasisBase = Money.Zero(baseCcy),
+                    RealizedPnlBase = Money.Zero(baseCcy),
+                    DividendsBase = Money.Zero(baseCcy),
+                });
+                continue;
+            }
+
             var costBase = ConvertOrWarn(fx, position.CostBasis, baseCcy, position.Symbol, warnings);
             var realizedBase = ConvertOrWarn(fx, position.RealizedPnl, baseCcy, position.Symbol, warnings);
             var dividendsBase = ConvertOrWarn(fx, position.Dividends, baseCcy, position.Symbol, warnings);
@@ -200,6 +238,7 @@ public static class ValuationEngine
 
             holdingsValue += marketValueBase;
             unrealized += unrealizedBase;
+            Accumulate(holdingsByAccount, position.AccountId, marketValueBase);
 
             valuations.Add(new PositionValuation
             {
@@ -221,6 +260,13 @@ public static class ValuationEngine
         var cashByAccount = new Dictionary<string, Money>(StringComparer.Ordinal);
         foreach (var balance in state.CashBalances)
         {
+            if (IsBalanceAccount(accounts, balance.AccountId))
+            {
+                // R2 again, from the cash side: a balance-mode account's cash is already inside
+                // the total it reported, so adding the tracked cash would count it twice.
+                continue;
+            }
+
             if (!fx.TryConvert(balance.Money, baseCcy, out var converted))
             {
                 warnings.Add($"账户 {balance.AccountId} 的 {balance.Currency} 现金缺少汇率，未计入总额。");
@@ -230,10 +276,79 @@ public static class ValuationEngine
             cashValue += converted;
             Accumulate(cashByCurrency, balance.Currency, converted);
             Accumulate(cashByAccount, balance.AccountId, converted);
+            Accumulate(cashByAccountBase, balance.AccountId, converted);
         }
 
-        var totalValue = holdingsValue + cashValue;
+        // Balance-mode accounts: worth exactly what they last reported, converted at the
+        // valuation date. A missing report leaves the account unknown rather than zero (D3).
+        var balanceAccountValues = new Dictionary<string, Money>(StringComparer.Ordinal);
+        foreach (var account in BalanceAccounts(accounts))
+        {
+            if (!state.BalanceAssertions.TryGetValue(account.Id, out var assertion))
+            {
+                warnings.Add($"账户 {account.Name} 是余额模式，但还没有报过「当天资产金额」，市值未知（不是 0）。");
+                continue;
+            }
+
+            if (assertion.Date > asOf)
+            {
+                // The report was made after the day being valued; it cannot speak for that day.
+                warnings.Add(
+                    $"账户 {account.Name} 的最后一次「当天资产金额」报在 {assertion.Date:yyyy-MM-dd}，" +
+                    $"晚于本次估值日 {asOf:yyyy-MM-dd}：那天没有可用的总额，市值未知（不是 0）。");
+                continue;
+            }
+
+            if (fx.TryConvert(assertion.Value, baseCcy, out var asserted))
+            {
+                balanceAccountValues[account.Id] = asserted;
+
+                // The report is a statement about one day. Money recorded after it has moved the
+                // account for certain, yet the reported figure cannot have followed: keeping quiet
+                // here is exactly the silent double count R2 warns about (an internal move both
+                // lands in the receiving account and stays inside the sender's stale total).
+                // The figure is still the best fact available, so it stays counted — but the
+                // aggregate may no longer be presented as complete.
+                var movedSince = state.FlowsForAccount(account.Id)
+                    .Where(flow => flow.Date > assertion.Date && flow.Date <= asOf)
+                    .ToList();
+                if (movedSince.Count > 0)
+                {
+                    warnings.Add(
+                        $"账户 {account.Name} 最后一次上报总额是 {assertion.Date:yyyy-MM-dd}，" +
+                        $"之后到估值日 {asOf:yyyy-MM-dd} 还有 {movedSince.Count} 笔资金进出" +
+                        $"（最近 {movedSince.Max(flow => flow.Date):yyyy-MM-dd}）。这个账户的市值已经不准，" +
+                        "合计里仍按最后一次上报计入，所以合计不完整。");
+                }
+
+                continue;
+            }
+
+            warnings.Add(
+                $"账户 {account.Name} 的当天资产金额（{assertion.Date:yyyy-MM-dd}）缺少 " +
+                $"{assertion.Value.Currency} → {baseCcy} 的汇率，账户市值未知。");
+        }
+
+        var accountValues = BuildAccountValues(
+            accounts, balanceAccountValues, cashByAccountBase, holdingsByAccount, baseCcy);
+
+        // The portfolio total is detail accounts (cash + holdings) plus balance accounts (their
+        // own number), each counted exactly once.
+        var totalValue = holdingsValue + cashValue + Money.Sum(balanceAccountValues.Values, baseCcy);
         var weighted = ApplyWeights(valuations, totalValue);
+
+        // Allocation views must still show a balance account's worth; these buckets are for
+        // grouping only and never feed the portfolio total above.
+        var allocationByAccount = new Dictionary<string, Money>(cashByAccount, StringComparer.Ordinal);
+        var allocationByCurrency = new Dictionary<string, Money>(cashByCurrency, StringComparer.Ordinal);
+        foreach (var pair in balanceAccountValues)
+        {
+            Accumulate(allocationByAccount, pair.Key, pair.Value);
+            if (state.BalanceAssertions.TryGetValue(pair.Key, out var assertion))
+            {
+                Accumulate(allocationByCurrency, assertion.Value.Currency, pair.Value);
+            }
+        }
 
         return new PortfolioValuation
         {
@@ -247,6 +362,7 @@ public static class ValuationEngine
             UnrealizedPnl = unrealized,
             RealizedPnl = realized,
             Dividends = dividends,
+            AccountValues = accountValues,
             ByAssetClass = GroupBy(weighted, CashBucket(cashValue), totalValue,
                 p => AssetKey(p.Position.Symbol, instruments),
                 AssetLabel),
@@ -254,14 +370,75 @@ public static class ValuationEngine
                 p => RegionKey(p.Position.Symbol, instruments),
                 RegionLabel),
             // Currency exposure only means something if cash keeps its own currency.
-            ByCurrency = GroupBy(weighted, cashByCurrency, totalValue,
+            ByCurrency = GroupBy(weighted, allocationByCurrency, totalValue,
                 p => p.Position.Currency,
                 key => key),
-            ByAccount = GroupBy(weighted, cashByAccount, totalValue,
+            ByAccount = GroupBy(weighted, allocationByAccount, totalValue,
                 p => p.Position.AccountId,
                 key => accounts is not null && accounts.TryGetValue(key, out var account) ? account.Name : key),
             Warnings = warnings,
         };
+    }
+
+    private static bool IsBalanceAccount(IReadOnlyDictionary<string, Account>? accounts, string accountId) =>
+        accounts is not null
+        && accounts.TryGetValue(accountId, out var account)
+        && account.Mode == AccountValuationMode.Balance;
+
+    private static string AccountLabel(IReadOnlyDictionary<string, Account>? accounts, string accountId) =>
+        accounts is not null && accounts.TryGetValue(accountId, out var account) ? account.Name : accountId;
+
+    private static IEnumerable<Account> BalanceAccounts(IReadOnlyDictionary<string, Account>? accounts) =>
+        accounts is null
+            ? []
+            : accounts.Values
+                .Where(a => a.Mode == AccountValuationMode.Balance)
+                .OrderBy(a => a.Id, StringComparer.Ordinal);
+
+    private static IReadOnlyList<AccountValue> BuildAccountValues(
+        IReadOnlyDictionary<string, Account>? accounts,
+        IReadOnlyDictionary<string, Money> balanceValues,
+        IReadOnlyDictionary<string, Money> cashByAccount,
+        IReadOnlyDictionary<string, Money> holdingsByAccount,
+        string baseCurrency)
+    {
+        if (accounts is null)
+        {
+            return [];
+        }
+
+        var results = new List<AccountValue>();
+        foreach (var account in accounts.Values.OrderBy(a => a.Id, StringComparer.Ordinal))
+        {
+            if (account.Mode == AccountValuationMode.Balance)
+            {
+                var known = balanceValues.TryGetValue(account.Id, out var asserted);
+                results.Add(new AccountValue
+                {
+                    AccountId = account.Id,
+                    Mode = AccountValuationMode.Balance,
+                    ValueKnown = known,
+                    TotalValue = known ? asserted : Money.Zero(baseCurrency),
+                    CashValue = Money.Zero(baseCurrency),
+                    HoldingsValue = Money.Zero(baseCurrency),
+                });
+                continue;
+            }
+
+            var cash = cashByAccount.TryGetValue(account.Id, out var c) ? c : Money.Zero(baseCurrency);
+            var holdings = holdingsByAccount.TryGetValue(account.Id, out var h) ? h : Money.Zero(baseCurrency);
+            results.Add(new AccountValue
+            {
+                AccountId = account.Id,
+                Mode = AccountValuationMode.Detail,
+                ValueKnown = true,
+                TotalValue = cash + holdings,
+                CashValue = cash,
+                HoldingsValue = holdings,
+            });
+        }
+
+        return results;
     }
 
     private static Money? ConvertOrWarn(

@@ -188,6 +188,27 @@ public class IpoSubscriptionTests : IDisposable
         Assert.Equal(5_980m, position.RealizedPnl.Amount);
     }
 
+    /// <summary>
+    /// The 打新 ledger rows are written straight into `transactions`, and they carry a position.
+    /// A balance-mode account is worth the total it reports, so that path has to refuse them for the
+    /// same reason the normal write path does (WP-01 D1/D5) instead of leaving a warning to cope.
+    /// </summary>
+    [Fact]
+    public void ABalanceModeAccountRefusesAnIpoPositionToo()
+    {
+        using var store = PortfolioStore.UnderStateRoot(_root);
+        var account = Account.Create(
+            "券商总览", AccountKind.Securities, "CNY", id: "acct", mode: AccountValuationMode.Balance);
+        store.SaveAccount(account);
+
+        var refusal = Assert.Throws<LedgerException>(
+            () => store.SaveIpoSubscription(New().WithAllotment(500m).WithPayment(Paid, Listed)));
+
+        Assert.Contains("余额", refusal.Message, StringComparison.Ordinal);
+        Assert.Empty(store.ListTransactions());
+        Assert.Empty(store.ListIpoSubscriptions());
+    }
+
     [Fact]
     public void RemovingARecordRemovesItsPositionToo()
     {

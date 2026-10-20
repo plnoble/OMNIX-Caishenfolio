@@ -11,7 +11,7 @@ namespace Caishenfolio.Host.Portfolio;
 public sealed class PortfolioStore : IDisposable
 {
     /// <summary>Bump when the schema changes and add the matching step in <see cref="Migrate"/>.</summary>
-    public const int SchemaVersion = 9;
+    public const int SchemaVersion = 10;
 
     private readonly string _connectionString;
     private readonly object _gate = new();
@@ -58,13 +58,17 @@ public sealed class PortfolioStore : IDisposable
         {
             using var connection = Open();
             using var command = connection.CreateCommand();
+            // `mode` is written when the account is created and never overwritten afterwards. A rename or
+            // note edit that rebuilds the object with default values would otherwise silently turn a
+            // balance-mode account into a detail-mode one, changing what its value even means.
             command.CommandText = """
-                INSERT INTO accounts (id, name, kind, main_currency, broker, note, archived, created_at)
-                VALUES ($id, $name, $kind, $currency, $broker, $note, $archived, $created)
+                INSERT INTO accounts (id, name, kind, main_currency, mode, broker, note, archived, created_at)
+                VALUES ($id, $name, $kind, $currency, $mode, $broker, $note, $archived, $created)
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
                     kind = excluded.kind,
                     main_currency = excluded.main_currency,
+                    mode = accounts.mode,
                     broker = excluded.broker,
                     note = excluded.note,
                     archived = excluded.archived;
@@ -73,6 +77,7 @@ public sealed class PortfolioStore : IDisposable
             command.Parameters.AddWithValue("$name", account.Name);
             command.Parameters.AddWithValue("$kind", account.Kind.ToString());
             command.Parameters.AddWithValue("$currency", account.MainCurrency);
+            command.Parameters.AddWithValue("$mode", account.Mode.ToString());
             command.Parameters.AddWithValue("$broker", account.Broker);
             command.Parameters.AddWithValue("$note", account.Note);
             command.Parameters.AddWithValue("$archived", account.Archived ? 1 : 0);
@@ -90,7 +95,7 @@ public sealed class PortfolioStore : IDisposable
             using var connection = Open();
             using var command = connection.CreateCommand();
             command.CommandText = """
-                SELECT id, name, kind, main_currency, broker, note, archived, created_at
+                SELECT id, name, kind, main_currency, mode, broker, note, archived, created_at
                 FROM accounts
                 WHERE ($all = 1 OR archived = 0)
                 ORDER BY created_at, id;
@@ -106,10 +111,13 @@ public sealed class PortfolioStore : IDisposable
                     Name = reader.GetString(1),
                     Kind = Enum.TryParse<AccountKind>(reader.GetString(2), out var kind) ? kind : AccountKind.Other,
                     MainCurrency = reader.GetString(3),
-                    Broker = reader.GetString(4),
-                    Note = reader.GetString(5),
-                    Archived = reader.GetInt32(6) != 0,
-                    CreatedAt = DateTimeOffset.Parse(reader.GetString(7)),
+                    Mode = Enum.TryParse<AccountValuationMode>(reader.GetString(4), out var mode)
+                        ? mode
+                        : AccountValuationMode.Detail,
+                    Broker = reader.GetString(5),
+                    Note = reader.GetString(6),
+                    Archived = reader.GetInt32(7) != 0,
+                    CreatedAt = DateTimeOffset.Parse(reader.GetString(8)),
                 });
             }
 
@@ -122,6 +130,26 @@ public sealed class PortfolioStore : IDisposable
         lock (_gate)
         {
             using var connection = Open();
+
+            // Deleting only this account's own rows would leave the other leg of a transfer behind,
+            // pointing at an account that no longer exists: the cash would stay in the portfolio
+            // total with no account to explain it. Refuse instead of half-deleting.
+            using (var check = connection.CreateCommand())
+            {
+                check.CommandText = """
+                    SELECT COUNT(*) FROM transactions
+                    WHERE counter_account_id = $id AND counter_account_id <> '';
+                    """;
+                check.Parameters.AddWithValue("$id", accountId);
+                var linked = Convert.ToInt64(check.ExecuteScalar() ?? 0L);
+                if (linked > 0)
+                {
+                    throw new LedgerException(
+                        $"账户 {accountId} 是 {linked} 笔账户间转移的对方账户，先冲正这些转移再删除，" +
+                        "否则转移的另一半会指向一个不存在的账户。");
+                }
+            }
+
             using var tx = connection.BeginTransaction();
             using var command = connection.CreateCommand();
             command.Transaction = tx;
@@ -228,6 +256,7 @@ public sealed class PortfolioStore : IDisposable
             using var connection = Open();
             using var tx = connection.BeginTransaction();
             ValidateReversals(connection, tx, transactions);
+            ValidateValuationModes(connection, tx, transactions);
             var inserted = 0;
             foreach (var item in transactions)
             {
@@ -322,6 +351,76 @@ public sealed class PortfolioStore : IDisposable
         }
     }
 
+    /// <summary>
+    /// Rows of one account. A same-currency <see cref="TransactionKind.Transfer"/> is one row
+    /// carrying both legs, so the receiving account must see it too — otherwise the money would
+    /// appear in one account's ledger and nowhere in the other's (WP-01 A4).
+    /// </summary>
+    /// <summary>
+    /// WP-01 R2, enforced at the one write path so no page, importer, or future tool can bypass it.
+    ///
+    /// An account is either 明细 (its worth is recomputed from what it records) or 余额 (its worth
+    /// is the number it reports). Allowing both at once silently double counts: the reported total
+    /// already contains the holdings and cash that would be added again. The task book's ruling
+    /// (D1/D5) is to refuse the write and say why, rather than pick a winner quietly.
+    /// </summary>
+    private static void ValidateValuationModes(
+        SqliteConnection connection, SqliteTransaction tx, IEnumerable<LedgerTransaction> batch)
+    {
+        var modes = new Dictionary<string, AccountValuationMode>(StringComparer.Ordinal);
+        foreach (var item in batch)
+        {
+            // A reversal mirrors a fact that was already accepted; the pair cancels on replay.
+            if (item.IsReversal)
+            {
+                continue;
+            }
+
+            var mode = ModeOf(connection, tx, modes, item.AccountId);
+            if (mode == AccountValuationMode.Balance && item.Symbol.Length > 0)
+            {
+                throw new LedgerException(
+                    $"账户 {item.AccountId} 是余额模式：它的市值由「当天资产金额」直接报告，" +
+                    $"不能再记录 {item.Kind} {item.Symbol} 这类持仓/交易——那会把同一笔钱算两遍。" +
+                    "若要按交易记账，请新建一个明细模式账户。");
+            }
+
+            if (mode == AccountValuationMode.Detail && item.Kind == TransactionKind.BalanceAssertion)
+            {
+                throw new LedgerException(
+                    $"账户 {item.AccountId} 是明细模式：「当天资产金额」属于余额模式账户的操作。" +
+                    "请在该账户记录实际发生的交易，或新建一个余额模式账户来报告总额。");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Stored valuation mode of an account. An id with no account row reads as 明细, which is how
+    /// a ledger that names accounts it never saved (imports, tests, tools) has always behaved.
+    /// </summary>
+    private static AccountValuationMode ModeOf(
+        SqliteConnection connection,
+        SqliteTransaction tx,
+        Dictionary<string, AccountValuationMode> cache,
+        string accountId)
+    {
+        if (cache.TryGetValue(accountId, out var cached))
+        {
+            return cached;
+        }
+
+        using var command = connection.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = "SELECT mode FROM accounts WHERE id = $id;";
+        command.Parameters.AddWithValue("$id", accountId);
+        var raw = command.ExecuteScalar() as string;
+        var mode = Enum.TryParse<AccountValuationMode>(raw, out var parsed)
+            ? parsed
+            : AccountValuationMode.Detail;
+        cache[accountId] = mode;
+        return mode;
+    }
+
     public IReadOnlyList<LedgerTransaction> ListTransactions(
         string? accountId = null,
         string? symbol = null,
@@ -337,7 +436,7 @@ public sealed class PortfolioStore : IDisposable
                        fee, tax, cash_amount, counter_currency, counter_amount, fx_rate,
                        reverses_transaction_id, counter_account_id, note, import_batch_id, recorded_at
                 FROM transactions
-                WHERE ($account IS NULL OR account_id = $account)
+                WHERE ($account IS NULL OR account_id = $account OR counter_account_id = $account)
                   AND ($symbol IS NULL OR symbol = $symbol)
                   AND ($from IS NULL OR trade_date >= $from)
                   AND ($to IS NULL OR trade_date <= $to)
@@ -498,6 +597,12 @@ public sealed class PortfolioStore : IDisposable
         {
             using var connection = Open();
             using var tx = connection.BeginTransaction();
+
+            // This path writes ledger rows directly, so it runs the same valuation-mode check as the
+            // normal write path (WP-01 D1). A 打新 record carries a position, and a balance-mode
+            // account's worth is the total it reports: such a row has to be refused here too,
+            // otherwise a warning is the only thing between the user and a wrong total.
+            ValidateValuationModes(connection, tx, subscription.ToLedgerTransactions());
 
             using (var command = connection.CreateCommand())
             {
@@ -1156,8 +1261,38 @@ public sealed class PortfolioStore : IDisposable
                 """);
         }
 
+        if (current < 10)
+        {
+            // WP-01 R2/R6: an account must say whether its worth is derived from its own records
+            // (明细) or reported whole (余额). Every pre-v10 account keeps 明细 — an upgrade must
+            // never silently change what an existing ledger means. The column check keeps this
+            // step idempotent even against a file whose user_version lagged behind its schema.
+            if (!HasColumn(connection, tx, "accounts", "mode"))
+            {
+                Execute(connection, tx, "ALTER TABLE accounts ADD COLUMN mode TEXT NOT NULL DEFAULT 'Detail';");
+            }
+        }
+
         Execute(connection, tx, $"PRAGMA user_version = {SchemaVersion};");
         tx.Commit();
+    }
+
+    private static bool HasColumn(
+        SqliteConnection connection, SqliteTransaction tx, string table, string column)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = $"PRAGMA table_info({table});";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), column, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static int ReadUserVersion(SqliteConnection connection)

@@ -42,6 +42,7 @@ public partial class LedgerView : UserControl
         _model.PropertyChanged += OnModelChanged;
         AccountsGrid.ItemsSource = model.Accounts;
         TransactionsGrid.ItemsSource = model.Transactions;
+        AccountSummaryGrid.ItemsSource = model.AccountSummaries;
         Render();
     }
 
@@ -206,9 +207,14 @@ public partial class LedgerView : UserControl
                 ? k
                 : AccountKind.Securities;
             var currency = (NewAccountCurrency.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "CNY";
-            _model.AddAccount(name, kind, currency);
+            var mode = NewAccountBalanceMode.IsChecked == true
+                ? AccountValuationMode.Balance
+                : AccountValuationMode.Detail;
+            _model.AddAccount(name, kind, currency, mode: mode);
             NewAccountName.Clear();
-            Notify($"已新建账户「{name}」。");
+            Notify(mode == AccountValuationMode.Balance
+                ? $"已新建余额模式账户「{name}」：它只记投入/转出，市值靠报「当天资产金额」。"
+                : $"已新建账户「{name}」。");
             _ = ReloadAsync();
         }
         catch (Exception ex)
@@ -216,6 +222,49 @@ public partial class LedgerView : UserControl
             Notify($"新建账户失败：{ex.Message}");
         }
     }
+
+    /// <summary>
+    /// WP-01's main entry: the account-level cash-flow dialog. The old 「记一笔」 form below stays
+    /// reachable for the trade path — this button is the easy road, not a replacement.
+    /// </summary>
+    private void NewRecordButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_model is null)
+        {
+            return;
+        }
+
+        var accounts = _model.Snapshot?.Accounts ?? (IReadOnlyList<Account>)[];
+        if (accounts.Count == 0)
+        {
+            Notify("先新建一个账户，再新增记录。");
+            return;
+        }
+
+        var preselected = accounts.FirstOrDefault(a => a.Id == SelectedAccountId);
+        var window = new RecordWindow(_model.Workspace, accounts, preselected)
+        {
+            Owner = Window.GetWindow(this),
+        };
+        _ = window.ShowDialog();
+
+        if (window.Saved && window.Recorded is { } record)
+        {
+            Notify($"已记录：{record.TradeDate:yyyy-MM-dd} {AccountRecordLabel(record)}。");
+            _ = ReloadAsync();
+        }
+    }
+
+    private static string AccountRecordLabel(LedgerTransaction record) => record.Kind switch
+    {
+        TransactionKind.Deposit => $"投入 {PortfolioViewModel.Format(record.CashAmount)} {record.Currency}",
+        TransactionKind.Withdraw => $"转出 {PortfolioViewModel.Format(record.CashAmount)} {record.Currency}",
+        TransactionKind.BalanceAssertion => $"当天资产金额 {PortfolioViewModel.Format(record.CashAmount)} {record.Currency}",
+        TransactionKind.Transfer => $"转到另一个账户 {PortfolioViewModel.Format(record.CashAmount)} {record.Currency}",
+        TransactionKind.FxExchange => $"转到另一个账户 {PortfolioViewModel.Format(record.CashAmount)} {record.Currency}"
+            + $" → {PortfolioViewModel.Format(record.CounterAmount)} {record.CounterCurrency}",
+        _ => record.Kind.ToString(),
+    };
 
     private void RecordButton_OnClick(object sender, RoutedEventArgs e)
     {
@@ -291,7 +340,12 @@ public partial class LedgerView : UserControl
             TransactionKind.Withdraw =>
                 LedgerTransaction.Withdraw(accountId, date, amount, currency, note),
             TransactionKind.FxExchange => BuildFxExchange(accountId, date, amount, currency, fee, note),
-            _ => LedgerTransaction.OpeningCash(accountId, date, amount, currency, note),
+            TransactionKind.OpeningCash =>
+                LedgerTransaction.OpeningCash(accountId, date, amount, currency, note),
+            // No silent fallback: a kind this form does not offer must say so instead of being
+            // recorded as something else (the same rule the export and the row labels follow).
+            _ => throw new LedgerException(
+                $"这个表单不支持「{kind}」类型的记录，请用「新增记录」对话框或 CSV 导入。"),
         };
     }
 

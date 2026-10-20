@@ -14,6 +14,24 @@ public enum AccountKind
 }
 
 /// <summary>
+/// How an account's market value is established (WP-01 R2). An account is one or the other,
+/// never both: mixing them silently counts the same money twice.
+/// </summary>
+public enum AccountValuationMode
+{
+    /// <summary>
+    /// Default. Value = cash + Σ holdings, derived from the transactions recorded in this account.
+    /// </summary>
+    Detail,
+
+    /// <summary>
+    /// The account reports its own total ("当天资产金额"). Value comes from the latest assertion;
+    /// its cash and holdings are already inside that number and must not be added again.
+    /// </summary>
+    Balance,
+}
+
+/// <summary>
 /// A place where holdings and cash live. An account is deliberately not tied to one currency —
 /// a 港美股账户 holds HKD and USD cash side by side, so balances are keyed by (account, currency).
 /// </summary>
@@ -24,6 +42,11 @@ public sealed record Account
     public required AccountKind Kind { get; init; }
     /// <summary>Currency this account is usually funded in; reporting still rolls up to the portfolio base currency.</summary>
     public required string MainCurrency { get; init; }
+    /// <summary>
+    /// Whether this account is valued from its own records or from a reported total. Existing
+    /// accounts keep <see cref="AccountValuationMode.Detail"/>, so a v9 ledger reads as before.
+    /// </summary>
+    public AccountValuationMode Mode { get; init; } = AccountValuationMode.Detail;
     public string Broker { get; init; } = "";
     public string Note { get; init; } = "";
     public bool Archived { get; init; }
@@ -35,7 +58,8 @@ public sealed record Account
         string mainCurrency,
         string broker = "",
         string note = "",
-        string? id = null)
+        string? id = null,
+        AccountValuationMode mode = AccountValuationMode.Detail)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         return new Account
@@ -44,6 +68,7 @@ public sealed record Account
             Name = name.Trim(),
             Kind = kind,
             MainCurrency = Data.Currencies.Normalize(mainCurrency),
+            Mode = mode,
             Broker = broker.Trim(),
             Note = note.Trim(),
             CreatedAt = DateTimeOffset.UtcNow,

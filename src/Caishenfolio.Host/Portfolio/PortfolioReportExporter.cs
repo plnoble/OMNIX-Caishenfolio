@@ -101,7 +101,15 @@ public static class PortfolioReportExporter
         return DelimitedText.Write(rows);
     }
 
-    /// <summary>Round-trips through <see cref="TransactionCsvImporter"/>: the export is a valid import.</summary>
+    /// <summary>
+    /// The transaction book as a CSV.
+    ///
+    /// Every kind is exported under its own name — 「账户间转移」/「当天资产金额」 included — so a
+    /// human reading the file sees what actually happened. Round-tripping is narrower: the kinds
+    /// the importer accepts come back exactly, while 账户间转移 and 当天资产金额 are refused on
+    /// import with a stated reason, because their meaning depends on the account's valuation mode
+    /// and on the destination account, neither of which a flat row can carry honestly.
+    /// </summary>
     public static string TransactionsCsv(
         IEnumerable<LedgerTransaction> transactions,
         IReadOnlyDictionary<string, Account>? accounts = null,
@@ -133,7 +141,9 @@ public static class PortfolioReportExporter
                 txn.Tax == 0m ? "" : Number(txn.Tax),
                 txn.CashAmount == 0m ? "" : Number(txn.CashAmount),
                 txn.CounterCurrency,
-                txn.CounterAmount == 0m ? "" : Number(txn.CounterAmount),
+                // A 账户间转移 row carries one amount; repeating it under a currency that does not
+                // exist would read as a second, separate amount.
+                txn.CounterAmount == 0m || txn.CounterCurrency.Length == 0 ? "" : Number(txn.CounterAmount),
                 string.IsNullOrEmpty(txn.CounterAccountId) || txn.CounterAccountId == txn.AccountId
                     ? ""
                     : accounts is not null && accounts.TryGetValue(txn.CounterAccountId, out var counter)
@@ -173,7 +183,12 @@ public static class PortfolioReportExporter
         TransactionKind.Tax => "税",
         TransactionKind.FxExchange => "换汇",
         TransactionKind.OpeningPosition => "期初持仓",
-        _ => "期初现金",
+        TransactionKind.OpeningCash => "期初现金",
+        TransactionKind.BalanceAssertion => "当天资产金额",
+        TransactionKind.Transfer => "账户间转移",
+        // A new kind must never be exported under another kind's name: that is a silently wrong
+        // row in a file the user may re-import or hand to someone else.
+        _ => throw new LedgerException($"导出未支持 {kind} 类型。"),
     };
 
     private static string RegionOf(string symbol) =>

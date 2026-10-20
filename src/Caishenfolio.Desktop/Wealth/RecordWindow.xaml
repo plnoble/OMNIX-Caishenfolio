@@ -1,0 +1,98 @@
+<Window x:Class="Caishenfolio.Desktop.Wealth.RecordWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="新增记录"
+        Height="460" Width="520"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="{StaticResource BrushBgApp}"
+        Foreground="{StaticResource BrushFgPrimary}">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="新增记录" FontSize="18" FontWeight="SemiBold"
+                       Foreground="{StaticResource BrushAccent}" />
+            <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushFgMuted}" FontSize="12" Margin="0,4,0,0"
+                       Text="账户级现金流：投入、转出、转到自己的另一个账户、当天资产金额。日期 + 操作 + 金额 + 备注就是一笔。" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="1">
+            <TextBlock Text="账户" Style="{StaticResource SectionTitle}" />
+            <ComboBox x:Name="AccountCombo" Height="26" Margin="0,0,0,4"
+                      DisplayMemberPath="Name" SelectionChanged="AccountCombo_OnSelectionChanged" />
+            <TextBlock x:Name="ModeHintText" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,10"
+                       Foreground="{StaticResource BrushFgMuted}" />
+
+            <TextBlock Text="日期" Style="{StaticResource SectionTitle}" />
+            <TextBox x:Name="DateBox" Width="140" Padding="6" HorizontalAlignment="Left" Margin="0,0,0,10"
+                     ToolTip="yyyy-MM-dd，例如 2025-06-30" />
+
+            <TextBlock Text="操作" Style="{StaticResource SectionTitle}" />
+            <ComboBox x:Name="OperationCombo" Height="26" Margin="0,0,0,10"
+                      SelectionChanged="OperationCombo_OnSelectionChanged">
+                <ComboBoxItem Tag="Deposit" Content="投入（外部资金转入这个账户）" IsSelected="True" />
+                <ComboBoxItem Tag="Withdraw" Content="转出（把钱取出去）" />
+                <ComboBoxItem Tag="Move" Content="转到我的另一个账户" />
+                <ComboBoxItem Tag="BalanceAssertion" Content="当天资产金额（这个账户今天值多少）" />
+            </ComboBox>
+
+            <StackPanel x:Name="AmountRow" Orientation="Horizontal" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="金额" Style="{StaticResource SectionTitle}" />
+                    <TextBox x:Name="AmountBox" Width="160" Padding="6" />
+                </StackPanel>
+                <StackPanel Margin="10,0,0,0">
+                    <TextBlock Text="币种" Style="{StaticResource SectionTitle}" />
+                    <ComboBox x:Name="CurrencyCombo" Width="90" SelectedIndex="0"
+                              SelectionChanged="CurrencyCombo_OnSelectionChanged">
+                        <ComboBoxItem Content="CNY" IsSelected="True" />
+                        <ComboBoxItem Content="HKD" />
+                        <ComboBoxItem Content="USD" />
+                        <ComboBoxItem Content="JPY" />
+                    </ComboBox>
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel x:Name="CounterAccountRow" Visibility="Collapsed" Margin="0,0,0,10">
+                <TextBlock Text="转入账户" Style="{StaticResource SectionTitle}" />
+                <ComboBox x:Name="CounterAccountCombo" Height="26"
+                          DisplayMemberPath="Name" SelectionChanged="CounterAccountCombo_OnSelectionChanged" />
+            </StackPanel>
+
+            <StackPanel x:Name="CounterAmountRow" Orientation="Horizontal" Visibility="Collapsed" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="对方金额（按回单）" Style="{StaticResource SectionTitle}" />
+                    <TextBox x:Name="CounterAmountBox" Width="160" Padding="6"
+                             TextChanged="CounterAmountBox_OnTextChanged" />
+                </StackPanel>
+                <StackPanel Margin="10,0,0,0">
+                    <TextBlock Text="对方币种" Style="{StaticResource SectionTitle}" />
+                    <TextBlock x:Name="CounterCurrencyText" Text="—" VerticalAlignment="Center" Margin="0,6,0,0"
+                               Foreground="{StaticResource BrushFgMuted}" />
+                </StackPanel>
+            </StackPanel>
+
+            <TextBlock x:Name="FxRateText" Visibility="Collapsed" TextWrapping="Wrap" FontSize="12"
+                       Foreground="{StaticResource BrushFgMuted}" Margin="0,0,0,10" Text="汇率：—" />
+
+            <TextBlock Text="备注（可留空）" Style="{StaticResource SectionTitle}" />
+            <TextBox x:Name="NoteBox" Padding="6" Margin="0,0,0,4" />
+        </StackPanel>
+
+        <DockPanel Grid.Row="2" Margin="0,14,0,0">
+            <TextBlock x:Name="ErrorText" DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8"
+                       Foreground="{StaticResource BrushDanger}" FontSize="12" Text="" />
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="CancelButton" Content="取消" Padding="12,6" Margin="0,0,8,0"
+                        Click="CancelButton_OnClick" />
+                <Button x:Name="SaveButton" Content="保存" Padding="14,6"
+                        Background="#1F6B4A" BorderBrush="#2F9A6A" Click="SaveButton_OnClick" />
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</Window>

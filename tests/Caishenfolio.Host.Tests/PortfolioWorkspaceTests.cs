@@ -108,8 +108,14 @@ public class PortfolioWorkspaceTests : IDisposable
         Assert.Equal(40_000m, snapshot.Valuation.CashValue.Amount);
     }
 
+    /// <summary>
+    /// WP-01 R5. The valuation day's rate is on file, but the flow's own day's is not — so the
+    /// return is reported as incomplete with that date named. It must not be computed from the
+    /// valuation-day rate (which would print a confident 0.00% here) and must not vanish without
+    /// saying why. The old assertion only checked the null; this one pins the explanation.
+    /// </summary>
     [Fact]
-    public async Task XirrIsSkippedRatherThanWrongWhenFlowsAreMultiCurrency()
+    public async Task MultiCurrencyXirrIsIncompleteWhenTheFlowDaysRateIsMissing()
     {
         using var store = NewStore();
         var pricing = new StubPricing();
@@ -121,7 +127,90 @@ public class PortfolioWorkspaceTests : IDisposable
         var snapshot = await workspace.RefreshAsync(AsOf);
 
         Assert.Null(snapshot.Xirr);
+        Assert.False(snapshot.XirrStatus.IsComplete);
+        Assert.Contains(snapshot.XirrStatus.MissingInputs, item => item.Contains("2025-01-02", StringComparison.Ordinal));
+        Assert.Contains(snapshot.Warnings, w => w.Contains("2025-01-02", StringComparison.Ordinal));
         Assert.Equal(17_200m, snapshot.Valuation.TotalValue.Amount);
+
+        // The gap is specifically the flow's own day, not a total absence of rates.
+        var stored = store.ListFxRates();
+        Assert.Contains(stored, r => r.BaseCurrency == "USD" && r.QuoteCurrency == "CNY" && r.AsOf == AsOf);
+        Assert.DoesNotContain(stored, r => r.AsOf == Day1);
+    }
+
+    /// <summary>
+    /// The counterpart to the test above: once the flow's own day has a rate, the multi-currency
+    /// return is computable and uses that day's rate, not the later one.
+    /// </summary>
+    [Fact]
+    public async Task MultiCurrencyXirrUsesTheFlowDaysRateOnceItIsKnown()
+    {
+        using var store = NewStore();
+        var pricing = new StubPricing();
+        pricing.Rates[("USD", "CNY")] = 7.2m;
+        var workspace = new PortfolioWorkspace(store, pricing);
+        store.SaveFxRate(FxRate.Of("USD", "CNY", 7.0m, Day1, "fixture"));
+        workspace.Record(LedgerTransaction.Deposit("acct", Day1, 1_000m, "USD"));
+
+        var snapshot = await workspace.RefreshAsync(AsOf);
+
+        Assert.True(snapshot.XirrStatus.IsComplete);
+        Assert.NotNull(snapshot.Xirr);
+        // 1,000 USD in at 7.0 = 7,000 CNY; 1,000 USD valued at 7.2 = 7,200 CNY.
+        var expected = ReturnMetrics.Xirr([
+            new DatedAmount(Day1, -7_000m),
+            new DatedAmount(AsOf, 7_200m),
+        ]);
+        Assert.NotNull(expected);
+        Assert.Equal(expected!.Value, snapshot.Xirr!.Value, 9);
+    }
+
+    [Fact]
+    public async Task ABalanceAccountIsSaidToBeStaleWhenMoneyMovesAfterItsLastReport()
+    {
+        using var store = NewStore();
+        var workspace = new PortfolioWorkspace(store);
+        var account = workspace.AddAccount(
+            "零钱通", AccountKind.Bank, "CNY", mode: AccountValuationMode.Balance);
+
+        workspace.Record(LedgerTransaction.BalanceAssertion(account.Id, Day1, 50_000m, "CNY"));
+        // Money lands after the report was made: the reported total cannot have moved with it, so
+        // the account value — and the portfolio total — is quietly off by that amount.
+        workspace.Record(LedgerTransaction.Deposit(account.Id, new DateOnly(2025, 3, 1), 10_000m, "CNY"));
+
+        var snapshot = await workspace.RefreshAsync(AsOf);
+        var summary = snapshot.AccountSummaries.Single(s => s.AccountId == account.Id);
+
+        var warning = Assert.Single(summary.Warnings);
+        Assert.Contains("2025-01-02", warning);
+        Assert.Contains("2025-03-01", warning);
+        Assert.Contains("补报", warning);
+        // The two numbers the warning is about: reported 50 000, moved in 10 000.
+        Assert.Equal(50_000m, summary.TotalValueBase!.Value.Amount);
+        Assert.Equal(10_000m, summary.NetInvestedBase!.Value.Amount);
+    }
+
+    [Fact]
+    public async Task ABalanceAccountReportedAfterItsFlowsIsNotCalledStale()
+    {
+        using var store = NewStore();
+        var workspace = new PortfolioWorkspace(store);
+        var account = workspace.AddAccount(
+            "零钱通", AccountKind.Bank, "CNY", mode: AccountValuationMode.Balance);
+        var silent = workspace.AddAccount(
+            "压箱底", AccountKind.Bank, "CNY", mode: AccountValuationMode.Balance);
+
+        workspace.Record(LedgerTransaction.Deposit(account.Id, Day1, 10_000m, "CNY"));
+        workspace.Record(LedgerTransaction.BalanceAssertion(account.Id, new DateOnly(2025, 3, 1), 60_000m, "CNY"));
+        workspace.Record(LedgerTransaction.Deposit(silent.Id, Day1, 1_000m, "CNY"));
+
+        var snapshot = await workspace.RefreshAsync(AsOf);
+
+        Assert.Empty(snapshot.AccountSummaries.Single(s => s.AccountId == account.Id).Warnings);
+        // A balance account that never reported a total is unknown, not zero (D3) — and it must say so.
+        var neverReported = snapshot.AccountSummaries.Single(s => s.AccountId == silent.Id);
+        Assert.False(neverReported.ValueKnown);
+        Assert.Contains(neverReported.Warnings, w => w.Contains("未知"));
     }
 
     [Fact]

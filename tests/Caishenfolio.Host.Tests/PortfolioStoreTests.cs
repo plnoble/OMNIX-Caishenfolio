@@ -185,6 +185,43 @@ public class PortfolioStoreTests : IDisposable
     }
 
     [Fact]
+    public void RemovingAccountWhoseMoneyWasMovedOutOfIsRefused()
+    {
+        using var store = NewStore();
+        var from = store.SaveAccount(Account.Create("招行", AccountKind.Bank, "CNY"));
+        var to = store.SaveAccount(Account.Create("华泰", AccountKind.Securities, "CNY"));
+        store.AddTransaction(
+            LedgerTransaction.Transfer(from.Id, to.Id, new DateOnly(2026, 1, 2), 30_000m, "CNY"));
+
+        // Deleting the receiving account would leave a transfer leg pointing at nothing, with the
+        // cash still inside the portfolio total and no account to explain it.
+        var refusal = Assert.Throws<LedgerException>(() => store.RemoveAccount(to.Id));
+        Assert.Contains("转移", refusal.Message, StringComparison.Ordinal);
+        Assert.Equal(2, store.ListAccounts().Count);
+        Assert.Single(store.ListTransactions());
+
+        // The account that owns the transaction itself can still be removed.
+        Assert.True(store.RemoveAccount(from.Id));
+        Assert.Single(store.ListAccounts());
+    }
+
+    [Fact]
+    public void SavingAnAccountAgainDoesNotSilentlyChangeItsValuationMode()
+    {
+        using var store = NewStore();
+        var account = store.SaveAccount(Account.Create(
+            "券商总览", AccountKind.Securities, "CNY", mode: AccountValuationMode.Balance));
+
+        // A rename or note edit rebuilt from defaults must not demote the account to 明细模式:
+        // that would change what its value means without anybody asking for it.
+        store.SaveAccount(account with { Name = "券商总览（改名）", Mode = AccountValuationMode.Detail });
+
+        var listed = Assert.Single(store.ListAccounts());
+        Assert.Equal("券商总览（改名）", listed.Name);
+        Assert.Equal(AccountValuationMode.Balance, listed.Mode);
+    }
+
+    [Fact]
     public void CorrectionReplacesPhysicalRemovalOfATransaction()
     {
         using var store = NewStore();

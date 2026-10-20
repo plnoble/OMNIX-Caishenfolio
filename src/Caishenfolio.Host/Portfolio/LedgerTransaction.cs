@@ -30,6 +30,16 @@ public enum TransactionKind
     OpeningPosition,
     /// <summary>建账时的期初现金。</summary>
     OpeningCash,
+    /// <summary>
+    /// 当天资产金额：对账户市值的断言，含未记录持仓的浮盈。**不是现金流水**——它既不入现金余额，
+    /// 也不算外部流（否则净投入与 XIRR 全部失真）。只允许出现在余额模式账户上。
+    /// </summary>
+    BalanceAssertion,
+    /// <summary>
+    /// 转到我的另一个账户（同币种）。在账户层是外部流（A 出、B 进），在组合层是内部流：
+    /// 钱没有离开组合，组合 XIRR 必须排除它。跨币种转移仍走 <see cref="FxExchange"/>。
+    /// </summary>
+    Transfer,
 }
 
 /// <summary>Raised when a transaction or a sequence of transactions cannot be a real ledger fact.</summary>
@@ -236,6 +246,52 @@ public sealed record LedgerTransaction
             CounterAccountId = resolvedCounterAccount,
             FxRate = rate,
             Fee = fee,
+            Note = note.Trim(),
+        };
+    }
+
+    /// <summary>
+    /// Records the account's own total value on <paramref name="asOf"/> — the whole account,
+    /// including holdings whose trades were never recorded and their unrealized gain. The latest
+    /// assertion per account is what a balance-mode account is worth; assertions never add cash
+    /// and never count as an external flow (WP-01 R1).
+    /// </summary>
+    public static LedgerTransaction BalanceAssertion(
+        string accountId, DateOnly asOf, decimal amount, string currency, string note = "")
+    {
+        RequireNonNegative(amount, "当天资产金额");
+        return New(TransactionKind.BalanceAssertion, accountId, "", asOf, currency) with
+        {
+            CashAmount = amount,
+            Note = note.Trim(),
+        };
+    }
+
+    /// <summary>
+    /// Moves money between two of your own accounts in the same currency. One row carries both
+    /// legs — source account plus <paramref name="counterAccountId"/> — so the pair cannot come
+    /// apart, and both accounts see the same fact. Cross-currency moves are
+    /// <see cref="FxExchange"/>, not this (WP-01 D4).
+    /// </summary>
+    public static LedgerTransaction Transfer(
+        string accountId, string counterAccountId, DateOnly date, decimal amount, string currency,
+        string note = "")
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(counterAccountId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(accountId);
+        var counter = counterAccountId.Trim();
+        if (string.Equals(counter, accountId.Trim(), StringComparison.Ordinal))
+        {
+            throw new LedgerException("账户间转移的转入账户不能与转出账户相同。");
+        }
+
+        RequirePositive(amount, "转移金额");
+        return New(TransactionKind.Transfer, accountId, "", date, currency) with
+        {
+            CashAmount = amount,
+            CounterAccountId = counter,
+            // Same currency by construction: the incoming leg is the outgoing amount.
+            CounterAmount = amount,
             Note = note.Trim(),
         };
     }

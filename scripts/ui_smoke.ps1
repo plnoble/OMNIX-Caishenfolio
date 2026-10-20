@@ -977,6 +977,165 @@ function Invoke-LedgerTypeSwitchCheck {
     Add-Step "ledger type switch e2e" "passed" "入金 500 入账；买入在残留禁用金额文本（500）下仍入账，流水表可见 SSE:600000"
 }
 
+function Invoke-RecordDialogCheck {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId
+    )
+
+    # WP-01 目标 4 at page level: 「新增记录」 is the ordinary path for account cash flow, and a
+    # dialog's BAML is only parsed when it is shown. Type a real deposit into the isolated ledger,
+    # save it, and require the row to reach the transaction grid — the unit tests drive
+    # BuildTransaction, this drives the button.
+    try {
+        Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes -ErrorAction Stop
+    }
+    catch {
+        Add-Step "record dialog e2e" "skipped" "UIAutomation 不可用"
+        return
+    }
+
+    $automation = [System.Windows.Automation.AutomationElement]
+    $byPid = New-Object System.Windows.Automation.PropertyCondition(
+        $automation::ProcessIdProperty, $ProcessId)
+    $main = $automation::RootElement.FindFirst(
+        [System.Windows.Automation.TreeScope]::Children, $byPid)
+    if (-not $main) {
+        throw "新增记录：未找到主窗口自动化节点。"
+    }
+
+    function Find-ById([System.Windows.Automation.AutomationElement]$root, [string]$automationId) {
+        $root.FindFirst(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::AutomationIdProperty, $automationId)))
+    }
+    function Find-Button([System.Windows.Automation.AutomationElement]$root, [string]$name) {
+        @($root.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)))) |
+            Where-Object { $_.Current.Name -like "*$name*" } | Select-Object -First 1
+    }
+    function Set-Edit([System.Windows.Automation.AutomationElement]$root, [string]$id, [string]$value) {
+        $edit = Find-ById $root $id
+        if (-not $edit) { throw "新增记录：找不到输入框 $id。" }
+        $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value)
+    }
+    function Wait-ForText([System.Windows.Automation.AutomationElement]$root, [string]$marker) {
+        $deadline = (Get-Date).AddSeconds(20)
+        while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 400
+            $texts = @($root.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                (New-Object System.Windows.Automation.PropertyCondition(
+                    $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text))))
+            $joined = ($texts | ForEach-Object { $_.Current.Name }) -join "`n"
+            if ($joined -match [regex]::Escape($marker)) { return }
+        }
+        throw "新增记录：20 秒内未出现「$marker」。"
+    }
+    function Find-TopWindows {
+        @($automation::RootElement.FindAll(
+            [System.Windows.Automation.TreeScope]::Children, $byPid))
+    }
+    # Identify the dialog by its CONTENT, not its caption: the control that only exists in this
+    # window. A title-based lookup silently fails the moment a caption changes.
+    function Find-RecordWindow {
+        foreach ($window in (Find-TopWindows)) {
+            if (Find-ById $window "OperationCombo") { return $window }
+        }
+        $null
+    }
+    function Get-WindowDump {
+        (Find-TopWindows | ForEach-Object { "[$($_.Current.Name)] class=$($_.Current.ClassName)" }) -join " ; "
+    }
+    function Get-StatusText {
+        $status = Find-ById $main "StatusText"
+        if ($status) { $status.Current.Name } else { "" }
+    }
+    function Get-VisibleTextSample {
+        $texts = @($main.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text))))
+        $names = @($texts | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
+        ($names | Select-Object -First 18) -join " / "
+    }
+
+    $ledgerButton = Find-Button $main "账本"
+    if (-not $ledgerButton) { throw "新增记录：找不到「账本」导航按钮。" }
+    $ledgerButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 900
+
+    $main = $automation::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $byPid)
+    $openButton = Find-Button $main "新增记录"
+    if (-not $openButton) { throw "新增记录：找不到「新增记录」按钮。" }
+    $openButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+
+    $dialog = $null
+    $deadline = (Get-Date).AddSeconds(25)
+    while ((Get-Date) -lt $deadline -and -not $dialog) {
+        Start-Sleep -Milliseconds 300
+        $dialog = Find-RecordWindow
+    }
+    if (-not $dialog) {
+        throw ("新增记录：窗口 25 秒内没有出现（BAML 可能在运行时才坏）。" +
+            "主窗口状态栏：「$(Get-StatusText)」；顶层窗口：$(Get-WindowDump)；" +
+            "页面可见文本：$(Get-VisibleTextSample)")
+    }
+
+    # The four operations must all be on offer (disabled ones still enumerate while expanded).
+    $operations = Find-ById $dialog "OperationCombo"
+    if (-not $operations) { throw "新增记录：找不到操作下拉。" }
+    $expand = $operations.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    $expand.Expand()
+    Start-Sleep -Milliseconds 400
+    $items = @($operations.FindAll(
+        [System.Windows.Automation.TreeScope]::Descendants,
+        (New-Object System.Windows.Automation.PropertyCondition(
+            $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem))))
+    $names = @($items | ForEach-Object { $_.Current.Name })
+    foreach ($expected in @("投入", "转出", "转到我的另一个账户", "当天资产金额")) {
+        if (-not ($names | Where-Object { $_ -like "*$expected*" })) {
+            throw "新增记录：操作下拉里没有「$expected」（实际：$($names -join ' / ')）。"
+        }
+    }
+    try { $expand.Collapse() } catch { }
+    Start-Sleep -Milliseconds 200
+
+    # 投入 is the default operation: date + amount + note is the whole form.
+    Set-Edit $dialog "DateBox" "2025-06-30"
+    Set-Edit $dialog "AmountBox" "500"
+    Set-Edit $dialog "NoteBox" "冒烟新增记录500"
+    $save = Find-Button $dialog "保存"
+    if (-not $save) { throw "新增记录：找不到「保存」按钮。" }
+    $save.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+
+    $closed = $false
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline -and -not $closed) {
+        Start-Sleep -Milliseconds 300
+        $closed = -not (Find-RecordWindow)
+    }
+    if (-not $closed) { throw "新增记录：保存后窗口未关闭（错误可能留在对话框上）。" }
+
+    $main = $automation::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $byPid)
+    Wait-ForText $main "冒烟新增记录500"
+
+    # The four per-account numbers live in their own grid on the same page (WP-01 目标 3).
+    if (-not (Find-ById $main "AccountSummaryGrid")) {
+        throw "新增记录：账本页没有出现「账户汇总」表。"
+    }
+
+    Add-Step "record dialog e2e" "passed" "新增记录：四条操作在列；投入 500 保存后进入流水表，账户汇总表在位"
+
+    $overviewButton = Find-Button $main "总览"
+    if ($overviewButton) {
+        $overviewButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Start-Sleep -Milliseconds 600
+    }
+}
+
 function Invoke-DialogCheck {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
@@ -1089,6 +1248,11 @@ try {
     # Seed the ISOLATED ledger (recheck-5 R5-02 #1): one traceable CNY→JPY receipt so the
     # FX page's real prefill button has facts to bring in. The user's ledger is untouched —
     # this file lives only inside the smoke's own state root.
+    #
+    # WP-01: the DDL below stays at schema v9 on purpose — no `accounts.mode` column — so every
+    # run also exercises the real v9→v10 migration (the app must ALTER its own file and keep this
+    # seeded receipt). Do not "fix" it to v10; that would delete the only end-to-end migration
+    # check the app itself performs.
     $seedDb = Join-Path $smokeStateRoot "state\portfolio.db"
     New-Item -ItemType Directory -Path (Split-Path -Parent $seedDb) -Force | Out-Null
     $seedPy = Join-Path $smokeStateRoot "seed.py"
@@ -1318,6 +1482,7 @@ conn.close()
     # disable/restore on the FX page, then type switching + recording on the ledger page.
     Invoke-FxRangeSwitchCheck -ProcessId $appProcess.Id
     Invoke-LedgerTypeSwitchCheck -ProcessId $appProcess.Id
+    Invoke-RecordDialogCheck -ProcessId $appProcess.Id
 
     # A dialog's BAML is only parsed when it is shown, so opening it is the only way to catch a
     # XAML break in a window the main view never loads.

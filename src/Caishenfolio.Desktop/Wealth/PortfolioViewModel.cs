@@ -38,6 +38,8 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
     public ObservableCollection<AllocationRow> Allocation { get; } = [];
     public ObservableCollection<TransactionRow> Transactions { get; } = [];
     public ObservableCollection<AccountRow> Accounts { get; } = [];
+    /// <summary>The four per-account numbers (WP-01 目标 3), one row per account.</summary>
+    public ObservableCollection<AccountSummaryRow> AccountSummaries { get; } = [];
     public ObservableCollection<string> Warnings { get; } = [];
     public ObservableCollection<AlertRow> Alerts { get; } = [];
 
@@ -103,8 +105,13 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
         }
     }
 
-    public Account AddAccount(string name, AccountKind kind, string currency, string broker = "") =>
-        _workspace.AddAccount(name, kind, currency, broker);
+    public Account AddAccount(
+        string name,
+        AccountKind kind,
+        string currency,
+        string broker = "",
+        AccountValuationMode mode = AccountValuationMode.Detail) =>
+        _workspace.AddAccount(name, kind, currency, broker, mode);
 
     public void Record(LedgerTransaction transaction, string? instrumentName = null) =>
         _workspace.Record(transaction, instrumentName);
@@ -180,6 +187,12 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
             Warnings.Add(warning);
         }
 
+        AccountSummaries.Clear();
+        foreach (var summary in snapshot.AccountSummaries)
+        {
+            AccountSummaries.Add(AccountSummaryRow.From(summary, snapshot.BaseCurrency));
+        }
+
         Alerts.Clear();
         foreach (var alert in snapshot.Alerts)
         {
@@ -218,7 +231,7 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
                 ? $"已估值 {Positions.Count} 个持仓，{snapshot.Accounts.Count} 个账户。"
                 : snapshot.Risk.Coverage.IsUnknown
                     ? "估值不可用：所有持仓都未定价，集中度与收益均为未知（不会按 0 计算）。"
-                    : $"估值不完整：{snapshot.Warnings.Count} 项未计入合计，风险结论仅基于已定价部分（见下方提示）。";
+                    : $"估值不完整：{snapshot.Warnings.Count} 项需要处理，风险结论仅基于已确定的部分（见下方提示）。";
     }
 
     private void AddSlices(string dimension, IReadOnlyList<AllocationSlice> slices)
@@ -239,6 +252,11 @@ public sealed class PortfolioViewModel : INotifyPropertyChanged
 
     internal static string FormatSigned(decimal value, string currency) =>
         value.ToString("+#,0.##;-#,0.##;0", CultureInfo.InvariantCulture) + " " + currency;
+
+    /// <summary>Null means "no number", which shows as a dash — the reason lives in the note column.</summary>
+    internal static string FormatPercent(double? value) => value is { } rate
+        ? (rate * 100).ToString("+0.00;-0.00", CultureInfo.InvariantCulture) + "%"
+        : "—";
 
     private static string KindLabel(AccountKind kind) => kind switch
     {
@@ -336,7 +354,8 @@ public sealed record TransactionRow(
         new(
             txn.Id,
             txn.TradeDate.ToString("yyyy-MM-dd"),
-            accountNames.TryGetValue(txn.AccountId, out var name) ? name : txn.AccountId,
+            // A move involves two accounts: showing only the source hides where the money went.
+            CounterLabel(txn, accountNames),
             KindLabel(txn.Kind),
             txn.Symbol,
             txn.Quantity == 0m ? "" : PortfolioViewModel.Format(txn.Quantity),
@@ -348,6 +367,21 @@ public sealed record TransactionRow(
             txn.IsReversal,
             reversedIds.Contains(txn.Id),
             !txn.IsReversal && !reversedIds.Contains(txn.Id));
+
+    private static string CounterLabel(
+        LedgerTransaction txn, IReadOnlyDictionary<string, string> accountNames)
+    {
+        var own = accountNames.TryGetValue(txn.AccountId, out var name) ? name : txn.AccountId;
+        if (string.IsNullOrEmpty(txn.CounterAccountId))
+        {
+            return own;
+        }
+
+        var other = accountNames.TryGetValue(txn.CounterAccountId, out var counter)
+            ? counter
+            : txn.CounterAccountId;
+        return $"{own} → {other}";
+    }
 
     /// <summary>An exchange shows both receipt amounts — either side alone is half the fact.</summary>
     private static string AmountLabel(LedgerTransaction txn) => txn.Kind == TransactionKind.FxExchange
@@ -368,9 +402,54 @@ public sealed record TransactionRow(
         TransactionKind.Tax => "税",
         TransactionKind.FxExchange => "换汇",
         TransactionKind.OpeningPosition => "期初持仓",
-        _ => "期初现金",
+        TransactionKind.OpeningCash => "期初现金",
+        TransactionKind.BalanceAssertion => "当天资产金额",
+        TransactionKind.Transfer => "账户间转移",
+        // Never borrow another kind's name; an unmapped kind shows its raw name instead.
+        _ => kind.ToString(),
     };
 }
 
 public sealed record AccountRow(
     string Id, string Name, string Kind, string MainCurrency, string Cash, string Status);
+
+/// <summary>
+/// One account's 总资产 / 累计收益 / 资金加权收益率 / 年化 (WP-01 目标 3).
+///
+/// Unknown is shown as 「未知」 with the reason beside it, never as 0 or a bare dash: an account
+/// whose value nobody has reported must not look like an account worth nothing (D3).
+/// </summary>
+public sealed record AccountSummaryRow(
+    string Id,
+    string Name,
+    string Mode,
+    string TotalValue,
+    string CumulativePnl,
+    string MoneyWeightedReturn,
+    string Annualized,
+    string Note)
+{
+    public static AccountSummaryRow From(AccountSummary summary, string ccy)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+        var notes = new List<string>(summary.Warnings);
+        if (!string.IsNullOrEmpty(summary.MoneyWeightedReturn.Reason) && summary.MoneyWeightedReturn.Value is null)
+        {
+            notes.Add(summary.MoneyWeightedReturn.Reason);
+        }
+
+        return new AccountSummaryRow(
+            summary.AccountId,
+            summary.Name,
+            summary.Mode == AccountValuationMode.Balance ? "余额模式" : "明细模式",
+            summary.TotalValueBase is { } total
+                ? $"{PortfolioViewModel.Format(total.Amount)} {ccy}"
+                : "未知",
+            summary.CumulativePnlBase is { } pnl
+                ? PortfolioViewModel.FormatSigned(pnl.Amount, ccy)
+                : "未知",
+            PortfolioViewModel.FormatPercent(summary.MoneyWeightedReturn.Value),
+            PortfolioViewModel.FormatPercent(summary.Annualized),
+            string.Join("；", notes.Distinct(StringComparer.Ordinal)));
+    }
+}

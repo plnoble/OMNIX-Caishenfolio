@@ -6,11 +6,15 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <DockPanel Grid.Row="0" Margin="0,0,0,12">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="NewRecordButton" Content="新增记录" Padding="14,6" Margin="0,0,8,0"
+                        Background="#1F6B4A" BorderBrush="#2F9A6A" Click="NewRecordButton_OnClick"
+                        ToolTip="投入 / 转出 / 转到我的另一个账户 / 当天资产金额。只填日期、操作、金额、备注。" />
                 <Button x:Name="ExportButton" Content="导出流水" Padding="12,6" Margin="0,0,8,0"
                         Click="ExportButton_OnClick" />
                 <Button x:Name="RefreshButton" Content="刷新" Padding="12,6" Click="RefreshButton_OnClick" />
@@ -63,6 +67,9 @@
                         </ComboBox>
                         <Button Content="新建账户" Padding="10,4" Margin="0,0,0,6" Click="AddAccountButton_OnClick" />
                     </WrapPanel>
+                    <CheckBox x:Name="NewAccountBalanceMode" Content="余额模式（只报当天资产金额）"
+                              Foreground="{StaticResource BrushFgPrimary}" FontSize="12" Margin="0,0,0,0"
+                              ToolTip="余额模式：这个账户只记投入/转出，市值由你报的「当天资产金额」决定，不按持仓算。明细模式：按交易记账，市值由现金+持仓算出。" />
                 </StackPanel>
             </Border>
 
@@ -183,8 +190,37 @@
             </Border>
         </Grid>
 
-        <!-- Transactions -->
+        <!-- Account summary: what each account is worth and what it earned -->
         <Border Grid.Row="2" Background="{StaticResource BrushBgPanel}" CornerRadius="10"
+                BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="12" Margin="0,0,0,12">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Text="账户汇总" Style="{StaticResource SectionTitle}" />
+                <DataGrid Grid.Row="1" x:Name="AccountSummaryGrid" Style="{StaticResource WealthGrid}" Height="120"
+                          SelectionMode="Single" IsReadOnly="True">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="账户" Binding="{Binding Name}" Width="150"
+                                            ElementStyle="{StaticResource WealthCellText}" />
+                        <DataGridTextColumn Header="总资产" Binding="{Binding TotalValue}" Width="140"
+                                            ElementStyle="{StaticResource WealthCellText}" />
+                        <DataGridTextColumn Header="累计收益（总资产−净投入）" Binding="{Binding CumulativePnl}" Width="180"
+                                            ElementStyle="{StaticResource WealthCellText}" />
+                        <DataGridTextColumn Header="资金加权收益率" Binding="{Binding MoneyWeightedReturn}" Width="130"
+                                            ElementStyle="{StaticResource WealthCellText}" />
+                        <DataGridTextColumn Header="年化" Binding="{Binding Annualized}" Width="100"
+                                            ElementStyle="{StaticResource WealthCellText}" />
+                        <DataGridTextColumn Header="说明" Binding="{Binding Note}" Width="*"
+                                            ElementStyle="{StaticResource WealthCellText}" />
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
+        </Border>
+
+        <!-- Transactions -->
+        <Border Grid.Row="3" Background="{StaticResource BrushBgPanel}" CornerRadius="10"
                 BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" Padding="12">
             <Grid>
                 <Grid.RowDefinitions>

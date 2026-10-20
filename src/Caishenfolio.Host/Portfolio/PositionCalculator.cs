@@ -32,6 +32,8 @@ public static class PositionCalculator
         var positions = new Dictionary<(string Account, string Symbol), PositionAccumulator>();
         var cash = new Dictionary<(string Account, string Currency), decimal>();
         var flows = new List<ExternalFlow>();
+        var accountFlows = new List<ExternalFlow>();
+        var assertions = new Dictionary<string, BalanceAssertionPoint>(StringComparer.Ordinal);
 
         foreach (var txn in Ordered(transactions).Where(t => !cancelled.Contains(t.Id)))
         {
@@ -99,13 +101,37 @@ public static class PositionCalculator
                         txn.CounterCurrency, txn.CounterAmount);
                     break;
 
+                case TransactionKind.BalanceAssertion:
+                    // Not cash: a statement about what the account is worth. It replaces the
+                    // previous assertion instead of accumulating, and it never moves money (R1).
+                    assertions[txn.AccountId] = new BalanceAssertionPoint
+                    {
+                        Date = txn.TradeDate,
+                        Value = Money.Of(txn.CashAmount, txn.Currency),
+                        TransactionId = txn.Id,
+                    };
+                    break;
+
+                case TransactionKind.Transfer:
+                    // Both legs live on one row, so the pair cannot come apart. Same currency by
+                    // construction: the incoming leg is the outgoing amount.
+                    AddCash(cash, txn.AccountId, txn.Currency, -txn.CashAmount);
+                    AddCash(cash, txn.CounterAccountId, txn.Currency, txn.CounterAmount);
+                    break;
+
                 default:
                     throw new LedgerException($"未支持的流水类型 {txn.Kind}。");
             }
 
             if (txn.IsExternalFlow)
             {
-                flows.Add(ExternalFlowOf(txn));
+                var flow = ExternalFlowOf(txn);
+                flows.Add(flow);
+                accountFlows.Add(flow);
+            }
+            else
+            {
+                AddAccountScopedLegs(accountFlows, txn);
             }
         }
 
@@ -130,6 +156,11 @@ public static class PositionCalculator
             ExternalFlows = flows
                 .OrderBy(f => f.Date)
                 .ToArray(),
+            AccountFlows = accountFlows
+                .OrderBy(f => f.Date)
+                .ThenBy(f => f.AccountId, StringComparer.Ordinal)
+                .ToArray(),
+            BalanceAssertions = assertions,
         };
     }
 
@@ -139,6 +170,71 @@ public static class PositionCalculator
             .OrderBy(t => t.TradeDate)
             .ThenBy(t => t.RecordedAt)
             .ThenBy(t => t.Id, StringComparer.Ordinal);
+
+    /// <summary>
+    /// The legs of a move that stays inside the portfolio. Such a move is invisible to the
+    /// portfolio XIRR — no money crossed its boundary — but every leg is a real flow for the
+    /// account that sent or received it, which is what per-account returns need (R3/R4).
+    /// </summary>
+    private static void AddAccountScopedLegs(List<ExternalFlow> accountFlows, LedgerTransaction txn)
+    {
+        switch (txn.Kind)
+        {
+            case TransactionKind.Transfer:
+                if (txn.CounterAccountId.Length == 0)
+                {
+                    return;
+                }
+
+                accountFlows.Add(new ExternalFlow
+                {
+                    Date = txn.TradeDate,
+                    Amount = Money.Of(-txn.CashAmount, txn.Currency),
+                    Kind = TransactionKind.Transfer,
+                    AccountId = txn.AccountId,
+                    CounterAccountId = txn.CounterAccountId,
+                    CrossesPortfolioBoundary = false,
+                });
+                accountFlows.Add(new ExternalFlow
+                {
+                    Date = txn.TradeDate,
+                    Amount = Money.Of(txn.CounterAmount, txn.Currency),
+                    Kind = TransactionKind.Transfer,
+                    AccountId = txn.CounterAccountId,
+                    CounterAccountId = txn.AccountId,
+                    CrossesPortfolioBoundary = false,
+                });
+                break;
+
+            case TransactionKind.FxExchange:
+                var counter = txn.CounterAccountId.Length > 0 ? txn.CounterAccountId : txn.AccountId;
+                if (string.Equals(counter, txn.AccountId, StringComparison.Ordinal))
+                {
+                    // Both legs stay in one account: no money left it, so there is no flow.
+                    return;
+                }
+
+                accountFlows.Add(new ExternalFlow
+                {
+                    Date = txn.TradeDate,
+                    Amount = Money.Of(-txn.CashAmount, txn.Currency),
+                    Kind = TransactionKind.FxExchange,
+                    AccountId = txn.AccountId,
+                    CounterAccountId = counter,
+                    CrossesPortfolioBoundary = false,
+                });
+                accountFlows.Add(new ExternalFlow
+                {
+                    Date = txn.TradeDate,
+                    Amount = Money.Of(txn.CounterAmount, txn.CounterCurrency),
+                    Kind = TransactionKind.FxExchange,
+                    AccountId = counter,
+                    CounterAccountId = txn.AccountId,
+                    CrossesPortfolioBoundary = false,
+                });
+                break;
+        }
+    }
 
     private static ExternalFlow ExternalFlowOf(LedgerTransaction txn)
     {
