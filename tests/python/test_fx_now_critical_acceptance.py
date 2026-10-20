@@ -87,7 +87,11 @@ class A5ConvertNowTests(unittest.TestCase):
         now = payload["now"]
         self.assertAlmostEqual(now["gross_amount"], 16.333333, places=6)
         self.assertIn("name", now["baseline"])
-        self.assertEqual(now["baseline"]["frozen_at"], "2026-08-28")
+        # The freeze moment is the as_of of the quote the panel actually used — not "now",
+        # and not a date the panel invented.
+        self.assertEqual(now["baseline"]["frozen_at"], payload["quotes"]["USD/CNY"]["as_of"])
+        self.assertTrue(now["baseline"]["frozen_at"])
+        self.assertAlmostEqual(now["baseline"]["rate"], payload["quotes"]["USD/CNY"]["rate"], places=6)
         self.assertIn("USD/CNY", now["baseline"]["quote_pair"])
 
 
@@ -189,6 +193,12 @@ class A8UnknownCostStillValuatesTests(unittest.TestCase):
                 "base_amount": 100,
                 # No cost_in_base: the ledger has the cash but no receipt for how it was bought.
                 "held": {"currency": "JPY", "amount": 2450},
+                # An explicit cost model, so the net arrival is judged on its own merits
+                # rather than tripping over the cost-model tri-state (that is A9).
+                "costs": {
+                    "held_to_target": {"spread_pct": 0, "fixed_fee": 0},
+                    "base_to_target": {"spread_pct": 0, "fixed_fee": 0},
+                },
             },
         )
 
@@ -202,9 +212,9 @@ class A8UnknownCostStillValuatesTests(unittest.TestCase):
         self.assertIsNone(payload["held"]["implied_rate"])
 
         by_key = {p["key"]: p for p in payload["paths"]}
-        # Convert-what-you-hold is computable: 2,450 ÷ 150.
+        # Convert-what-you-hold is computable and its net is too: 2,450 ÷ 150.
         self.assertAlmostEqual(by_key["held_to_target"]["gross_amount"], 16.333333, places=6)
-        self.assertIsNotNone(by_key["held_to_target"]["net_amount"])
+        self.assertAlmostEqual(by_key["held_to_target"]["net_amount"], 16.333333, places=6)
         # The fresh-money path is unaffected.
         self.assertAlmostEqual(by_key["base_to_target"]["gross_amount"], 13.888889, places=6)
         # The detour comparison still works per unit of new money.

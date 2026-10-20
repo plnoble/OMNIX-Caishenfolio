@@ -169,20 +169,36 @@ class PathCost:
 
 @dataclass(frozen=True, slots=True)
 class HeldPosition:
-    """Money already held in a foreign currency, with what it actually cost — from the receipt."""
+    """Money already held in a foreign currency, with what it actually cost — from the receipt.
+
+    ``cost_in_base`` is optional (WP-02 R5/FX-02): the ledger can know how much foreign cash is
+    held without knowing what it cost (a deposit, a third-currency arrival, a receipt the user
+    has not entered). The amount alone is enough to value the pot and to compare the paths that
+    do not need a cost basis; only the profit answers become unavailable.
+    """
 
     currency: str
     amount: Decimal
-    cost_in_base: Decimal
+    cost_in_base: Decimal | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "amount", _dec(self.amount))
-        object.__setattr__(self, "cost_in_base", _dec(self.cost_in_base))
+        if self.cost_in_base is not None:
+            object.__setattr__(self, "cost_in_base", _dec(self.cost_in_base))
         object.__setattr__(self, "currency", self.currency.strip().upper())
 
     @property
-    def implied_rate(self) -> Decimal:
-        """Units of held currency obtained per 1 unit of base, at the historical purchase."""
+    def cost_known(self) -> bool:
+        return self.cost_in_base is not None and self.cost_in_base > 0
+
+    @property
+    def implied_rate(self) -> Decimal | None:
+        """Units of held currency obtained per 1 unit of base, at the historical purchase.
+
+        ``None`` when the receipt is missing — a missing cost is unknown, never zero.
+        """
+        if self.cost_in_base is None:
+            return None
         if self.cost_in_base <= 0:
             raise ValueError("历史成本必须大于 0。")
         return self.amount / self.cost_in_base
@@ -247,6 +263,110 @@ class PathResult:
 
 
 @dataclass(frozen=True, slots=True)
+class Baseline:
+    """What "now" is being compared against, named and dated (WP-02 D3/A5).
+
+    A number without its baseline is not an answer: +3% against what? The baseline here is the
+    one the task book picked — convert fresh base money into the target today — and it carries
+    the quote pair, the rate and the moment that rate was frozen.
+    """
+
+    name: str
+    quote_pair: str
+    rate: Decimal | None
+    frozen_at: str
+    note: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "quote_pair": self.quote_pair,
+            "rate": float(_q(self.rate)) if self.rate is not None else None,
+            "frozen_at": self.frozen_at,
+            "note": self.note,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class NowResult:
+    """What converting the held pot right now yields, and how that compares with the baseline.
+
+    ``cost_known=False`` means the receipt is missing: the arrival is still computable, the
+    profit is not, and ``pnl_vs_cost_in_base`` / ``advantage_vs_baseline_pct`` stay ``None``
+    (never zero).
+    """
+
+    target_currency: str
+    gross_amount: Decimal | None
+    net_amount: Decimal | None
+    advantage_vs_baseline_pct: Decimal | None
+    pnl_vs_cost_in_base: Decimal | None
+    held_cost_in_base: Decimal | None
+    cost_known: bool
+    baseline: Baseline
+    pnl_basis: str = "gross"
+    note: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        def pct(v: Decimal | None) -> float | None:
+            return None if v is None else float((v * _HUNDRED).quantize(_QUANT, rounding=ROUND_HALF_UP))
+
+        return {
+            "target_currency": self.target_currency,
+            "gross_amount": float(_q(self.gross_amount)) if self.gross_amount is not None else None,
+            "net_amount": float(_q(self.net_amount)) if self.net_amount is not None else None,
+            "advantage_vs_baseline_pct": pct(self.advantage_vs_baseline_pct),
+            "pnl_vs_cost_in_base": (
+                float(_q(self.pnl_vs_cost_in_base)) if self.pnl_vs_cost_in_base is not None else None
+            ),
+            "held_cost_in_base": (
+                float(_q(self.held_cost_in_base)) if self.held_cost_in_base is not None else None
+            ),
+            "cost_known": self.cost_known,
+            "pnl_basis": self.pnl_basis,
+            "baseline": self.baseline.to_dict(),
+            "note": self.note,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class FutureCritical:
+    """The future TARGET/HELD rate at which converting the held pot ties fresh money (R1/A6/A7).
+
+    The unit is the pair's own, e.g. ``1 USD = X JPY`` — NOT the old ``breakeven_held_rate``,
+    which is HELD-per-BASE (``USD/JPY ÷ USD/CNY``) and answers a different question. Both are
+    reported; they are different fields with different values on purpose.
+
+    ``required_move_pct`` is ``(current − critical) / current`` as a fraction: positive means the
+    pair has to fall for the two paths to tie, negative means it has to rise. ``solvable`` is
+    false — with a reason — when an input is missing; a closed form like this has at most one
+    root, so "no solution" is always "an input is missing", never a second root to choose from.
+    """
+
+    pair: str
+    unit: str
+    rate: Decimal | None
+    current_rate: Decimal | None
+    required_move_pct: Decimal | None
+    solvable: bool
+    reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        def pct(v: Decimal | None) -> float | None:
+            return None if v is None else float((v * _HUNDRED).quantize(_QUANT, rounding=ROUND_HALF_UP))
+
+        return {
+            "pair": self.pair,
+            "unit": self.unit,
+            "rate": float(_q(self.rate)) if self.rate is not None else None,
+            "current_rate": float(_q(self.current_rate)) if self.current_rate is not None else None,
+            "required_move_pct": pct(self.required_move_pct),
+            "solvable": self.solvable,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PathComparison:
     base_currency: str
     target_currency: str
@@ -262,6 +382,10 @@ class PathComparison:
     breakeven_held_rate: Decimal | None = None
     implied_cross: MarketQuote | None = None
     warnings: list[str] = field(default_factory=list)
+    #: What converting the held pot right now yields, against a named and dated baseline (A5).
+    now: "NowResult | None" = None
+    #: The future TARGET/HELD rate at which the two paths tie (A6/A7), with its own unit.
+    future_critical: "FutureCritical | None" = None
     #: Best exchange path on the single shared basis; None when nothing is comparable.
     best_path: str | None = None
     #: Which amounts the whole comparison is computed on: "net" when every comparable path
@@ -282,8 +406,13 @@ class PathComparison:
             else {
                 "currency": self.held.currency,
                 "amount": float(_q(self.held.amount)),
-                "cost_in_base": float(_q(self.held.cost_in_base)),
-                "implied_rate": float(_q(self.held.implied_rate)),
+                # Null when the receipt is missing: the amount is known, the cost is not.
+                "cost_in_base": (
+                    float(_q(self.held.cost_in_base)) if self.held.cost_in_base is not None else None
+                ),
+                "implied_rate": (
+                    float(_q(self.held.implied_rate)) if self.held.implied_rate is not None else None
+                ),
             },
             "quotes": {key: quote.to_dict() for key, quote in self.quotes.items()},
             "implied_cross": self.implied_cross.to_dict() if self.implied_cross else None,
@@ -294,6 +423,10 @@ class PathComparison:
             "held_advantage_net_pct": pct(self.held_advantage_net_pct),
             "breakeven_held_rate": (
                 float(_q(self.breakeven_held_rate)) if self.breakeven_held_rate is not None else None
+            ),
+            "now": self.now.to_dict() if self.now is not None else None,
+            "future_critical": (
+                self.future_critical.to_dict() if self.future_critical is not None else None
             ),
             "warnings": self.warnings,
             "disclaimer": (
@@ -345,6 +478,12 @@ def compare_paths(
     if missing:
         warnings.append(f"缺少关键报价：{'、'.join(missing)}。相关路径按未知处理，不估算。")
 
+    if held is not None and not held.cost_known:
+        warnings.append(
+            f"已持有 {_fmt(held.amount)} {held.currency} 没有买入成本（账本里缺这张回单）："
+            "到账额与路径照算，只有收益与临界汇率不可得。未知不是 0。"
+        )
+
     paths: list[PathResult] = []
 
     # ---- path 1: held -> target (one leg) --------------------------------------
@@ -355,14 +494,25 @@ def compare_paths(
         p1_net, p1_cost_detail, p1_note = _apply_costs(
             p1_gross, p1_cost, base, target, tb.rate if tb else None, held.currency
         )
-        p1_per_base = None if p1_net is None else p1_net * amount / held.cost_in_base
+        # Per-base normalisation needs the historical cost. Without it the path still has a
+        # gross and a net amount — it just cannot be put on the same per-base scale.
+        p1_per_base = (
+            None
+            if p1_net is None or not held.cost_known
+            else p1_net * amount / held.cost_in_base
+        )
         rate_txt = _fmt(th.rate)
+        starting = (
+            f"{_fmt(held.amount)} {held.currency}（当时实付 {_fmt(held.cost_in_base)} {base}）"
+            if held.cost_known
+            else f"{_fmt(held.amount)} {held.currency}（买入成本未知，只算到账额）"
+        )
         paths.append(
             PathResult(
                 key="held_to_target",
                 label=f"已持有 {held.currency} 直接换 {target}",
                 status="ok" if p1_net is not None else "gross_only",
-                starting_asset=f"{_fmt(held.amount)} {held.currency}（当时实付 {_fmt(held.cost_in_base)} {base}）",
+                starting_asset=starting,
                 opportunity_cost=f"放弃继续持有 {_fmt(held.amount)} {held.currency}",
                 legs=[
                     {
@@ -376,7 +526,9 @@ def compare_paths(
                 cost_detail=p1_cost_detail,
                 net_amount=p1_net,
                 net_per_base_amount=p1_per_base,
-                gross_per_base_amount=held.amount / th.rate * amount / held.cost_in_base,
+                gross_per_base_amount=(
+                    held.amount / th.rate * amount / held.cost_in_base if held.cost_known else None
+                ),
                 formula=f"毛额 = {held.amount} ÷ {th.rate} = {p1_gross:.6f} {target}",
                 note=p1_note,
             )
@@ -578,9 +730,10 @@ def compare_paths(
                     ),
                 }
         # Normalized per base_amount, on the SAME cost formula as net_split (P1-05): every
-        # executed conversion's fixed fee included, no second bookkeeping.
+        # executed conversion's fixed fee included, no second bookkeeping. A missing historical
+        # cost leaves the split's amounts computable but not placeable on the per-base scale.
         per_base_split = None
-        if net_split is not None and f1 is not None and f2 is not None:
+        if net_split is not None and f1 is not None and f2 is not None and held.cost_known:
             kept1 = Decimal(1) - f1
             kept2 = Decimal(1) - f2
             fee1 = _fixed_fee_in_target(c1, base, target, tb.rate)
@@ -609,6 +762,8 @@ def compare_paths(
                 gross_per_base_amount=(
                     gross_split * amount
                     / (held.cost_in_base * frac + amount * (Decimal(1) - frac))
+                    if held.cost_known
+                    else None
                 ),
                 formula=(
                     f"毛额 = {from_held} ÷ {th.rate} + {from_base} ÷ {tb.rate} = {gross_split:.6f} {target}"
@@ -620,6 +775,10 @@ def compare_paths(
     # ---- headline numbers -------------------------------------------------------
     advantage_gross = advantage_net = breakeven = None
     if held is not None and tb is not None and th is not None:
+        # The tie rate is a property of the two quotes alone, so it stays available even when
+        # the purchase cost is unknown — it is the *historical* comparison that needs the cost.
+        breakeven = th.rate / tb.rate
+    if held is not None and tb is not None and th is not None and held.cost_known:
         e = held.implied_rate
         # Gross: held path per base_amount vs new path per base_amount.
         held_gross_per_base = held.amount / th.rate * amount / held.cost_in_base
@@ -628,8 +787,7 @@ def compare_paths(
             advantage_gross = held_gross_per_base / new_gross_per_base - Decimal(1)
         if p1_per_base is not None and p2_net is not None and p2_net != 0:
             advantage_net = p1_per_base / p2_net - Decimal(1)
-        breakeven = th.rate / tb.rate
-        if e > 0:
+        if e is not None and e > 0:
             warnings.append(
                 f"历史实际 {base}/{held.currency} 成交价 {_fmt(e)}；当前隐含 {base}/{held.currency} = "
                 f"{_fmt(breakeven)}（= {th.rate} ÷ {tb.rate}）。"
@@ -682,6 +840,93 @@ def compare_paths(
                 "pct": float(_q(difference / best_value * _HUNDRED)),
             })
 
+    # ---- what converting now yields, against a named baseline (A5) ------------------
+    now_panel: NowResult | None = None
+    critical_panel: FutureCritical | None = None
+    if held is not None:
+        cost_known = held.cost_in_base is not None and held.cost_in_base > 0
+        baseline = Baseline(
+            name=f"现在直接用 {base} 换 {target}（新资金）",
+            quote_pair=f"{target}/{base}",
+            rate=tb.rate if tb is not None else None,
+            frozen_at=tb.as_of if tb is not None else "",
+            note="基准就是「不碰已持有的外币，今天用新资金直接换」；它的汇率与日期随结果一起给出。",
+        )
+        gross_now = p1_gross
+        net_now = p1_net
+        advantage_now = advantage_gross if cost_known else None
+        pnl_base: Decimal | None = None
+        if cost_known and gross_now is not None and tb is not None and held.cost_in_base is not None:
+            # What the pot is worth today in the base currency, minus what it actually cost.
+            pnl_base = gross_now * tb.rate - held.cost_in_base
+        notes_now: list[str] = []
+        if not cost_known:
+            notes_now.append(
+                "账本里有这笔外币、但没有它的买入成本：到账额照算，盈亏无法给出"
+                "（未知不是 0）。"
+            )
+        now_panel = NowResult(
+            target_currency=target,
+            gross_amount=gross_now,
+            net_amount=net_now,
+            advantage_vs_baseline_pct=advantage_now,
+            pnl_vs_cost_in_base=pnl_base,
+            held_cost_in_base=held.cost_in_base if cost_known else None,
+            cost_known=cost_known,
+            baseline=baseline,
+            note="；".join(notes_now),
+        )
+
+        # ---- the future rate at which the two paths tie (A6/A7) --------------------
+        pair = f"{target}/{held.currency}"
+        unit = f"1 {target} = X {held.currency}"
+        current = th.rate if th is not None else None
+        if not cost_known:
+            critical_panel = FutureCritical(
+                pair=pair,
+                unit=unit,
+                rate=None,
+                current_rate=current,
+                required_move_pct=None,
+                solvable=False,
+                reason="缺历史成本：账本里没有这笔外币的买入回单，算不出临界汇率。",
+            )
+        elif tb is None or th is None:
+            missing_pair = f"{target}/{base}" if tb is None else f"{target}/{held.currency}"
+            critical_panel = FutureCritical(
+                pair=pair,
+                unit=unit,
+                rate=None,
+                current_rate=current,
+                required_move_pct=None,
+                solvable=False,
+                reason=f"缺关键报价 {missing_pair}，临界汇率无法计算。",
+            )
+        elif th.rate <= 0:
+            critical_panel = FutureCritical(
+                pair=pair,
+                unit=unit,
+                rate=None,
+                current_rate=th.rate,
+                required_move_pct=None,
+                solvable=False,
+                reason="当前报价为 0，无法计算临界汇率。",
+            )
+        else:
+            # Tie condition: held.amount / T = base_amount / tb.rate, per unit of base outlay,
+            # i.e. T = (held.amount / cost_in_base) × tb.rate. Unit: HELD per TARGET, which is
+            # exactly how the pair is quoted — that is what R1 was missing.
+            critical_rate = held.implied_rate * tb.rate
+            critical_panel = FutureCritical(
+                pair=pair,
+                unit=unit,
+                rate=critical_rate,
+                current_rate=th.rate,
+                required_move_pct=(th.rate - critical_rate) / th.rate,
+                solvable=True,
+                reason="",
+            )
+
     implied_cross = None
     if tb is not None and th is not None and held is not None:
         implied_cross = MarketQuote(
@@ -713,6 +958,8 @@ def compare_paths(
         held_advantage_gross_pct=advantage_gross,
         held_advantage_net_pct=advantage_net,
         breakeven_held_rate=breakeven,
+        now=now_panel,
+        future_critical=critical_panel,
         implied_cross=implied_cross,
         warnings=warnings,
         best_path=best_key,

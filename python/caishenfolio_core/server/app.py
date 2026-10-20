@@ -409,11 +409,18 @@ class AnalyticsApp:
 
             held_raw = request.get("held") or None
             held: HeldPosition | None = None
-            if isinstance(held_raw, dict) and held_raw.get("amount") and held_raw.get("cost_in_base"):
+            if isinstance(held_raw, dict) and held_raw.get("currency"):
+                # WP-02 R5/FX-02: the amount alone is enough to value the pot and to compare
+                # the paths that do not need a cost basis. A missing cost is UNKNOWN — it must
+                # not make the whole holding disappear from the answer.
+                amount_raw = held_raw.get("amount")
+                if amount_raw is None:
+                    return {"ok": False, "error": "held.amount 不能为空（数量未知就无法估值）。"}
+                cost_raw = held_raw.get("cost_in_base")
                 held = HeldPosition(
                     currency=str(held_raw.get("currency", "")),
-                    amount=str(held_raw["amount"]),
-                    cost_in_base=str(held_raw["cost_in_base"]),
+                    amount=str(amount_raw),
+                    cost_in_base=None if cost_raw is None else str(cost_raw),
                 )
 
             costs_raw = request.get("costs")
