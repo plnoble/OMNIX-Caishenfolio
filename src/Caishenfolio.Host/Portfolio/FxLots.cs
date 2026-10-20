@@ -1,3 +1,5 @@
+using Caishenfolio.Host.Data;
+
 namespace Caishenfolio.Host.Portfolio;
 
 /// <summary>
@@ -106,7 +108,185 @@ public sealed record FxLotLedger
     public static FxLotLedger FromTransactions(IEnumerable<LedgerTransaction> transactions)
     {
         ArgumentNullException.ThrowIfNull(transactions);
-        throw new NotImplementedException("WP-02 P1：批次投影尚未实现。");
+        var all = transactions as IReadOnlyList<LedgerTransaction> ?? transactions.ToArray();
+
+        // A corrected exchange never happened, so neither did its batch (R2). Same rule the
+        // receipt reader uses: drop the reversal row and the row it reverses.
+        var cancelled = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var txn in all)
+        {
+            if (txn.IsReversal)
+            {
+                cancelled.Add(txn.ReversesTransactionId);
+                cancelled.Add(txn.Id);
+            }
+        }
+
+        var states = new List<LotState>();
+        var spends = new List<FxLotSpend>();
+        var warnings = new List<string>();
+
+        // The ledger's own stable order (date → recorded at → id): FIFO must not depend on the
+        // order a caller happens to hand the rows in.
+        foreach (var txn in PositionCalculator.Ordered(all.Where(t => !cancelled.Contains(t.Id))))
+        {
+            if (txn.Kind != TransactionKind.FxExchange)
+            {
+                continue;
+            }
+
+            // What left the account, fee included — the ledger's own convention (the fee is
+            // charged in the currency being converted).
+            var spendCurrency = Currencies.Normalize(txn.Currency);
+            var spendAmount = txn.CashAmount + txn.Fee;
+            var draw = Consume(states, spendCurrency, spendAmount, txn.TradeDate, warnings);
+            if (draw is { } taken)
+            {
+                spends.Add(new FxLotSpend
+                {
+                    TransactionId = txn.Id,
+                    Date = txn.TradeDate,
+                    AccountId = txn.AccountId,
+                    Currency = spendCurrency,
+                    Amount = spendAmount,
+                    Lots = taken.Taken,
+                    UncoveredAmount = taken.Uncovered,
+                });
+            }
+
+            var gotCurrency = Currencies.Normalize(txn.CounterCurrency);
+            if (gotCurrency.Length == 0 || txn.CounterAmount <= 0m)
+            {
+                continue;
+            }
+
+            states.Add(new LotState(new FxLot
+            {
+                Id = $"lot_{txn.Id}",
+                AcquiredOn = txn.TradeDate,
+                AccountId = txn.AccountId,
+                Currency = gotCurrency,
+                OriginalAmount = txn.CounterAmount,
+                RemainingAmount = txn.CounterAmount,
+                // R4: this segment's own payment, never the money further up the chain.
+                CostCurrency = spendCurrency,
+                CostAmount = spendAmount,
+                RemainingCostAmount = spendAmount,
+                SourceTransactionId = txn.Id,
+                Note = txn.Note,
+                FundedBy = draw?.Taken ?? [],
+            }));
+        }
+
+        return new FxLotLedger
+        {
+            Lots = states
+                .Select(state => state.ToRecord())
+                .OrderBy(lot => lot.AcquiredOn)
+                .ThenBy(lot => lot.Id, StringComparer.Ordinal)
+                .ToArray(),
+            Spends = spends,
+            Warnings = warnings,
+        };
+    }
+
+    /// <summary>
+    /// FIFO draw-down of one currency: oldest lot first, and never more than is left.
+    /// Null when this currency has no batches at all — spending fresh base money is how a batch
+    /// gets created, not a batch consumption, so it must not produce a spend row or a warning.
+    /// </summary>
+    private static (IReadOnlyList<FxLotConsumption> Taken, decimal Uncovered)? Consume(
+        List<LotState> lots, string currency, decimal amount, DateOnly date, List<string> warnings)
+    {
+        var tracked = lots
+            .Where(s => string.Equals(s.Lot.Currency, currency, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (tracked.Length == 0)
+        {
+            return null;
+        }
+
+        var taken = new List<FxLotConsumption>();
+        if (amount <= 0m)
+        {
+            return (taken, 0m);
+        }
+
+        var need = amount;
+        foreach (var state in tracked
+                     .Where(s => s.Lot.IsOpen)
+                     .OrderBy(s => s.Lot.AcquiredOn)
+                     .ThenBy(s => s.Lot.Id, StringComparer.Ordinal)
+                     .ToArray())
+        {
+            if (need <= 0m)
+            {
+                break;
+            }
+
+            var take = Math.Min(state.Remaining, need);
+            var costShare = state.Remaining > 0m
+                ? state.RemainingCost * take / state.Remaining
+                : 0m;
+            taken.Add(new FxLotConsumption
+            {
+                LotId = state.Lot.Id,
+                Currency = state.Lot.Currency,
+                Amount = take,
+                CostAmount = costShare,
+                CostCurrency = state.Lot.CostCurrency,
+            });
+            state.Remaining -= take;
+            state.RemainingCost -= costShare;
+            state.Normalize();
+            need -= take;
+        }
+
+        if (need <= 0m)
+        {
+            return (taken, 0m);
+        }
+
+        // Spent money the batches cannot explain (an external deposit, interest): report it and
+        // keep it out of every lot, because assigning it would corrupt their costs.
+        warnings.Add(
+            $"{date:yyyy-MM-dd} 有 {need:0.######} {currency} 支出未被批次覆盖" +
+            "（这部分外币不是换汇买来的），已单独记下，没有摊到任何批次上。");
+        return (taken, need);
+    }
+
+    /// <summary>Mutable accumulator; the public surface stays immutable records.</summary>
+    private sealed class LotState(FxLot lot)
+    {
+        public FxLot Lot { get; } = lot;
+
+        public decimal Remaining { get; set; } = lot.RemainingAmount;
+
+        public decimal RemainingCost { get; set; } = lot.RemainingCostAmount;
+
+        public void Normalize()
+        {
+            // Repeated proportional division leaves dust; a lot that is exhausted to a rounding
+            // ghost is empty, and its cost follows it to zero.
+            if (Math.Abs(Remaining) < 0.000_000_1m)
+            {
+                Remaining = 0m;
+            }
+
+            if (Math.Abs(RemainingCost) < 0.000_000_1m)
+            {
+                RemainingCost = 0m;
+            }
+
+            RemainingCost = Math.Max(RemainingCost, 0m);
+            Remaining = Math.Max(Remaining, 0m);
+        }
+
+        public FxLot ToRecord() => Lot with
+        {
+            RemainingAmount = Remaining,
+            RemainingCostAmount = RemainingCost,
+        };
     }
 
     /// <summary>Lots of one currency that still hold something, oldest first.</summary>

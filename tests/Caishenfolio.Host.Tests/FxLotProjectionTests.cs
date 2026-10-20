@@ -84,8 +84,8 @@ public class FxLotProjectionTests : IDisposable
         Assert.Equal(430_000m, march.RemainingAmount);
         Assert.Equal(20_000m, march.RemainingCostAmount);
 
-        // Conservation: what was bought minus what was spent is what is left.
-        Assert.Equal(1_030_000m - 300_000m, ledger.Lots.Sum(l => l.RemainingAmount));
+        // Conservation: what was bought minus what was spent is what is left, in that currency.
+        Assert.Equal(730_000m, ledger.Lots.Where(l => l.Currency == "JPY").Sum(l => l.RemainingAmount));
     }
 
     [Fact]
@@ -95,15 +95,16 @@ public class FxLotProjectionTests : IDisposable
         var marchBuy = TwoPurchases()[1];
         var spend = LedgerTransaction.FxExchange(Account, Day3, 300_000m, "JPY", 2_000m, "USD", 0m, "");
 
-        // Baseline: the spend eats into the January batch.
+        // Baseline: the spend eats into the January batch. (The USD the spend bought is a lot
+        // too, so scope these assertions to the JPY batches.)
         var before = FxLotLedger.FromTransactions([januaryBuy, marchBuy, spend]);
-        Assert.Equal(2, before.Lots.Count);
+        Assert.Equal(2, before.Lots.Count(l => l.Currency == "JPY"));
         Assert.Equal(300_000m, before.Lots.Single(l => l.AcquiredOn == Day1).RemainingAmount);
 
         // Reversing the March purchase removes exactly that batch.
         var afterMarch = FxLotLedger.FromTransactions(
             [januaryBuy, marchBuy, spend, LedgerTransaction.Reversal(marchBuy, "汇率谈错了")]);
-        var survivor = Assert.Single(afterMarch.Lots);
+        var survivor = Assert.Single(afterMarch.Lots.Where(l => l.Currency == "JPY"));
         Assert.Equal(Day1, survivor.AcquiredOn);
         Assert.Equal(300_000m, survivor.RemainingAmount);
 
@@ -111,7 +112,7 @@ public class FxLotProjectionTests : IDisposable
         // a projection of the ledger cannot keep pointing at a fact the user took back.
         var afterJanuary = FxLotLedger.FromTransactions(
             [januaryBuy, marchBuy, spend, LedgerTransaction.Reversal(januaryBuy, "成交价录错")]);
-        var remaining = Assert.Single(afterJanuary.Lots);
+        var remaining = Assert.Single(afterJanuary.Lots.Where(l => l.Currency == "JPY"));
         Assert.Equal(Day2, remaining.AcquiredOn);
         Assert.Equal(130_000m, remaining.RemainingAmount);
         var rederived = Assert.Single(afterJanuary.Spends);
