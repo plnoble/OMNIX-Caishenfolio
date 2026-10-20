@@ -201,6 +201,46 @@ public class FxCarryPageBatchTests : IDisposable
         });
     }
 
+    [Fact]
+    public void WithTheHeldQuoteMissingTheCardsSayWhyInsteadOfLookingEmpty()
+    {
+        WpfTestHost.Run(async () =>
+        {
+            // A held pot but no TARGET/HELD quote: the core reports now with no amounts and a
+            // critical rate it cannot solve. Empty cards look like a rendering bug, so each one
+            // has to say what is missing.
+            var response = SampleResponse();
+            response.Now = new FxNowDto
+            {
+                TargetCurrency = "USD",
+                CostKnown = true,
+                PnlBasis = "gross",
+                Baseline = new FxBaselineDto { Name = "现在直接用 CNY 换 USD（新资金）", QuotePair = "USD/CNY" },
+            };
+            response.FutureCritical = new FxCriticalDto
+            {
+                Pair = "USD/JPY",
+                Unit = "1 USD = X JPY",
+                Solvable = false,
+                Reason = "缺关键报价 USD/JPY，临界汇率无法计算。",
+            };
+            var view = new FxCarryView();
+            view.Bind(() => null, () => "CNY");
+
+            view.RenderPathComparison(response, "CNY");
+
+            Assert.Contains("缺报价", Text(view, "FxNowText"), StringComparison.Ordinal);
+            Assert.Contains("缺关键报价", Text(view, "FxCriticalText"), StringComparison.Ordinal);
+            // The baseline is still named; only its rate and freeze moment are unknown, and they
+            // must read as unknown rather than as 0.
+            var baseline = Text(view, "FxBaselineText");
+            Assert.Contains("现在直接用 CNY 换 USD", baseline, StringComparison.Ordinal);
+            Assert.Contains("= —", baseline, StringComparison.Ordinal);
+            Assert.DoesNotContain("= 0", baseline, StringComparison.Ordinal);
+            await Task.CompletedTask;
+        });
+    }
+
     private static string Text(FxCarryView view, string name) =>
         ((TextBlock)view.FindName(name)!).Text;
 

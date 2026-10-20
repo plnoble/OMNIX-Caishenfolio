@@ -572,7 +572,9 @@ public partial class FxCarryView : UserControl
                 parts.Add("买入成本未知，只算到账额");
             }
 
-            FxNowText.Text = string.Join("；", parts);
+            // Nothing computable (e.g. the TARGET/HELD quote is missing): say so instead of
+            // leaving an empty card that looks like a rendering bug.
+            FxNowText.Text = parts.Count == 0 ? "—（缺报价，无法给到账额）" : string.Join("；", parts);
         }
 
         var critical = response.FutureCritical;
@@ -605,7 +607,8 @@ public partial class FxCarryView : UserControl
         }
 
         FxBaselineText.Text = now?.Baseline is { } b
-            ? $"{b.Name}；{b.QuotePair} = {FormatRate(b.Rate ?? 0m)}，冻结于 {b.FrozenAt}"
+            ? $"{b.Name}；{b.QuotePair} = {(b.Rate is { } baselineRate ? FormatRate(baselineRate) : "—")}，冻结于 " +
+              (string.IsNullOrWhiteSpace(b.FrozenAt) ? "—" : b.FrozenAt)
             : "—";
     }
 
