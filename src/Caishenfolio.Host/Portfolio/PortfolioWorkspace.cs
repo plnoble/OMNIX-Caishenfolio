@@ -101,6 +101,20 @@ public sealed class PortfolioWorkspace
         var instruments = _store.ListInstruments();
 
         var warnings = new List<string>();
+
+        // WP-03 D2: a ledger written before the balance rule can already be negative. It opens
+        // as usual — nothing is rewritten — and the shortfall is named here so the user sees it
+        // instead of reading a silent zero on the overview.
+        foreach (var shortfall in state.HistoricalShortfalls)
+        {
+            var account = accounts.FirstOrDefault(a => a.Id == shortfall.AccountId);
+            var name = account?.Name ?? shortfall.AccountId;
+            warnings.Add(
+                $"账户 {name} 的 {shortfall.Currency} 现金是 {shortfall.Amount:#,0.##}（{shortfall.Currency}），" +
+                $"自 {shortfall.FirstDate:yyyy-MM-dd} 起就是负的——这是历史负余额：那时还没有余额约束，" +
+                "不是当前操作造成的。账本照常可用，已发生的记录不会被改写；新的换汇不会再允许花超。");
+        }
+
         IReadOnlyDictionary<string, PriceQuote> quotes;
         FxConverter fx;
 

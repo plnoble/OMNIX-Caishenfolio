@@ -91,7 +91,7 @@ public class HistoricalNegativeBalanceTests : IDisposable
 
         // Annotated in plain words, in the same warnings the UI already shows.
         Assert.Contains(
-            snapshot.Valuation.Warnings,
+            snapshot.Warnings,
             warning => warning.Contains("历史负余额", StringComparison.Ordinal));
     }
 
@@ -131,9 +131,9 @@ public class HistoricalNegativeBalanceTests : IDisposable
         var snapshot = await workspace.RefreshAsync(AsOf);
 
         var warning = Assert.Single(
-            snapshot.Valuation.Warnings.Where(w => w.Contains("历史负余额", StringComparison.Ordinal)));
+            snapshot.Warnings.Where(w => w.Contains("历史负余额", StringComparison.Ordinal)));
         Assert.Contains("100,000", warning, StringComparison.Ordinal);
-        Assert.Contains("JPY", warning, StringComparison.Ordinal);
+        // The money that went negative is the CNY that was never there, not the JPY it bought.`n        Assert.Contains("CNY", warning, StringComparison.Ordinal);
     }
 
     public void Dispose()
