@@ -24,10 +24,24 @@ public sealed class NotificationSettingsStore
     public NotificationSettings Load() =>
         NotificationSettings.FromJson(_store.LoadRawSetting(SettingKey));
 
+    /// <summary>
+    /// Writes the settings, settling every FX rule's identity first (WP-03 D5, audit): rules that
+    /// came from a settings file written before identity existed get an id, and a rule whose
+    /// parameters changed outside the editor gets its revision advanced. Doing it here rather than
+    /// only in the settings page means no caller can persist an identity-less rule.
+    /// </summary>
     public NotificationSettings Save(NotificationSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        _store.SaveRawSetting(SettingKey, settings.ToJson());
-        return settings;
+
+        var settled = settings with
+        {
+            FxAlertRules = FxAlertRuleIdentity
+                .Reconcile(settings.FxAlertRules, Load().FxAlertRules)
+                .ToList(),
+        };
+
+        _store.SaveRawSetting(SettingKey, settled.ToJson());
+        return settled;
     }
 }

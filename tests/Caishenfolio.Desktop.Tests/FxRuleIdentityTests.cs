@@ -58,6 +58,8 @@ public class FxRuleIdentityTests : IDisposable
             FillNetArrivalForm(window, 2m);
             var other = window.BuildFxRule();
             Assert.NotEqual(rule.StableId, other.StableId);
+            // The resource host requires Application.Current.Windows to be empty afterwards.
+            window.Close();
             await Task.CompletedTask;
         });
     }
@@ -90,13 +92,14 @@ public class FxRuleIdentityTests : IDisposable
                 AlertGatekeeper.KeyOf(Probe(noFee)),
                 AlertGatekeeper.KeyOf(Probe(withFee)));
 
-            FxPathFacts Facts(decimal gross) =>
-                new() { NetArrival = gross - (withFee.FixedFee ?? 0m) };
+            // Each rule judges the SAME gross arrival against its OWN cost model: net = gross − its fee.
+            FxPathFacts FactsFor(FxAlertRule rule, decimal gross) =>
+                new() { NetArrival = gross - (rule.FixedFee ?? 0m) };
 
             var roundOne = FxAlertRuleEvaluator.Evaluate(
                 [noFee, withFee],
                 _ => (7.2m, "fixture"),
-                rule => Facts(rule.FixedFee == 2m ? 999m + 2m : 1_001m));
+                rule => FactsFor(rule, 1_001m));
             var first = AlertGatekeeper.Filter(roundOne.Alerts, AlertNotificationState.Empty, Monday, Cooldown);
             Assert.Single(first.ToSend);
 
@@ -105,15 +108,73 @@ public class FxRuleIdentityTests : IDisposable
             var roundTwo = FxAlertRuleEvaluator.Evaluate(
                 [noFee, withFee],
                 _ => (7.2m, "fixture"),
-                rule => Facts(rule.FixedFee == 2m ? 1_001m + 2m : 1_003m));
+                rule => FactsFor(rule, 1_003m));
             var second = AlertGatekeeper.Filter(roundTwo.Alerts, delivered, Monday.AddMinutes(30), Cooldown);
 
             var sent = Assert.Single(second.ToSend);
             Assert.NotEqual(first.ToSend[0].RuleId, sent.RuleId);
             Assert.Equal(withFee.StableId, sent.RuleId);
+            // The resource host requires Application.Current.Windows to be empty afterwards.
+            window.Close();
             await Task.CompletedTask;
         });
     }
+
+    [Fact]
+    public void EditingARuleKeepsItsIdentityAndAdvancesTheRevisionOnlyWhenTheWatchChanges()
+    {
+        // D5: the settings page has to be able to CHANGE a rule without turning it into a new one.
+        // The identity survives the edit; only a change to what is watched advances the revision.
+        WpfTestHost.Run(async () =>
+        {
+            Directory.CreateDirectory(_root);
+            using var store = PortfolioStore.UnderStateRoot(_root);
+            var window = new PortfolioSettingsWindow(new PortfolioWorkspace(store));
+
+            FillNetArrivalForm(window, 0m);
+            Click(window, "AddFxRuleButton");
+            var row = Assert.Single(window.RuleRows);
+            var identity = row.Rule.Id;
+            Assert.False(string.IsNullOrWhiteSpace(identity));
+            Assert.Equal(0, row.Rule.Revision);
+            Assert.Equal(1_000m, row.Rule.ThresholdAmount);
+
+            // Load it, change what it watches for, apply.
+            Grid(window).SelectedItem = row;
+            Click(window, "EditFxRuleButton");
+            Assert.Equal("1000", ((TextBox)window.FindName("FxRuleThresholdBox")).Text);
+            ((TextBox)window.FindName("FxRuleThresholdBox")).Text = "1200";
+            Click(window, "AddFxRuleButton");
+
+            Assert.Same(row, Assert.Single(window.RuleRows));
+            Assert.Equal(identity, row.Rule.Id);
+            Assert.Equal(1_200m, row.Rule.ThresholdAmount);
+            Assert.Equal(1, row.Rule.Revision);
+
+            // Applying an unchanged edit is not a new watch: the revision stays where it is.
+            Click(window, "EditFxRuleButton");
+            Click(window, "AddFxRuleButton");
+            Assert.Equal(identity, row.Rule.Id);
+            Assert.Equal(1, row.Rule.Revision);
+
+            // And a rule added afterwards is still a separate identity, not a copy of this one.
+            FillNetArrivalForm(window, 2m);
+            Click(window, "AddFxRuleButton");
+            Assert.Equal(2, window.RuleRows.Count);
+            Assert.NotEqual(identity, window.RuleRows[1].Rule.Id);
+            // The resource host requires Application.Current.Windows to be empty afterwards.
+            window.Close();
+            await Task.CompletedTask;
+        });
+    }
+
+    private static System.Windows.Controls.DataGrid Grid(PortfolioSettingsWindow window) =>
+        (System.Windows.Controls.DataGrid)window.FindName("FxRuleGrid");
+
+    /// <summary>Presses a named button in the window, i.e. the user's path, not a private call.</summary>
+    private static void Click(PortfolioSettingsWindow window, string buttonName) =>
+        ((Button)window.FindName(buttonName)).RaiseEvent(
+            new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
 
     /// <summary>The alert a rule would produce when it fires — only its identity matters here.</summary>
     private static PortfolioAlert Probe(FxAlertRule rule) => new()

@@ -96,6 +96,9 @@ public partial class PortfolioSettingsWindow : Window
     private readonly ObservableCollection<FxRuleRow> _fxRules = [];
     private readonly NotificationSettingsStore _notifications;
 
+    /// <summary>The identity of the rule currently loaded into the form for editing, if any.</summary>
+    private string? _editingRuleId;
+
     public PortfolioSettingsWindow(PortfolioWorkspace workspace, PricePlanStore? planStore = null)
     {
         InitializeComponent();
@@ -370,9 +373,27 @@ public partial class PortfolioSettingsWindow : Window
     {
         try
         {
-            var rule = BuildFxRule();
+            var built = BuildFxRule();
+
+            // WP-03 D5 (audit): a rule the user creates carries its own durable identity, and an
+            // edit keeps that identity while advancing the revision. Without this the identity
+            // collapses into "same kind, same currencies", and two rules that differ only in their
+            // cost model silence each other.
+            if (_editingRuleId is { } editing && _fxRules.FirstOrDefault(r => r.Rule.Id == editing) is { } row)
+            {
+                var updated = FxAlertRuleIdentity.WithEditedParameters(row.Rule, built);
+                row.Rule = updated;
+                var bumped = updated.Revision > row.Rule.Revision;
+                EndRuleEdit();
+                NotifyStatusText.Text = bumped
+                    ? $"已更新规则：{updated.Describe()}。（提醒身份不变，版本推进到 r{updated.Revision}）记得点「保存」。"
+                    : $"已更新规则：{updated.Describe()}。（内容没变，版本仍是 r{updated.Revision}）记得点「保存」。";
+                return;
+            }
+
+            var rule = built;
             _fxRules.Add(new FxRuleRow { Rule = rule });
-            NotifyStatusText.Text = $"已添加规则：{rule.Describe()}。记得点「保存」。";
+            NotifyStatusText.Text = $"已添加规则：{rule.Describe()}。（它有自己的身份，以后改参数不会变成新规则）记得点「保存」。";
         }
         catch (Exception ex) when (ex is LedgerException or ArgumentException or FormatException)
         {
@@ -380,12 +401,89 @@ public partial class PortfolioSettingsWindow : Window
         }
     }
 
+    /// <summary>Loads the selected rule back into the form so its parameters can be changed in place.</summary>
+    private void EditFxRuleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (FxRuleGrid.SelectedItem is not FxRuleRow row)
+        {
+            NotifyStatusText.Text = "请先在规则列表里选中要修改的一行。";
+            return;
+        }
+
+        LoadFxRuleIntoForm(row.Rule);
+        _editingRuleId = row.Rule.Id;
+        AddFxRuleButton.Content = "应用修改";
+        NotifyStatusText.Text = "正在修改选中规则：改完参数点「应用修改」。提醒身份保留，只有实际内容变了才推进版本。";
+    }
+
+    private void EndRuleEdit()
+    {
+        _editingRuleId = null;
+        AddFxRuleButton.Content = "添加规则";
+    }
+
+    /// <summary>The inverse of <see cref="BuildFxRule"/>: puts a stored rule back on the form.</summary>
+    private void LoadFxRuleIntoForm(FxAlertRule rule)
+    {
+        SelectByTag(FxRuleKindCombo, rule.Kind.ToString());
+        FxRulePairBox.Text = rule.Pair;
+        FxRuleLowerBox.Text = rule.Lower?.ToString("G29", CultureInfo.InvariantCulture) ?? "";
+        FxRuleUpperBox.Text = rule.Upper?.ToString("G29", CultureInfo.InvariantCulture) ?? "";
+        SelectByContent(FxRuleBaseCombo, rule.BaseCurrency);
+        SelectByContent(FxRuleHeldCombo, rule.HeldCurrency);
+        SelectByContent(FxRuleTargetCombo, rule.TargetCurrency);
+        FxRuleThresholdBox.Text = rule.Kind switch
+        {
+            FxAlertRuleKind.NetArrivalAbove =>
+                rule.ThresholdAmount?.ToString("G29", CultureInfo.InvariantCulture) ?? "",
+            FxAlertRuleKind.HeldAdvantageAbove =>
+                rule.ThresholdPct?.ToString("G29", CultureInfo.InvariantCulture) ?? "",
+            _ => "",
+        };
+        FxRuleSpreadBox.Text = rule.SpreadPct?.ToString("G29", CultureInfo.InvariantCulture) ?? "";
+        FxRuleFixedFeeBox.Text = rule.FixedFee?.ToString("G29", CultureInfo.InvariantCulture) ?? "";
+        FxRuleKind_OnSelectionChanged(FxRuleKindCombo, null!);
+    }
+
+    private static void SelectByTag(ComboBox combo, string tag)
+    {
+        foreach (ComboBoxItem item in combo.Items)
+        {
+            if (string.Equals(item.Tag as string, tag, StringComparison.Ordinal))
+            {
+                combo.SelectedItem = item;
+                return;
+            }
+        }
+    }
+
+    private static void SelectByContent(ComboBox combo, string content)
+    {
+        foreach (ComboBoxItem item in combo.Items)
+        {
+            if (string.Equals(item.Content?.ToString(), content, StringComparison.OrdinalIgnoreCase))
+            {
+                combo.SelectedItem = item;
+                return;
+            }
+        }
+    }
+
+    /// <summary>The rules the page currently holds — used by tests that press the real buttons.</summary>
+    internal IReadOnlyList<FxRuleRow> RuleRows => _fxRules.ToList();
+
     /// <summary>
-    /// Builds the rule the form currently describes. Internal so the tests drive the REAL
-    /// construction path (the audit's point: identity must be assigned here, not derived later) —
-    /// the window is never shown and never bound to a real ledger in those tests.
+    /// Builds the rule the form currently describes — **with its identity**. This is the creation
+    /// path the audit asked for: every rule that leaves this form owns a durable id, so two rules
+    /// that differ only in their cost model are two watches rather than one. Editing goes through
+    /// <see cref="FxAlertRuleIdentity.WithEditedParameters"/>, which keeps the existing id.
+    /// Internal so the tests drive the REAL construction path (the window is never shown and never
+    /// bound to a real ledger in those tests).
     /// </summary>
-    internal FxAlertRule BuildFxRule()
+    internal FxAlertRule BuildFxRule() =>
+        FxAlertRuleIdentity.AssignNewIdentity(BuildFxRuleFromForm());
+
+    private FxAlertRule BuildFxRuleFromForm()
     {
         var kind = SelectedFxRuleKind();
         if (kind == FxAlertRuleKind.RateBand)
@@ -504,6 +602,12 @@ public partial class PortfolioSettingsWindow : Window
         }
 
         _fxRules.Remove(row);
+        if (row.Rule.Id == _editingRuleId)
+        {
+            // The rule being edited is gone: leave edit mode rather than applying to nothing.
+            EndRuleEdit();
+        }
+
         NotifyStatusText.Text = $"已移除规则：{row.Describe}。记得点「保存」。";
     }
 

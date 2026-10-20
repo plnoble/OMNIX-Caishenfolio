@@ -90,18 +90,28 @@ public sealed record FxAlertRule
     /// R4/D5: the档位 this rule watches at — the threshold, not the whole rule. Two rules that
     /// differ only here must not share a dedupe key.
     /// </summary>
+    /// <remarks>
+    /// Rounded to six decimals this collapsed distinct thresholds into one band (audit: 7.1000001
+    /// and 7.1000002 both became "band:7.1~…"), while the threshold itself was parsed with no such
+    /// limit. The key therefore keeps the full value, with trailing zeros trimmed so the levels
+    /// users already have (1000, 0.00, 3.0) keep exactly the strings they had — a key is not a
+    /// display string, and it must not churn for values that did not change.
+    /// </remarks>
     public string Level => Kind switch
     {
-        FxAlertRuleKind.RateBand =>
-            $"band:{Lower?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) ?? "-"}" +
-            $"~{Upper?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) ?? "-"}",
-        FxAlertRuleKind.HeldAdvantageAbove =>
-            $"pct:{ThresholdPct?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) ?? "-"}",
-        FxAlertRuleKind.NetArrivalAbove =>
-            $"amt:{ThresholdAmount?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) ?? "-"}",
+        FxAlertRuleKind.RateBand => $"band:{LevelKey(Lower)}~{LevelKey(Upper)}",
+        FxAlertRuleKind.HeldAdvantageAbove => $"pct:{LevelKey(ThresholdPct)}",
+        FxAlertRuleKind.NetArrivalAbove => $"amt:{LevelKey(ThresholdAmount)}",
         FxAlertRuleKind.BreakevenCrossed => "be",
         _ => "?",
     };
+
+    /// <summary>
+    /// "G29" is the round-trip form for <see cref="decimal"/>: it never uses scientific notation
+    /// and never drops a significant digit, while still trimming trailing zeros.
+    /// </summary>
+    private static string LevelKey(decimal? value) =>
+        value?.ToString("G29", System.Globalization.CultureInfo.InvariantCulture) ?? "-";
 
     public string Describe() => Kind switch    {
         FxAlertRuleKind.RateBand =>
