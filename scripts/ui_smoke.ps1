@@ -55,8 +55,9 @@ function Test-CriticalSmokeSkipped($steps) {
     return @($steps | Where-Object {
         $_.name -in @(
             "navigate pages", "fx cost input layout", "fx cost input focus",
-            "fx form to net e2e", "fx range switch e2e", "ledger type switch e2e",
-            "core health reachable", "seed isolated ledger", "onboarding guide"
+            "fx form to net e2e", "fx lots and critical e2e", "fx range switch e2e",
+            "ledger type switch e2e", "core health reachable", "seed isolated ledger",
+            "onboarding guide"
         ) -and $_.status -eq "skipped"
     })
 }
@@ -707,6 +708,111 @@ function Invoke-FxFormToNetEndToEnd {
     }
 
     Add-Step "fx form to net e2e" "passed" "逐卡：0+0 净=毛；0+1USD 净=毛−1；防串线差额 3 与 2；绕行留空与持仓成本留空已覆盖"
+}
+
+function Invoke-FxLotsAndCriticalCheck {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId
+    )
+
+    # WP-02: the new FX-page surfaces must appear in the RUNNING app, not just in a unit test —
+    # the batch list (with its FIFO hint), the "convert now" card with a NAMED, DATED baseline,
+    # and the future critical rate in the pair's own unit.
+    try {
+        Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes -ErrorAction Stop
+    }
+    catch {
+        Add-Step "fx lots and critical e2e" "skipped" "UIAutomation 不可用"
+        return
+    }
+
+    $automation = [System.Windows.Automation.AutomationElement]
+    $byPid = New-Object System.Windows.Automation.PropertyCondition(
+        $automation::ProcessIdProperty, $ProcessId)
+    $main = $automation::RootElement.FindFirst(
+        [System.Windows.Automation.TreeScope]::Children, $byPid)
+    if (-not $main) { throw "批次与临界：未找到主窗口自动化节点。" }
+
+    function Get-Buttons {
+        @($main.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button))))
+    }
+    function Get-Texts {
+        @($main.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text))))
+    }
+    function Get-Text([string]$automationId) {
+        $found = Get-Texts | Where-Object { $_.Current.AutomationId -eq $automationId } | Select-Object -First 1
+        if (-not $found) { throw "批次与临界：找不到文本 $automationId。" }
+        return $found.Current.Name
+    }
+    function Get-Edits {
+        @($main.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit))))
+    }
+    function Set-EditValue([string]$automationId, [string]$value) {
+        $edit = Get-Edits | Where-Object { $_.Current.AutomationId -eq $automationId } | Select-Object -First 1
+        if (-not $edit) { throw "批次与临界：找不到输入框 $automationId。" }
+        $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value)
+    }
+
+    $fxButton = Get-Buttons | Where-Object { $_.Current.Name -like "*汇率*" } | Select-Object -First 1
+    if (-not $fxButton) { throw "批次与临界：找不到「汇率」导航按钮。" }
+    $fxButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 900
+
+    # A held JPY pot with a known cost, so the critical rate is solvable and the batch list has
+    # something to show. (The isolated smoke ledger holds one 100 CNY → 2,100 JPY receipt.)
+    Set-EditValue "FxHeldAmountBox" "2100"
+    Set-EditValue "FxHeldCostBox" "100"
+    $compare = Get-Buttons | Where-Object { $_.Current.Name -like "*比较兑换路径*" } | Select-Object -First 1
+    if (-not $compare) { throw "批次与临界：找不到「比较兑换路径」按钮。" }
+    $compare.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+
+    $deadline = (Get-Date).AddSeconds(40)
+    $joined = ""
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 900
+        $joined = (Get-Texts | ForEach-Object { $_.Current.Name }) -join "`n"
+        if ($joined -match "已比较 \d+ 条路径") { break }
+        if ($joined -match "路径比较失败") { throw "批次与临界：路径比较失败。" }
+    }
+    if ($joined -notmatch "已比较 \d+ 条路径") { throw "批次与临界：40 秒内未见比较结果。" }
+
+    $nowText = Get-Text "FxNowText"
+    if ($nowText -eq "—" -or $nowText -eq "") { throw "批次与临界：现在换的结果卡是空的。" }
+    if ($nowText -notmatch "USD") { throw "批次与临界：结果卡没有目标币种金额（$nowText）。" }
+    if ($nowText -notmatch "比基准") { throw "批次与临界：结果卡没给相对基准的盈亏（$nowText）。" }
+
+    $baseline = Get-Text "FxBaselineText"
+    if ($baseline -notmatch "冻结于") { throw "批次与临界：基准没有随结果给出冻结时点（$baseline）。" }
+    if ($baseline -notmatch "USD/CNY") { throw "批次与临界：基准没有写明货币对（$baseline）。" }
+
+    $critical = Get-Text "FxCriticalText"
+    if ($critical -notmatch "1 USD = ") {
+        throw "批次与临界：临界汇率没有用 USD/JPY 的单位表达（$critical）。"
+    }
+    if ($critical -notmatch "还需") { throw "批次与临界：临界汇率没给「还需变动多少」（$critical）。" }
+
+    $hint = Get-Text "FxLotsHint"
+    if ($hint -notmatch "批") { throw "批次与临界：批次说明没有出现（$hint）。" }
+    if ($hint -notmatch "先进先出") { throw "批次与临界：批次说明没有写清 FIFO（$hint）。" }
+
+    # The batch grid must actually have rows from the seeded receipt.
+    $dataItems = @($main.FindAll(
+        [System.Windows.Automation.TreeScope]::Descendants,
+        (New-Object System.Windows.Automation.PropertyCondition(
+            $automation::ControlTypeProperty, [System.Windows.Automation.ControlType]::DataItem))))
+    if ($dataItems.Count -lt 1) { throw "批次与临界：批次表一行都没有。" }
+
+    Add-Step "fx lots and critical e2e" "passed" `
+        "现在换=$nowText；基准含冻结时点；临界=USD/JPY 且给还需变动；批次说明含先进先出；批次表有行"
 }
 
 function Invoke-FxRangeSwitchCheck {
@@ -1477,6 +1583,7 @@ conn.close()
     # boxes, then a REAL form-fill → compare → net-figure rendering pass.
     Invoke-CostInputFocusCheck -ProcessId $appProcess.Id
     Invoke-FxFormToNetEndToEnd -ProcessId $appProcess.Id
+    Invoke-FxLotsAndCriticalCheck -ProcessId $appProcess.Id
 
     # FA1: this stage's real page verifications — carry range switching with busy
     # disable/restore on the FX page, then type switching + recording on the ledger page.

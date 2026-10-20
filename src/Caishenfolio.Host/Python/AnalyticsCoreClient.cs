@@ -292,13 +292,16 @@ public sealed class AnalyticsCoreClient : IDisposable
         decimal? splitFraction = null,
         CancellationToken cancellationToken = default)
     {
-        object? held = heldCurrency is null || heldAmount is null || heldCostInBase is null
+        // A known amount with an unknown cost is still sent (WP-02 R5): the core values the pot
+        // and compares the paths; only the profit answers come back null. Dropping the whole
+        // holding here is what used to make the held path vanish.
+        object? held = heldCurrency is null || heldAmount is null
             ? null
             : new
             {
                 currency = heldCurrency,
                 amount = heldAmount.Value,
-                cost_in_base = heldCostInBase.Value,
+                cost_in_base = heldCostInBase,
             };
 
         var costPayload = costs?.ToDictionary(
@@ -860,6 +863,17 @@ public sealed class FxPathsResponse
     [JsonPropertyName("breakeven_held_rate")]
     public decimal? BreakevenHeldRate { get; set; }
 
+    /// <summary>What converting now yields, against a named and dated baseline (WP-02 A5).</summary>
+    [JsonPropertyName("now")]
+    public FxNowDto? Now { get; set; }
+
+    /// <summary>
+    /// The future TARGET/HELD rate at which the two paths tie (WP-02 A6/A7) — a different field,
+    /// in a different unit, from <see cref="BreakevenHeldRate"/>.
+    /// </summary>
+    [JsonPropertyName("future_critical")]
+    public FxCriticalDto? FutureCritical { get; set; }
+
     [JsonPropertyName("warnings")]
     public List<string> Warnings { get; set; } = new();
 
@@ -878,11 +892,92 @@ public sealed class FxHeldDto
     [JsonPropertyName("amount")]
     public decimal Amount { get; set; }
 
+    /// <summary>Null when the ledger holds the cash but has no receipt for what it cost (R5).</summary>
     [JsonPropertyName("cost_in_base")]
-    public decimal CostInBase { get; set; }
+    public decimal? CostInBase { get; set; }
 
     [JsonPropertyName("implied_rate")]
-    public decimal ImpliedRate { get; set; }
+    public decimal? ImpliedRate { get; set; }
+}
+
+/// <summary>What the result is measured against: named, and frozen at a specific quote (A5/D3).</summary>
+public sealed class FxBaselineDto
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("quote_pair")]
+    public string QuotePair { get; set; } = "";
+
+    [JsonPropertyName("rate")]
+    public decimal? Rate { get; set; }
+
+    [JsonPropertyName("frozen_at")]
+    public string FrozenAt { get; set; } = "";
+
+    [JsonPropertyName("note")]
+    public string Note { get; set; } = "";
+}
+
+/// <summary>The "convert now" answer with its baseline, and only the P&amp;L its inputs allow (A5).</summary>
+public sealed class FxNowDto
+{
+    [JsonPropertyName("target_currency")]
+    public string TargetCurrency { get; set; } = "";
+
+    [JsonPropertyName("gross_amount")]
+    public decimal? GrossAmount { get; set; }
+
+    [JsonPropertyName("net_amount")]
+    public decimal? NetAmount { get; set; }
+
+    /// <summary>Percent units: 17.6 means +17.6%. Null when the cost is unknown.</summary>
+    [JsonPropertyName("advantage_vs_baseline_pct")]
+    public decimal? AdvantageVsBaselinePct { get; set; }
+
+    [JsonPropertyName("pnl_vs_cost_in_base")]
+    public decimal? PnlVsCostInBase { get; set; }
+
+    [JsonPropertyName("held_cost_in_base")]
+    public decimal? HeldCostInBase { get; set; }
+
+    [JsonPropertyName("cost_known")]
+    public bool CostKnown { get; set; }
+
+    [JsonPropertyName("pnl_basis")]
+    public string PnlBasis { get; set; } = "";
+
+    [JsonPropertyName("baseline")]
+    public FxBaselineDto? Baseline { get; set; }
+
+    [JsonPropertyName("note")]
+    public string Note { get; set; } = "";
+}
+
+/// <summary>The future critical rate, in the pair's own unit (1 TARGET = X HELD), with the move needed.</summary>
+public sealed class FxCriticalDto
+{
+    [JsonPropertyName("pair")]
+    public string Pair { get; set; } = "";
+
+    [JsonPropertyName("unit")]
+    public string Unit { get; set; } = "";
+
+    [JsonPropertyName("rate")]
+    public decimal? Rate { get; set; }
+
+    [JsonPropertyName("current_rate")]
+    public decimal? CurrentRate { get; set; }
+
+    /// <summary>Percent units: 6.25 means the pair must fall 6.25%; negative means it must rise.</summary>
+    [JsonPropertyName("required_move_pct")]
+    public decimal? RequiredMovePct { get; set; }
+
+    [JsonPropertyName("solvable")]
+    public bool Solvable { get; set; }
+
+    [JsonPropertyName("reason")]
+    public string Reason { get; set; } = "";
 }
 
 /// <summary>A quote with its direction, source and date stated — never a bare number.</summary>

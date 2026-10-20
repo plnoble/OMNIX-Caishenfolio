@@ -24,6 +24,13 @@ public sealed record WorkspaceSnapshot
     /// <summary>Per-account totals and returns (WP-01 目标 3).</summary>
     public required IReadOnlyList<AccountSummary> AccountSummaries { get; init; }
 
+    /// <summary>
+    /// 累计收益 = Σ 账户（总资产 − 净投入）— the ONE definition this product uses (WP-02 裁决：
+    /// 总览与账户页必须同口径同词；两处显示不同数字是 bug 而不是设计). Null when any account's
+    /// figure is unknown, because a partial sum would be a confident wrong number.
+    /// </summary>
+    public Money? CumulativePnlBase { get; init; }
+
     /// <summary>Linked time-weighted return, or null with fewer than two valuation points.</summary>
     public double? Twr { get; init; }
     public required PortfolioRiskReport Risk { get; init; }
@@ -157,6 +164,8 @@ public sealed class PortfolioWorkspace
         var xirrStatus = AssessXirr(state, valuation, date, history, returnWarnings);
         var twr = TryTwr(state, valuation, date, history, returnWarnings);
 
+        var summaries = SummarizeAccounts(state, valuation, date, accounts, history);
+
         return new WorkspaceSnapshot
         {
             AsOf = date,
@@ -169,7 +178,8 @@ public sealed class PortfolioWorkspace
             // One number, one source of truth: the metric and its explanation never disagree.
             Xirr = xirrStatus.Value,
             XirrStatus = xirrStatus,
-            AccountSummaries = SummarizeAccounts(state, valuation, date, accounts, history),
+            AccountSummaries = summaries,
+            CumulativePnlBase = SumCumulativePnl(summaries),
             Twr = twr,
             Risk = risk,
             Alerts = alerts,
@@ -364,6 +374,31 @@ public sealed class PortfolioWorkspace
     /// WP-01 目标 3: per-account 总资产 / 累计收益 / 资金加权收益率 / 年化. A balance-mode account
     /// without a reported total is unknown, not zero (D3).
     /// </summary>
+    /// <summary>
+    /// Σ of the per-account 累计收益, or null when any single account's figure is unknown: a sum
+    /// that silently drops the unknown account would be a smaller number pretending to be total.
+    /// </summary>
+    private Money? SumCumulativePnl(IReadOnlyList<AccountSummary> summaries)
+    {
+        if (summaries.Count == 0)
+        {
+            return Money.Zero(BaseCurrency);
+        }
+
+        var total = Money.Zero(BaseCurrency);
+        foreach (var summary in summaries)
+        {
+            if (summary.CumulativePnlBase is not { } pnl)
+            {
+                return null;
+            }
+
+            total += pnl;
+        }
+
+        return total;
+    }
+
     private IReadOnlyList<AccountSummary> SummarizeAccounts(
         LedgerState state,
         PortfolioValuation valuation,

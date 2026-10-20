@@ -214,6 +214,50 @@ public class PortfolioWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task TheHeadlineCumulativePnlIsTheSumOfTheAccountFigures()
+    {
+        using var store = NewStore();
+        var workspace = new PortfolioWorkspace(store);
+        var detail = workspace.AddAccount("日常", AccountKind.Bank, "CNY");
+        var balance = workspace.AddAccount(
+            "余额账户", AccountKind.Bank, "CNY", mode: AccountValuationMode.Balance);
+
+        workspace.Record(LedgerTransaction.Deposit(detail.Id, Day1, 100_000m, "CNY"));
+        workspace.Record(LedgerTransaction.Deposit(balance.Id, Day1, 50_000m, "CNY"));
+        workspace.Record(
+            LedgerTransaction.BalanceAssertion(balance.Id, new DateOnly(2025, 6, 30), 60_000m, "CNY"));
+
+        var snapshot = await workspace.RefreshAsync(AsOf);
+
+        // Σ account 累计收益 = 0 (detail, cash only) + 10 000 (balance: 60 000 reported vs 50 000 in).
+        Assert.Equal(10_000m, snapshot.CumulativePnlBase!.Value.Amount);
+        var accountSum = snapshot.AccountSummaries.Sum(s => s.CumulativePnlBase!.Value.Amount);
+        Assert.Equal(accountSum, snapshot.CumulativePnlBase.Value.Amount);
+        // And it is deliberately NOT the old 未实现+已实现+分红 figure.
+        Assert.NotEqual(snapshot.Valuation.TotalPnl.Amount, snapshot.CumulativePnlBase.Value.Amount);
+    }
+
+    [Fact]
+    public async Task TheHeadlineCumulativePnlIsUnknownWhenAnyAccountIs()
+    {
+        using var store = NewStore();
+        var workspace = new PortfolioWorkspace(store);
+        var detail = workspace.AddAccount("日常", AccountKind.Bank, "CNY");
+        var balance = workspace.AddAccount(
+            "余额账户", AccountKind.Bank, "CNY", mode: AccountValuationMode.Balance);
+
+        workspace.Record(LedgerTransaction.Deposit(detail.Id, Day1, 100_000m, "CNY"));
+        workspace.Record(LedgerTransaction.Deposit(balance.Id, Day1, 50_000m, "CNY"));
+
+        var snapshot = await workspace.RefreshAsync(AsOf);
+
+        // One unknown account makes the headline unknown: a partial sum would be a smaller
+        // number pretending to be the total.
+        Assert.Null(snapshot.CumulativePnlBase);
+        Assert.Null(snapshot.AccountSummaries.Single(s => s.AccountId == balance.Id).CumulativePnlBase);
+    }
+
+    [Fact]
     public async Task ImportsCsvAndBackfillsInstrumentMetadata()
     {
         using var store = NewStore();
