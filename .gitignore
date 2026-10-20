@@ -30,3 +30,5 @@ Thumbs.db
 release-private-key.txt
 *.pem
 *.pfx
+# WPF XAML compilation drops a generated *_wpftmp.csproj next to the project; never commit it.
+*_wpftmp.csproj
