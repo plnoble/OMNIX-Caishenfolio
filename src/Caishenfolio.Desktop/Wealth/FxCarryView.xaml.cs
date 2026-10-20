@@ -505,7 +505,9 @@ public partial class FxCarryView : UserControl
             : "—";
         FxAdvantageNetText.Text = response.HeldAdvantageNetPct is { } net
             ? FormatPct(net)
-            : "成本未填（毛额比较）";
+            // WP-03 D7: without a complete cost model there is no net advantage; say so instead
+            // of pretending the gross comparison is the answer ("成本未填" alone read as a value).
+            : "净额未知（成本未填）";
 
         if (response.BreakevenHeldRate is { } breakeven && response.Held is { } held)
         {
@@ -569,15 +571,17 @@ public partial class FxCarryView : UserControl
                 parts.Add($"比基准 {FormatPct(advantage)}");
             }
 
-            if (now.PnlVsCostInBase is { } pnl)
+            if (now.PnlVsCostNetInBase is { } netPnl)
             {
-                // Review #9: the number is GROSS (before costs) and in the base currency. Saying
-                // just "盈亏 +0.8" next to a net arrival one line up reads as net profit, and the
-                // user has no way to tell that a fee already turned it negative.
-                var basis = string.Equals(now.PnlBasis, "gross", StringComparison.OrdinalIgnoreCase)
-                    ? "毛额"
-                    : now.PnlBasis;
-                parts.Add($"盈亏（{basis}，{response.BaseCurrency}）{FormatSigned(pnl)}");
+                // WP-03 R6/D7: the verdict speaks in NET terms — the number the user asked for
+                // ("did I actually make money"). The gross figure is context and says so.
+                parts.Add($"盈亏（净额，{response.BaseCurrency}）{FormatSigned(netPnl)}");
+            }
+            else if (now.PnlVsCostInBase is not null)
+            {
+                // D7: no net figure → say so and stop. The gross comparison lives in its own
+                // card, labelled 毛额; quoting it here would be exactly the fallback D7 forbids.
+                parts.Add("净额未知（成本未填）");
             }
 
             if (!now.CostKnown)

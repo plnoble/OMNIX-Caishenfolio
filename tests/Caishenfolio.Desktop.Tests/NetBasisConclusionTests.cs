@@ -26,7 +26,9 @@ public class NetBasisConclusionTests
             GrossAmount = gross,
             NetAmount = net,
             AdvantageVsBaselinePct = 17.6m,
-            PnlVsCostInBase = 17.6m,
+            // Distinct from the 17.6% advantage on purpose: the test can then tell whether the
+            // gross PnL leaked into the verdict.
+            PnlVsCostInBase = 18.4m,
             PnlVsCostNetInBase = pnlNet,
             CostKnown = net is not null,
             PnlBasis = pnlBasis,
@@ -74,7 +76,7 @@ public class NetBasisConclusionTests
             var now = Text(view, "FxNowText");
             Assert.Contains("净额未知（成本未填）", now, StringComparison.Ordinal);
             // D7: not the gross number dressed up, and not a zero.
-            Assert.DoesNotContain("+17.6", now, StringComparison.Ordinal);
+            Assert.DoesNotContain("18.4", now, StringComparison.Ordinal);
             Assert.DoesNotContain("盈亏（毛额", now, StringComparison.Ordinal);
             Assert.DoesNotContain("净额 0", now, StringComparison.Ordinal);
             await Task.CompletedTask;
