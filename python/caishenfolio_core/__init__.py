@@ -1,6 +1,6 @@
 """OMNIX-Caishenfolio Analytics Core."""
 
-__version__ = "0.13.3"
+__version__ = "0.14.0"
 PRODUCT_NAME = "OMNIX-Caishenfolio"
 PRODUCT_BRAND = "OMNIX"
 #: Kept in sync with the root VERSION / PHASE files by scripts/version.ps1;
