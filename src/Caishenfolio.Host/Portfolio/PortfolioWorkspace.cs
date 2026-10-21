@@ -101,6 +101,26 @@ public sealed class PortfolioWorkspace
         var instruments = _store.ListInstruments();
 
         var warnings = new List<string>();
+
+        // WP-03 D2: a ledger written before the balance rule can already be negative. It opens
+        // as usual — nothing is rewritten — and the shortfall is named here so the user sees it
+        // instead of reading a silent zero on the overview.
+        //
+        // Codex review #6: the words state HISTORY and nothing about the present. The stored amount
+        // is the DEEPEST point reached and the date is when the gap began; the account may well be
+        // positive again by now (a later deposit closes the gap), and a balance that went negative
+        // through an allowed path (e.g. financing) is not necessarily a pre-upgrade leftover — so
+        // the text does not claim a current balance, and does not guess the cause.
+        foreach (var shortfall in state.HistoricalShortfalls)
+        {
+            var account = accounts.FirstOrDefault(a => a.Id == shortfall.AccountId);
+            var name = account?.Name ?? shortfall.AccountId;
+            warnings.Add(
+                $"账户 {name} 的 {shortfall.Currency} 现金出现过历史负余额：" +
+                $"自 {shortfall.FirstDate:yyyy-MM-dd} 起变负，最低到 {shortfall.Amount:#,0.##}（{shortfall.Currency}）。" +
+                "账本照常可用，已发生的记录不会被改写；新的换汇不会再允许花超。");
+        }
+
         IReadOnlyDictionary<string, PriceQuote> quotes;
         FxConverter fx;
 

@@ -256,7 +256,7 @@
                                      ToolTip="每次兑换的固定手续费（目标货币金额）。必须填写：填 0 表示确认无固定费；留空=未知" />
                         </StackPanel>
                     </StackPanel>
-                    <Button Content="添加规则" Padding="10,3" Margin="8,0,0,0" Click="AddFxRuleButton_OnClick" />
+                    <Button x:Name="AddFxRuleButton" Content="添加规则" Padding="10,3" Margin="8,0,0,0" Click="AddFxRuleButton_OnClick" />
                 </StackPanel>
                 <DataGrid x:Name="FxRuleGrid" Style="{StaticResource WealthGrid}" MaxHeight="110"
                           Margin="0,0,0,6" IsReadOnly="False" AutoGenerateColumns="False"
@@ -271,7 +271,9 @@
                 </DataGrid>
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                     <Button Content="删除选中规则" Padding="10,3" Click="RemoveFxRuleButton_OnClick" />
-                    <TextBlock Text="「启用」列可直接勾选/取消勾选；删除后点「保存」生效。"
+                    <Button x:Name="EditFxRuleButton" Content="载入选中规则修改" Padding="10,3" Margin="8,0,0,0"
+                            Click="EditFxRuleButton_OnClick" />
+                    <TextBlock Text="「启用」列可直接勾选/取消勾选；修改保留提醒身份，只有实际内容变了才推进版本；删除后点「保存」生效。"
                                VerticalAlignment="Center" Margin="10,0,0,0" FontSize="11"
                                Foreground="{StaticResource BrushFgMuted}" />
                 </StackPanel>

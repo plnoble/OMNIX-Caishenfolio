@@ -41,6 +41,25 @@ public sealed record PortfolioAlert
     public string Symbol { get; init; } = "";
     public required string Title { get; init; }
     public required string Message { get; init; }
+
+    /// <summary>
+    /// WP-03 R4/D5: which rule produced this alert. Empty for alerts that are not rule-driven
+    /// (IPO deadlines, price levels) — those keep the old kind|symbol|title identity.
+    /// </summary>
+    public string RuleId { get; init; } = "";
+
+    /// <summary>Bumped when the rule's parameters change; part of the dedupe key.</summary>
+    public int RuleRevision { get; init; }
+
+    /// <summary>The rule's档位 (threshold), so two thresholds of one rule do not collide.</summary>
+    public string RuleLevel { get; init; } = "";
+
+    /// <summary>
+    /// The same level rendered the way the older build keyed it (frozen six decimals). An upgrade
+    /// only needs it to rename the cooldown record of a rule whose level format changed (WP-03 D6),
+    /// and that rename happens in the state file — nothing keeps it as a permanent alias.
+    /// </summary>
+    public string LegacyRuleLevel { get; init; } = "";
 }
 
 /// <summary>

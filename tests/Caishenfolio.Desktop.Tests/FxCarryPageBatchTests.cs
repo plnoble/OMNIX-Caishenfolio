@@ -34,6 +34,10 @@ public class FxCarryPageBatchTests : IDisposable
             NetAmount = 16.333333m,
             AdvantageVsBaselinePct = 17.6m,
             PnlVsCostInBase = 17.6m,
+            // WP-03 R6/D7: the DTO now also carries the net-basis P&L, and the verdict speaks with
+            // it. Net arrival == gross arrival here (no cost model in this display fixture), so the
+            // two numbers coincide — the assertion below is about which one the page QUOTES.
+            PnlVsCostNetInBase = 17.6m,
             HeldCostInBase = 100m,
             CostKnown = true,
             PnlBasis = "gross",
@@ -69,7 +73,12 @@ public class FxCarryPageBatchTests : IDisposable
 
             Assert.Contains("16.33 USD", Text(view, "FxNowText"), StringComparison.Ordinal);
             Assert.Contains("比基准 +17.6%", Text(view, "FxNowText"), StringComparison.Ordinal);
-            // Review #9: the P&L must say it is a GROSS number and in which currency, because the`n            // net arrival one line up is a different number.`n            Assert.Contains("盈亏（毛额，CNY）+17.6", Text(view, "FxNowText"), StringComparison.Ordinal);
+            // Review #9 / WP-03 D7: the P&L must say which CURRENCY it is in, and it must be the NET
+            // figure — quoting the gross comparison here as the answer is exactly what D7 forbids.
+            // (In the WP-02 delivery this assertion was dead: a stray escape sequence had swallowed
+            // it into the comment above. WP-03 restored it and moved it onto the net basis.)
+            Assert.Contains("盈亏（净额，CNY）+17.6", Text(view, "FxNowText"), StringComparison.Ordinal);
+            Assert.DoesNotContain("盈亏（毛额", Text(view, "FxNowText"), StringComparison.Ordinal);
 
             // The critical rate is stated in the pair's own unit, with the move still needed.
             Assert.Contains("1 USD = 176.4 JPY", Text(view, "FxCriticalText"), StringComparison.Ordinal);
@@ -125,6 +134,8 @@ public class FxCarryPageBatchTests : IDisposable
             var day1 = new DateOnly(2025, 1, 10);
             var day2 = new DateOnly(2025, 3, 15);
             var day3 = new DateOnly(2025, 4, 1);
+            // WP-03 R1: the account holds the money before it converts it.
+            workspace.Record(LedgerTransaction.OpeningCash(account.Id, day1.AddDays(-1), 40_000m, "CNY", "建账余额"));
             workspace.Record(LedgerTransaction.FxExchange(account.Id, day1, 30_000m, "CNY", 600_000m, "JPY"));
             workspace.Record(LedgerTransaction.FxExchange(account.Id, day3, 300_000m, "JPY", 2_000m, "USD"));
             var snapshot = await workspace.RefreshAsync(new DateOnly(2026, 1, 2));
@@ -164,6 +175,7 @@ public class FxCarryPageBatchTests : IDisposable
             var account = workspace.AddAccount("换汇账户", AccountKind.Bank, "CNY");
             // 500,000 JPY bought (with a receipt) on top of 200,000 JPY that just arrived:
             // the batch explains the first, the extra has no purchase cost (WP-02 R5).
+            workspace.Record(LedgerTransaction.OpeningCash(account.Id, new DateOnly(2025, 1, 9), 30_000m, "CNY", "建账余额"));
             workspace.Record(LedgerTransaction.FxExchange(
                 account.Id, new DateOnly(2025, 1, 10), 25_000m, "CNY", 500_000m, "JPY"));
             workspace.Record(LedgerTransaction.Deposit(account.Id, new DateOnly(2025, 2, 1), 200_000m, "JPY"));
@@ -251,6 +263,7 @@ public class FxCarryPageBatchTests : IDisposable
             var workspace = new PortfolioWorkspace(store);
             var account = workspace.AddAccount("换汇账户", AccountKind.Bank, "CNY");
             // Two batches; the second spend crosses both, so the trail must name both.
+            workspace.Record(LedgerTransaction.OpeningCash(account.Id, new DateOnly(2025, 1, 9), 500m, "CNY", "建账余额"));
             workspace.Record(LedgerTransaction.FxExchange(
                 account.Id, new DateOnly(2025, 1, 10), 100m, "CNY", 2_000m, "JPY"));
             workspace.Record(LedgerTransaction.FxExchange(

@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Caishenfolio.Host.Portfolio;
 
 namespace Caishenfolio.Host.Notifications;
@@ -22,6 +23,20 @@ public enum FxAlertRuleKind
 public sealed record FxAlertRule
 {
     public required FxAlertRuleKind Kind { get; init; }
+
+    /// <summary>
+    /// Stable identity of this rule (WP-03 R4/D5). Two rules that differ only by their threshold
+    /// must not share one dedupe key; same identity plus same revision is the same watch. Empty
+    /// means "derive it from the kind and the currencies", so a settings file written before this
+    /// field existed still gets a stable identity.
+    /// </summary>
+    public string Id { get; init; } = "";
+
+    /// <summary>
+    /// Bumped whenever the rule's own parameters change (D5). Editing a note is not a new watch;
+    /// changing what it watches for is.
+    /// </summary>
+    public int Revision { get; init; }
 
     /// <summary>RateBand: the pair to watch, e.g. <c>USD/CNY</c> meaning 1 USD = x CNY.</summary>
     public string Pair { get; init; } = "";
@@ -63,8 +78,82 @@ public sealed record FxAlertRule
     /// <summary>True when this rule has the cost inputs its kind needs.</summary>
     public bool HasCostModel => SpreadPct is not null || FixedFee is not null;
 
-    public string Describe() => Kind switch
+    /// <summary>
+    /// The identity a rule written before <see cref="Id"/> existed was already deduped by:
+    /// kind + the currencies it watches. Kept as its own member because it is also the value the
+    /// upgrade migration adopts (assigning a fresh random id instead would change every such
+    /// rule's notification key on upgrade day and re-send what the user already saw).
+    /// </summary>
+    public string DerivedId =>
+        $"{Kind}:{Normalize(Pair)}:{Normalize(BaseCurrency)}/{Normalize(TargetCurrency)}/{Normalize(HeldCurrency)}";
+
+    /// <summary>
+    /// R4/D5: the rule's own identity, stable across note edits. Empty <see cref="Id"/> falls back
+    /// to the derived identity, so a rule that has not been through the migration yet still has one.
+    /// </summary>
+    public string StableId => string.IsNullOrWhiteSpace(Id) ? DerivedId : Id.Trim();
+
+    /// <summary>
+    /// R4/D5: the档位 this rule watches at — the threshold, not the whole rule. Two rules that
+    /// differ only here must not share a dedupe key.
+    /// </summary>
+    /// <remarks>
+    /// Rounded to six decimals this collapsed distinct thresholds into one band (audit: 7.1000001
+    /// and 7.1000002 both became "band:7.1~…"), while the threshold itself was parsed with no such
+    /// limit. The key therefore keeps every significant digit, in FIXED point: the "G" format with
+    /// an explicit precision switches to scientific notation below 1e-4, which would churn the key
+    /// of an ordinary band rule (0.00001 → "1E-05"). Trailing zeros are still trimmed, so values
+    /// with six decimals or fewer keep exactly the string they had.
+    ///
+    /// A rule that has no identity yet is the exception: it is still the rule the earlier build
+    /// keyed, so it keeps the SIX-DECIMAL rendering. That is what makes a postponed upgrade safe —
+    /// if the cooldown record cannot be renamed (see
+    /// <see cref="NotificationSettingsStore.LastMigrationFailure"/>), the rule must keep producing
+    /// the key that record is actually filed under, or the alert the user already saw would speak
+    /// again inside its cooldown (D6).
+    /// </remarks>
+    public string Level => string.IsNullOrWhiteSpace(Id) ? LegacyLevel : Kind switch
     {
+        FxAlertRuleKind.RateBand => $"band:{LevelKey(Lower)}~{LevelKey(Upper)}",
+        FxAlertRuleKind.HeldAdvantageAbove => $"pct:{LevelKey(ThresholdPct)}",
+        FxAlertRuleKind.NetArrivalAbove => $"amt:{LevelKey(ThresholdAmount)}",
+        FxAlertRuleKind.BreakevenCrossed => "be",
+        _ => "?",
+    };
+
+    /// <summary>
+    /// Fixed point with decimal's full 28-digit scale, never scientific notation, trailing zeros
+    /// dropped — a key, not a display string, and one that does not move for values that did not
+    /// change.
+    /// </summary>
+    private static string LevelKey(decimal? value) =>
+        value?.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture) ?? "-";
+
+    /// <summary>
+    /// The level this rule's notifications were recorded under **before** the key format was fixed:
+    /// rounded to six decimals, which is what every record written by the earlier build used. Frozen
+    /// on purpose — it is here to find old records during an upgrade, never to build a new key — and
+    /// it equals <see cref="Level"/> whenever no precision was ever lost.
+    /// </summary>
+    /// <remarks>
+    /// Derived, never stored: it is a rendering of the current parameters, so persisting it would put
+    /// an old-key string in the settings file for no reason (WP-03 third round — the settings blob
+    /// carries no key material for keys we no longer use).
+    /// </remarks>
+    [JsonIgnore]
+    public string LegacyLevel => Kind switch
+    {
+        FxAlertRuleKind.RateBand => $"band:{LegacyLevelKey(Lower)}~{LegacyLevelKey(Upper)}",
+        FxAlertRuleKind.HeldAdvantageAbove => $"pct:{LegacyLevelKey(ThresholdPct)}",
+        FxAlertRuleKind.NetArrivalAbove => $"amt:{LegacyLevelKey(ThresholdAmount)}",
+        FxAlertRuleKind.BreakevenCrossed => "be",
+        _ => "?",
+    };
+
+    private static string LegacyLevelKey(decimal? value) =>
+        value?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) ?? "-";
+
+    public string Describe() => Kind switch    {
         FxAlertRuleKind.RateBand =>
             $"{Normalize(Pair)} 进入区间 [{Lower?.ToString("0.######") ?? "—"}, {Upper?.ToString("0.######") ?? "—"}]",
         FxAlertRuleKind.HeldAdvantageAbove =>
@@ -112,7 +201,10 @@ public sealed record FxRuleEvaluationResult
     /// </summary>
     public IReadOnlyList<FxRuleOutcome> Outcomes { get; init; } = [];
 
-    /// <summary>The alert keys whose condition could not be judged this run.</summary>
+    /// <summary>
+    /// The alert keys whose condition could not be judged this run. An outage did not prove the
+    /// condition ended, so the gatekeeper writes no exit for them (WP-02 R6/A10).
+    /// </summary>
     public IReadOnlySet<string> UnknownAlertKeys =>
         Outcomes
             .Where(outcome => outcome.State == FxRuleState.Unknown)
@@ -155,9 +247,9 @@ public sealed record FxRuleOutcome
 public static class FxAlertRuleEvaluator
 {
     /// <summary>
-    /// The alert identities these rules would own. Used when a whole evaluation round could not
-    /// run: every one of them is UNKNOWN, and the gatekeeper must keep their last verdict
-    /// instead of recording an exit that never happened (WP-02 R6).
+    /// The alert identities these rules would own. Used when a whole evaluation round could not run:
+    /// every one of them is UNKNOWN, and the gatekeeper must keep their last verdict instead of
+    /// recording an exit that never happened (WP-02 R6/A10).
     /// </summary>
     public static IReadOnlySet<string> KnownKeys(IEnumerable<FxAlertRule> rules)
     {
@@ -170,6 +262,7 @@ public static class FxAlertRuleEvaluator
 
         return keys;
     }
+
 
     public static FxRuleEvaluationResult Evaluate(
         IReadOnlyList<FxAlertRule> rules,
@@ -197,7 +290,7 @@ public static class FxAlertRuleEvaluator
 
             if (alert is not null)
             {
-                alerts.Add(alert);
+                alerts.Add(WithIdentity(alert, rule));
             }
 
             if (note is not null)
@@ -221,7 +314,21 @@ public static class FxAlertRuleEvaluator
     /// message. The outcome uses it so the gatekeeper can match an UNKNOWN evaluation to the
     /// alert it might have produced (R6).
     /// </summary>
-    private static PortfolioAlert Probe(FxAlertRule rule) => rule.Kind switch
+    internal static PortfolioAlert Probe(FxAlertRule rule) => WithIdentity(ProbeShape(rule), rule);
+
+    /// <summary>
+    /// R4/D5: stamp the rule's identity and level on every alert it produces, so the dedupe key
+    /// separates two rules that differ only by their threshold and keeps one rule stable across
+    /// note edits.
+    /// </summary>
+    private static PortfolioAlert WithIdentity(PortfolioAlert alert, FxAlertRule rule) => alert with
+    {
+        RuleId = rule.StableId,
+        RuleRevision = rule.Revision,
+        RuleLevel = rule.Level,
+    };
+
+    private static PortfolioAlert ProbeShape(FxAlertRule rule) => rule.Kind switch
     {
         FxAlertRuleKind.RateBand => new PortfolioAlert
         {

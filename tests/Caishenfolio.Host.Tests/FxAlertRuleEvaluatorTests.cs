@@ -362,6 +362,8 @@ public class HeldCurrencyMovingWeightedCostTests : IDisposable
         // The review's counterexample: 100 CNY → 2 000 JPY, then 100 CNY → 2 500 JPY.
         store.AddTransactions(
         [
+            // WP-03 R1: fund the account first — spending money it never had is now refused.
+            LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 1, 1), 500m, "CNY", "建账余额"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 1, 2), 100m, "CNY", 2_000m, "JPY"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 2, 2), 100m, "CNY", 2_500m, "JPY"),
         ]);
@@ -382,6 +384,8 @@ public class HeldCurrencyMovingWeightedCostTests : IDisposable
         using var store = NewStore();
         store.AddTransactions(
         [
+            // WP-03 R1: fund the account first — spending money it never had is now refused.
+            LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 1, 1), 500m, "CNY", "建账余额"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 1, 2), 100m, "CNY", 2_000m, "JPY"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 2, 2), 100m, "CNY", 2_500m, "JPY"),
             // Spend half the pot back to CNY: releases the blended average (22.5 JPY/CNY).
@@ -405,6 +409,8 @@ public class HeldCurrencyMovingWeightedCostTests : IDisposable
         using var store = NewStore();
         store.AddTransactions(
         [
+            // WP-03 R1: fund the account first — spending money it never had is now refused.
+            LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 1, 1), 500m, "CNY", "建账余额"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 1, 2), 100m, "CNY", 2_000m, "JPY"),
             // Interest credited in JPY: no exchange, no cost basis.
             LedgerTransaction.Interest("acct", new DateOnly(2026, 2, 2), 50m, "JPY"),
@@ -461,6 +467,8 @@ public class HeldCurrencyFullCashflowTests : IDisposable
         using var store = NewStore();
         store.AddTransactions(
         [
+            // WP-03 R1: fund the account first — spending money it never had is now refused.
+            LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 1, 1), 500m, "CNY", "建账余额"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 1, 2), 100m, "CNY", 2_000m, "JPY"),
             LedgerTransaction.Withdraw("acct", new DateOnly(2026, 2, 2), 1_000m, "JPY"),
         ]);
@@ -479,6 +487,8 @@ public class HeldCurrencyFullCashflowTests : IDisposable
         using var store = NewStore();
         store.AddTransactions(
         [
+            // WP-03 R1: fund the account first — spending money it never had is now refused.
+            LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 1, 1), 500m, "CNY", "建账余额"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 1, 2), 100m, "CNY", 2_000m, "JPY"),
             // Convert 1 500 JPY back to CNY with a 10 JPY fee: 1 510 JPY leave the pool.
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 2, 2), 1_500m, "JPY", 75m, "CNY", fee: 10m),
@@ -496,6 +506,8 @@ public class HeldCurrencyFullCashflowTests : IDisposable
         using var store = NewStore();
         store.AddTransactions(
         [
+            // WP-03 R1: fund the account first — spending money it never had is now refused.
+            LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 1, 1), 500m, "CNY", "建账余额"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 1, 2), 100m, "CNY", 2_000m, "JPY"),
             // Buy a JPY-priced stock spending 800 JPY cash: the pool shrinks, cost releases.
             LedgerTransaction.Buy("acct", "TSE:7203", new DateOnly(2026, 2, 2), 10m, 80m, "JPY"),
@@ -513,6 +525,8 @@ public class HeldCurrencyFullCashflowTests : IDisposable
         using var store = NewStore();
         store.AddTransactions(
         [
+            // WP-03 R1: fund the account first — spending money it never had is now refused.
+            LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 1, 1), 500m, "CNY", "建账余额"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 1, 2), 100m, "CNY", 2_000m, "JPY"),
             LedgerTransaction.Deposit("acct", new DateOnly(2026, 2, 2), 500m, "JPY"),
         ]);
@@ -530,6 +544,8 @@ public class HeldCurrencyFullCashflowTests : IDisposable
         using var store = NewStore();
         store.AddTransactions(
         [
+            // WP-03 R1: fund the account first — spending money it never had is now refused.
+            LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 1, 1), 500m, "CNY", "建账余额"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 1, 2), 100m, "CNY", 2_000m, "JPY"),
             LedgerTransaction.Deposit("acct", new DateOnly(2026, 1, 3), 1_000m, "JPY"),
             // Spend half the 3 000 pot: each pool releases half.
@@ -553,6 +569,8 @@ public class HeldCurrencyFullCashflowTests : IDisposable
         using var store = NewStore();
         store.AddTransactions(
         [
+            // WP-03 R1: the bank account is funded before it converts.
+            LedgerTransaction.OpeningCash("bank", new DateOnly(2026, 1, 1), 500m, "CNY", "建账余额"),
             LedgerTransaction.FxExchange("bank", new DateOnly(2026, 1, 2), 100m, "CNY", 2_000m, "JPY"),
             LedgerTransaction.Withdraw("bank", new DateOnly(2026, 1, 5), 2_000m, "JPY"),
             LedgerTransaction.Deposit("broker", new DateOnly(2026, 1, 5), 2_000m, "JPY"),
@@ -653,6 +671,8 @@ public class SameDayFlowTests : IDisposable
         using var store = PortfolioStore.UnderStateRoot(_root);
         store.AddTransactions(
         [
+            // WP-03 R1: fund the account first — spending money it never had is now refused.
+            LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 1, 1), 500m, "CNY", "建账余额"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 1, 2), 100m, "CNY", 2_000m, "JPY"),
             // Day 2: withdraw 1 000 JPY (spending it) AND an unrelated 1 000 JPY arrives
             // from outside. Net change zero — but they are two different facts.
@@ -675,6 +695,8 @@ public class SameDayFlowTests : IDisposable
         using var store = PortfolioStore.UnderStateRoot(_root);
         store.AddTransactions(
         [
+            // WP-03 R1: fund the account first — spending money it never had is now refused.
+            LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 1, 1), 500m, "CNY", "建账余额"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 1, 2), 100m, "CNY", 2_000m, "JPY"),
             LedgerTransaction.Withdraw("acct", new DateOnly(2026, 2, 2), 1_500m, "JPY"),
             LedgerTransaction.Deposit("acct", new DateOnly(2026, 2, 2), 1_000m, "JPY"),
@@ -694,6 +716,8 @@ public class SameDayFlowTests : IDisposable
         using var store = PortfolioStore.UnderStateRoot(_root);
         store.AddTransactions(
         [
+            // WP-03 R1: fund the account first — spending money it never had is now refused.
+            LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 1, 1), 500m, "CNY", "建账余额"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 1, 2), 100m, "CNY", 2_000m, "JPY"),
             LedgerTransaction.FxExchange("acct", new DateOnly(2026, 2, 2), 100m, "CNY", 3_000m, "JPY"),
             // Same day: spend 1 000 of the now-5 000 pool at the blended average.

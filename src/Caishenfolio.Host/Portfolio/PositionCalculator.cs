@@ -12,7 +12,15 @@ namespace Caishenfolio.Host.Portfolio;
 /// </summary>
 public static class PositionCalculator
 {
-    public static LedgerState Replay(IEnumerable<LedgerTransaction> transactions)
+    /// <summary>
+    /// Replays the ledger. <paramref name="onBegin"/> optionally observes each transaction right
+    /// before it is applied, with a read-only view of the balances at that moment — that is how
+    /// the write path asks "could this account afford it *then*" without keeping a second copy of
+    /// the cash rules (WP-03 R1).
+    /// </summary>
+    public static LedgerState Replay(
+        IEnumerable<LedgerTransaction> transactions,
+        Action<LedgerTransaction, Func<(string Account, string Currency), decimal>>? onBegin = null)
     {
         ArgumentNullException.ThrowIfNull(transactions);
 
@@ -34,9 +42,16 @@ public static class PositionCalculator
         var flows = new List<ExternalFlow>();
         var accountFlows = new List<ExternalFlow>();
         var assertions = new Dictionary<string, BalanceAssertionPoint>(StringComparer.Ordinal);
+        var shortfalls = new Dictionary<(string Account, string Currency), CashShortfall>();
 
         foreach (var txn in Ordered(transactions).Where(t => !cancelled.Contains(t.Id)))
         {
+            onBegin?.Invoke(
+                txn,
+                key => cash.TryGetValue((key.Account, Currencies.Normalize(key.Currency)), out var held)
+                    ? held
+                    : 0m);
+
             switch (txn.Kind)
             {
                 case TransactionKind.Buy:
@@ -133,6 +148,12 @@ public static class PositionCalculator
             {
                 AddAccountScopedLegs(accountFlows, txn);
             }
+
+            // After the money moved: note any balance this row pushed below zero (D2).
+            foreach (var (account, currency) in TouchedLegs(txn))
+            {
+                TrackShortfall(cash, shortfalls, account, currency, txn.TradeDate);
+            }
         }
 
         return new LedgerState
@@ -161,6 +182,10 @@ public static class PositionCalculator
                 .ThenBy(f => f.AccountId, StringComparer.Ordinal)
                 .ToArray(),
             BalanceAssertions = assertions,
+            HistoricalShortfalls = shortfalls.Values
+                .OrderBy(s => s.AccountId, StringComparer.Ordinal)
+                .ThenBy(s => s.Currency, StringComparer.Ordinal)
+                .ToArray(),
         };
     }
 
@@ -370,6 +395,63 @@ public static class PositionCalculator
     {
         var key = (accountId, Currencies.Normalize(currency));
         cash[key] = cash.TryGetValue(key, out var current) ? current + delta : delta;
+    }
+
+    /// <summary>
+    /// Records every balance that replayed below zero, once per account+currency, keeping the
+    /// deepest point and the date it first went negative (WP-03 D2). This is an observation, not
+    /// a correction: it never changes a row, and it never blocks opening a ledger.
+    /// </summary>
+    /// <summary>
+    /// The (account, currency) balances one transaction can move — used to look for balances that
+    /// went below zero after it was applied (WP-03 D2).
+    /// </summary>
+    private static IEnumerable<(string Account, string Currency)> TouchedLegs(LedgerTransaction txn)
+    {
+        yield return (txn.AccountId, txn.Currency);
+
+        var counterAccount = string.IsNullOrEmpty(txn.CounterAccountId) ? txn.AccountId : txn.CounterAccountId;
+        if (!string.IsNullOrEmpty(txn.CounterCurrency))
+        {
+            yield return (counterAccount, txn.CounterCurrency);
+        }
+
+        if (txn.Kind == TransactionKind.Transfer)
+        {
+            yield return (txn.CounterAccountId, txn.Currency);
+        }
+    }
+
+    private static void TrackShortfall(
+        Dictionary<(string Account, string Currency), decimal> cash,
+        Dictionary<(string Account, string Currency), CashShortfall> shortfalls,
+        string accountId,
+        string currency,
+        DateOnly date)
+    {
+        var key = (accountId, Currencies.Normalize(currency));
+        if (!cash.TryGetValue(key, out var balance) || balance >= 0m)
+        {
+            return;
+        }
+
+        if (shortfalls.TryGetValue(key, out var existing))
+        {
+            if (balance < existing.Amount)
+            {
+                shortfalls[key] = existing with { Amount = balance };
+            }
+
+            return;
+        }
+
+        shortfalls[key] = new CashShortfall
+        {
+            AccountId = accountId,
+            Currency = key.Item2,
+            Amount = balance,
+            FirstDate = date,
+        };
     }
 
     private sealed class PositionAccumulator(string accountId, string symbol, string currency)

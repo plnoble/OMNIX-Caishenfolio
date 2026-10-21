@@ -51,10 +51,32 @@ public sealed class ChannelRow
 }
 
 /// <summary>One FX watch rule as the editable grid shows it. Enabled toggles in place.</summary>
-public sealed class FxRuleRow
+public sealed class FxRuleRow : System.ComponentModel.INotifyPropertyChanged
 {
-    /// <summary>Settable so the grid's checkbox can flip Enabled without rebuilding the row.</summary>
-    public required FxAlertRule Rule { get; set; }
+    private FxAlertRule _rule = null!;
+
+    /// <summary>
+    /// Settable so the grid's checkbox can flip Enabled without rebuilding the row — and it notifies,
+    /// so an in-place edit (which changes what the row DESCRIBES) is visible to the user instead of
+    /// leaving the old parameters on screen while the new ones are what gets saved.
+    /// </summary>
+    public required FxAlertRule Rule
+    {
+        get => _rule;
+        set
+        {
+            _rule = value;
+            Raise(nameof(Rule));
+            Raise(nameof(KindLabel));
+            Raise(nameof(Describe));
+            Raise(nameof(Enabled));
+        }
+    }
+
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+    private void Raise(string name) =>
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
 
     public string KindLabel => Rule.Kind switch
     {
@@ -96,11 +118,32 @@ public partial class PortfolioSettingsWindow : Window
     private readonly ObservableCollection<FxRuleRow> _fxRules = [];
     private readonly NotificationSettingsStore _notifications;
 
+    /// <summary>False in tests: this window then reads no host-level status at all.</summary>
+    private readonly bool _readHostStatus;
+
+    /// <summary>The identity of the rule currently loaded into the form for editing, if any.</summary>
+    private string? _editingRuleId;
+
     public PortfolioSettingsWindow(PortfolioWorkspace workspace, PricePlanStore? planStore = null)
+        : this(workspace, planStore, readHostStatus: true)
+    {
+    }
+
+    /// <summary>
+    /// <paramref name="readHostStatus"/> false skips the host-level reads this window normally does
+    /// (whether the daily check is registered, and the notification log). Tests build it that way so
+    /// they stay inside their isolated state root instead of reading the developer's own
+    /// <c>%LOCALAPPDATA%</c> log and scheduled tasks (Codex review #7).
+    /// </summary>
+    internal PortfolioSettingsWindow(
+        PortfolioWorkspace workspace,
+        PricePlanStore? planStore,
+        bool readHostStatus)
     {
         InitializeComponent();
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _planStore = planStore;
+        _readHostStatus = readHostStatus;
         _notifications = new NotificationSettingsStore(workspace.Store);
 
         Load(workspace.Settings);
@@ -248,9 +291,10 @@ public partial class PortfolioSettingsWindow : Window
             DialogResult = true;
             Close();
         }
-        catch (Exception ex) when (ex is LedgerException or ArgumentException)
+        catch (Exception ex) when (ex is LedgerException or ArgumentException or AlertStateMigrationException)
         {
-            // Nothing was written: ApplySettings validates before touching the store.
+            // Nothing was written: ApplySettings validates before touching the store, and a refused
+            // cooldown-record migration leaves both the settings and the alert history untouched.
             ErrorText.Text = ex.Message;
         }
     }
@@ -293,6 +337,15 @@ public partial class PortfolioSettingsWindow : Window
             _fxRules.Add(new FxRuleRow { Rule = rule });
         }
 
+        if (!_readHostStatus)
+        {
+            // Tests: no scheduled-task query and no read of the real notification log.
+            NotifyStatusText.Text = "（测试模式：未读取本机后台检查状态）";
+            BackgroundScopeText.Text = "";
+            BackgroundCheckText.Text = "";
+            return;
+        }
+
         NotifyStatusText.Text = ScheduledCheckInstaller.IsInstalled()
             ? "每日后台检查已注册。"
             : "尚未注册后台检查——软件关着时不会有任何提醒。";
@@ -318,8 +371,13 @@ public partial class PortfolioSettingsWindow : Window
     }
 
     /// <summary>The capability statement must follow the switch the moment it flips.</summary>
-    private void BackgroundExtendedBox_OnChanged(object sender, RoutedEventArgs e) =>
-        RenderBackgroundCheckStatus();
+    private void BackgroundExtendedBox_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_readHostStatus)
+        {
+            RenderBackgroundCheckStatus();
+        }
+    }
 
     // --- FX watch rules (N2.4) ---------------------------------------------------------
 
@@ -370,9 +428,28 @@ public partial class PortfolioSettingsWindow : Window
     {
         try
         {
-            var rule = BuildFxRule();
+            var built = BuildFxRule();
+
+            // WP-03 D5 (audit): a rule the user creates carries its own durable identity, and an
+            // edit keeps that identity while advancing the revision. Without this the identity
+            // collapses into "same kind, same currencies", and two rules that differ only in their
+            // cost model silence each other.
+            if (_editingRuleId is { } editing && _fxRules.FirstOrDefault(r => r.Rule.Id == editing) is { } row)
+            {
+                var before = row.Rule.Revision;
+                var updated = FxAlertRuleIdentity.WithEditedParameters(row.Rule, built);
+                row.Rule = updated;
+                var bumped = updated.Revision > before;
+                EndRuleEdit();
+                NotifyStatusText.Text = bumped
+                    ? $"已更新规则：{updated.Describe()}。（提醒身份不变，版本推进到 r{updated.Revision}）记得点「保存」。"
+                    : $"已更新规则：{updated.Describe()}。（内容没变，版本仍是 r{updated.Revision}）记得点「保存」。";
+                return;
+            }
+
+            var rule = built;
             _fxRules.Add(new FxRuleRow { Rule = rule });
-            NotifyStatusText.Text = $"已添加规则：{rule.Describe()}。记得点「保存」。";
+            NotifyStatusText.Text = $"已添加规则：{rule.Describe()}。（它有自己的身份，以后改参数不会变成新规则）记得点「保存」。";
         }
         catch (Exception ex) when (ex is LedgerException or ArgumentException or FormatException)
         {
@@ -380,7 +457,89 @@ public partial class PortfolioSettingsWindow : Window
         }
     }
 
-    private FxAlertRule BuildFxRule()
+    /// <summary>Loads the selected rule back into the form so its parameters can be changed in place.</summary>
+    private void EditFxRuleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (FxRuleGrid.SelectedItem is not FxRuleRow row)
+        {
+            NotifyStatusText.Text = "请先在规则列表里选中要修改的一行。";
+            return;
+        }
+
+        LoadFxRuleIntoForm(row.Rule);
+        _editingRuleId = row.Rule.Id;
+        AddFxRuleButton.Content = "应用修改";
+        NotifyStatusText.Text = "正在修改选中规则：改完参数点「应用修改」。提醒身份保留，只有实际内容变了才推进版本。";
+    }
+
+    private void EndRuleEdit()
+    {
+        _editingRuleId = null;
+        AddFxRuleButton.Content = "添加规则";
+    }
+
+    /// <summary>The inverse of <see cref="BuildFxRule"/>: puts a stored rule back on the form.</summary>
+    private void LoadFxRuleIntoForm(FxAlertRule rule)
+    {
+        SelectByTag(FxRuleKindCombo, rule.Kind.ToString());
+        FxRulePairBox.Text = rule.Pair;
+        FxRuleLowerBox.Text = rule.Lower?.ToString("G29", CultureInfo.InvariantCulture) ?? "";
+        FxRuleUpperBox.Text = rule.Upper?.ToString("G29", CultureInfo.InvariantCulture) ?? "";
+        SelectByContent(FxRuleBaseCombo, rule.BaseCurrency);
+        SelectByContent(FxRuleHeldCombo, rule.HeldCurrency);
+        SelectByContent(FxRuleTargetCombo, rule.TargetCurrency);
+        FxRuleThresholdBox.Text = rule.Kind switch
+        {
+            FxAlertRuleKind.NetArrivalAbove =>
+                rule.ThresholdAmount?.ToString("G29", CultureInfo.InvariantCulture) ?? "",
+            FxAlertRuleKind.HeldAdvantageAbove =>
+                rule.ThresholdPct?.ToString("G29", CultureInfo.InvariantCulture) ?? "",
+            _ => "",
+        };
+        FxRuleSpreadBox.Text = rule.SpreadPct?.ToString("G29", CultureInfo.InvariantCulture) ?? "";
+        FxRuleFixedFeeBox.Text = rule.FixedFee?.ToString("G29", CultureInfo.InvariantCulture) ?? "";
+        FxRuleKind_OnSelectionChanged(FxRuleKindCombo, null!);
+    }
+
+    private static void SelectByTag(ComboBox combo, string tag)
+    {
+        foreach (ComboBoxItem item in combo.Items)
+        {
+            if (string.Equals(item.Tag as string, tag, StringComparison.Ordinal))
+            {
+                combo.SelectedItem = item;
+                return;
+            }
+        }
+    }
+
+    private static void SelectByContent(ComboBox combo, string content)
+    {
+        foreach (ComboBoxItem item in combo.Items)
+        {
+            if (string.Equals(item.Content?.ToString(), content, StringComparison.OrdinalIgnoreCase))
+            {
+                combo.SelectedItem = item;
+                return;
+            }
+        }
+    }
+
+    /// <summary>The rules the page currently holds — used by tests that press the real buttons.</summary>
+    internal IReadOnlyList<FxRuleRow> RuleRows => _fxRules.ToList();
+
+    /// <summary>
+    /// Builds the rule the form currently describes — **with its identity**. This is the creation
+    /// path the audit asked for: every rule that leaves this form owns a durable id, so two rules
+    /// that differ only in their cost model are two watches rather than one. Editing goes through
+    /// <see cref="FxAlertRuleIdentity.WithEditedParameters"/>, which keeps the existing id.
+    /// Internal so the tests drive the REAL construction path (the window is never shown and never
+    /// bound to a real ledger in those tests).
+    /// </summary>
+    internal FxAlertRule BuildFxRule() =>
+        FxAlertRuleIdentity.AssignNewIdentity(BuildFxRuleFromForm());
+
+    private FxAlertRule BuildFxRuleFromForm()
     {
         var kind = SelectedFxRuleKind();
         if (kind == FxAlertRuleKind.RateBand)
@@ -499,6 +658,12 @@ public partial class PortfolioSettingsWindow : Window
         }
 
         _fxRules.Remove(row);
+        if (row.Rule.Id == _editingRuleId)
+        {
+            // The rule being edited is gone: leave edit mode rather than applying to nothing.
+            EndRuleEdit();
+        }
+
         NotifyStatusText.Text = $"已移除规则：{row.Describe}。记得点「保存」。";
     }
 
@@ -577,7 +742,19 @@ public partial class PortfolioSettingsWindow : Window
 
     private async void TestNotifyButton_OnClick(object sender, RoutedEventArgs e)
     {
-        var settings = _notifications.Save(ReadNotificationForm());
+        NotificationSettings settings;
+        try
+        {
+            settings = _notifications.Save(ReadNotificationForm());
+        }
+        catch (Exception ex) when (ex is LedgerException or ArgumentException or AlertStateMigrationException)
+        {
+            // Including "the cooldown history could not be updated, so this save was refused": the
+            // test button must say why instead of letting it escape the click handler.
+            NotifyStatusText.Text = ex.Message;
+            return;
+        }
+
         if (!settings.HasUsableChannel)
         {
             NotifyStatusText.Text = "还没有可用的渠道：请勾选「启用通知推送」并填写机器人地址。";

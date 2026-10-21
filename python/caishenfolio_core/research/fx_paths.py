@@ -301,9 +301,13 @@ class NowResult:
     net_amount: Decimal | None
     advantage_vs_baseline_pct: Decimal | None
     pnl_vs_cost_in_base: Decimal | None
-    held_cost_in_base: Decimal | None
-    cost_known: bool
-    baseline: Baseline
+    #: WP-03 R6: the same P&L measured on what actually LANDS (net of the cost model).
+    #: ``None`` whenever the net arrival is unknown — the page then says "净额未知", and
+    #: never quotes the gross figure as the answer.
+    pnl_vs_cost_net_in_base: Decimal | None = None
+    held_cost_in_base: Decimal | None = None
+    cost_known: bool = False
+    baseline: Baseline | None = None
     pnl_basis: str = "gross"
     note: str = ""
 
@@ -319,12 +323,17 @@ class NowResult:
             "pnl_vs_cost_in_base": (
                 float(_q(self.pnl_vs_cost_in_base)) if self.pnl_vs_cost_in_base is not None else None
             ),
+            "pnl_vs_cost_net_in_base": (
+                float(_q(self.pnl_vs_cost_net_in_base))
+                if self.pnl_vs_cost_net_in_base is not None
+                else None
+            ),
             "held_cost_in_base": (
                 float(_q(self.held_cost_in_base)) if self.held_cost_in_base is not None else None
             ),
             "cost_known": self.cost_known,
             "pnl_basis": self.pnl_basis,
-            "baseline": self.baseline.to_dict(),
+            "baseline": self.baseline.to_dict() if self.baseline is not None else None,
             "note": self.note,
         }
 
@@ -856,9 +865,14 @@ def compare_paths(
         net_now = p1_net
         advantage_now = advantage_gross if cost_known else None
         pnl_base: Decimal | None = None
+        pnl_net_base: Decimal | None = None
         if cost_known and gross_now is not None and tb is not None and held.cost_in_base is not None:
             # What the pot is worth today in the base currency, minus what it actually cost.
             pnl_base = gross_now * tb.rate - held.cost_in_base
+        if cost_known and net_now is not None and tb is not None and held.cost_in_base is not None:
+            # WP-03 R6: the same question answered with what actually LANDS. This is the number
+            # the page leads with; the gross one stays as context.
+            pnl_net_base = net_now * tb.rate - held.cost_in_base
         notes_now: list[str] = []
         if not cost_known:
             notes_now.append(
@@ -871,6 +885,7 @@ def compare_paths(
             net_amount=net_now,
             advantage_vs_baseline_pct=advantage_now,
             pnl_vs_cost_in_base=pnl_base,
+            pnl_vs_cost_net_in_base=pnl_net_base,
             held_cost_in_base=held.cost_in_base if cost_known else None,
             cost_known=cost_known,
             baseline=baseline,

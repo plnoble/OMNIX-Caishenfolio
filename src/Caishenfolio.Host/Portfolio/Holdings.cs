@@ -66,6 +66,23 @@ public sealed record BalanceAssertionPoint
     public required string TransactionId { get; init; }
 }
 
+/// <summary>
+/// A currency a ledger goes negative in. WP-03 D2: history is annotated, never rewritten — a
+/// ledger that predates the balance constraint still opens, and the user is told in plain words
+/// which account, which currency and how much.
+/// </summary>
+public sealed record CashShortfall
+{
+    public required string AccountId { get; init; }
+    public required string Currency { get; init; }
+    /// <summary>Negative amount: how far below zero the balance went.</summary>
+    public required decimal Amount { get; init; }
+    /// <summary>The first transaction date that pushed the balance below zero.</summary>
+    public required DateOnly FirstDate { get; init; }
+
+    public Money Money => Data.Money.Of(Amount, Currency);
+}
+
 /// <summary>The full result of replaying a ledger.</summary>
 public sealed record LedgerState
 {
@@ -73,6 +90,13 @@ public sealed record LedgerState
     public required IReadOnlyList<CashBalance> CashBalances { get; init; }
     /// <summary>Portfolio-boundary flows only. Drives the portfolio XIRR.</summary>
     public required IReadOnlyList<ExternalFlow> ExternalFlows { get; init; }
+
+    /// <summary>
+    /// Cash that replayed below zero (WP-03 D2). Annotated, not corrected: the rows stay as they
+    /// are, and the ledger still opens. The write path refuses to create new ones.
+    /// </summary>
+    public IReadOnlyList<CashShortfall> HistoricalShortfalls { get; init; } = [];
+
 
     /// <summary>
     /// Every flow that crosses an account's own boundary, including the two legs of an internal

@@ -33,7 +33,11 @@ public sealed record BackgroundCheckResult
     /// <summary>One outcome per enabled FX rule: met, not met, or unknown.</summary>
     public IReadOnlyList<FxRuleOutcome> FxOutcomes { get; init; } = [];
 
-    /// <summary>Alert keys whose FX condition could not be judged this run.</summary>
+    /// <summary>
+    /// Alert keys whose FX condition could not be judged this run. The notifier reads this property
+    /// and hands it to the gatekeeper, which must keep their last verdict instead of writing an exit
+    /// for a condition nobody actually judged (WP-02 R6/A10).
+    /// </summary>
     public IReadOnlySet<string> UnknownAlertKeys =>
         FxOutcomes
             .Where(outcome => outcome.State == FxRuleState.Unknown)

@@ -1,6 +1,13 @@
 # Current Development
 
-## Latest scope — 2026-10-19 外汇核心化 / Android 架构审查
+## Latest — 2026-10-21 WP-03 收尾（未合并）
+
+- 实现停在 `wp-03-balance-identity` 的 `d61e3c2`。本窗口没有改产品代码。
+- 全新 worktree `wp-03-verify9` 重跑全套检查，退出码全 0：Debug/Release 0 警告，C# Host 671 + Desktop 76，Python 467（1 skip），`ui_smoke` 与 `installed_smoke` 均通过。
+- 第七轮 Codex 结论「必须修」。运行时别名查找已退场；失败回退、跨文件中断、`C4-1` / `C5-2` / `C6-1` 的失败路径 / `C6-2` 没有被一次性迁移消掉。`C5-3` 未发现残留。
+- 报告：`docs/work-packages/WP-03-审核报告-第七轮.md`。待统筹决定的事项在 `docs/work-packages/WP-03-交付报告.md` §9。不合并、不推送。
+
+## Earlier scope — 2026-10-19 外汇核心化 / Android 架构审查
 
 - 用户将产品定位调整为“外汇资产管理和换汇决策为核心，普通资产记账为辅助”；本轮明确只审查，不实施大改。
 - 已交付：`D:/Agent/Worktrees/OMNIX-Caishenfolio/reviews/fx-android-architecture-review-2026-10-18.md（仓库外：含真实交易金额，公开仓库不放）`，覆盖现状、模型、差距、复用/重构/退出项、新模型、确定性引擎、Android 迁移及分阶段计划。

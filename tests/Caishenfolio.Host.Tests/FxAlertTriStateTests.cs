@@ -26,6 +26,10 @@ public class FxAlertTriStateTests : IDisposable
         Upper = 7.3m,
     };
 
+    /// <summary>The alert the evaluator actually produces for a firing band rule.</summary>
+    private static PortfolioAlert MetBand(FxAlertRule rule) =>
+        Assert.Single(FxAlertRuleEvaluator.Evaluate([rule], _ => (7.1m, "fixture"), _ => null).Alerts);
+
     /// <summary>Evaluates once and returns the alert identity this rule uses when it fires.</summary>
     private static string KeyOf(FxAlertRule rule)
     {
@@ -167,17 +171,9 @@ public class FxAlertTriStateTests : IDisposable
             Today,
             extendedCheck: _ => Task.FromResult(new BackgroundCheckResult
             {
-                Alerts =
-                [
-                    new PortfolioAlert
-                    {
-                        Kind = AlertKind.FxBand,
-                        Severity = AlertSeverity.Info,
-                        Symbol = "USD/CNY",
-                        Title = "汇率进入你设定的区间",
-                        Message = "USD/CNY 当前 7.1，在你设定的区间内。",
-                    },
-                ],
+                // WP-03 R4: the alert the evaluator really produces carries the rule identity;
+                // a hand-built one would key differently and the dedupe check would miss it.
+                Alerts = [MetBand(rule)],
                 FxOutcomes = [new FxRuleOutcome { AlertKey = key, State = FxRuleState.Met }],
             }),
             stateStore: stateStore,
@@ -238,17 +234,9 @@ public class FxAlertTriStateTests : IDisposable
             Today,
             extendedCheck: _ => Task.FromResult(new BackgroundCheckResult
             {
-                Alerts =
-                [
-                    new PortfolioAlert
-                    {
-                        Kind = AlertKind.FxBand,
-                        Severity = AlertSeverity.Info,
-                        Symbol = "USD/CNY",
-                        Title = "汇率进入你设定的区间",
-                        Message = "USD/CNY 当前 7.1，在你设定的区间内。",
-                    },
-                ],
+                // WP-03 R4: the alert the evaluator really produces carries the rule identity;
+                // a hand-built one would key differently and the dedupe check would miss it.
+                Alerts = [MetBand(rule)],
                 FxOutcomes = [new FxRuleOutcome { AlertKey = key, State = FxRuleState.Met }],
             }),
             stateStore: stateStore,

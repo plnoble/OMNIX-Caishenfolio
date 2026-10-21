@@ -77,15 +77,21 @@ public class TransactionReversalTests : IDisposable
         using var store = NewStore();
         var exchange = LedgerTransaction.FxExchange(
             "acct", new DateOnly(2026, 3, 1), fromAmount: 1000m, "CNY", toAmount: 155_000m, "JPY", fee: 2m);
+        // WP-03 R1: the account must hold the CNY first (amount + fee); the reversal still
+        // clears both sides.
+        store.AddTransaction(LedgerTransaction.OpeningCash("acct", new DateOnly(2026, 2, 28), 2_000m, "CNY", "建账余额"));
         store.AddTransaction(exchange);
 
         var mid = store.LoadState();
+        // 2,000 − 1,000 − 2 fee = 998 CNY left next to the 155,000 JPY it bought.
         Assert.Equal(2, mid.CashBalances.Count);
 
         store.AddTransaction(LedgerTransaction.Reversal(exchange, "回单金额录错"));
 
         var state = store.LoadState();
-        Assert.Empty(state.CashBalances);
+        // The reversal restores the opening CNY balance and removes the JPY it bought.
+        Assert.Equal("CNY", Assert.Single(state.CashBalances).Currency);
+        Assert.Equal(2_000m, state.CashBalances[0].Amount);
         Assert.Empty(state.Positions);
     }
 

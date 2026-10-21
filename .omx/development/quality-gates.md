@@ -9,6 +9,21 @@
 - UI and accessibility: Warn. Automated layout and writable checks passed; DPI matrix, pointer, Tab, and screen reader did not run.
 - Release: N/A for publication. No MSI rebuild, tag, push, or installer run was authorized.
 
+## 2026-10-21 - WP-03 收尾门禁（对已提交的 d61e3c2，不合并）
+
+| Category | Status | Evidence | Notes |
+| --- | --- | --- | --- |
+| Security and privacy | Pass | 审查报告入库前去掉了本机 worktree 绝对路径；未读真实账本 | Codex 第一次只读沙箱失败，第二次跳过沙箱；跑完 worktree 仍干净 |
+| Data, API, and consistency | Warn | 实现未改。Codex 指出状态文件与设置文件不是一个事务，读失败会被当成没有历史 | 照实留在交付报告 §5.7 / §9，本窗口不修 |
+| Code quality and maintainability | Warn | 运行时别名查找已不在代码里；`LegacyRuleLevel` 空属性仍在 | 提交说明写过「已删除」，与代码不符 |
+| Testing and verification | Pass | `wp-03-verify9`：Debug/Release 构建 0 警告，C# 747，Python 467（1 skip），两个冒烟退出码都是 0 | 替代测试变弱由 Codex 指出，本窗口没有改测试 |
+| Frontend, accessibility, and UX | N/A | 本窗口没有改 XAML。`ui_smoke` 仍跑过，退出码 0 |  |
+| Operations, dependencies, and release | N/A | 不改 VERSION / PHASE / packaging / workflows；不推送、不打标签、不合并 | Codex 结论是「必须修」，等统筹 |
+
+Open issues:
+
+- 第七轮 Codex「必须修」的条目见 `docs/work-packages/WP-03-审核报告-第七轮.md`。
+
 # Quality Gates
 
 Use this file before risky changes, handoff, delivery, or release. Apply only relevant categories and mark the rest as N/A.
