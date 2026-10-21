@@ -109,8 +109,11 @@ public class AlertStateKeyMigrationTests : IDisposable
 
         var records = state.Load().Records;
         Assert.All(keys, key => Assert.True(records.ContainsKey(key), $"应该搬到 {key}"));
-        Assert.False(records.ContainsKey(lowKey));
-        Assert.False(records.ContainsKey(highKey));
+
+        // The band-7 rule's key never changed (nothing was lost to rounding), so its record is simply
+        // still there; the band-7.1 rule's key DID change, so nothing may be left under the old one.
+        Assert.Contains(lowKey, keys);
+        Assert.False(records.ContainsKey(highKey) && !keys.Contains(highKey));
 
         var decision = AlertGatekeeper.Filter(alerts, state.Load(), Delivered.AddMinutes(30), Cooldown);
         Assert.Empty(decision.ToSend);
@@ -146,6 +149,12 @@ public class AlertStateKeyMigrationTests : IDisposable
         var state = StateStore();
         const string oldKey = "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-";
         Record(state, oldKey);
+        // The legacy settings blob, written directly: this test needs the pre-upgrade file with the
+        // state file still holding the old key.
+        var portfolio = PortfolioStore.UnderStateRoot(_root);
+        portfolio.SaveRawSetting(
+            "notifications.json",
+            new NotificationSettings { FxAlertRules = [LegacyBand(7.1000001m)] }.ToJson());
         var before = File.ReadAllText(StateFile);
 
         File.SetAttributes(StateFile, FileAttributes.ReadOnly);
@@ -196,14 +205,103 @@ public class AlertStateKeyMigrationTests : IDisposable
         Assert.Contains("band:7.1000001~-", raw, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ARuleThatAlreadyHadAnIdentityAlsoGetsItsOldLevelRenamed()
+    {
+        // Review #C6-1: the rule already carried an identity (an intermediate build wrote one) and only
+        // its level format changed. Its old key is {identity}@r{revision}#{frozen level}, and it must be
+        // renamed too — leaving it behind would re-send inside the cooldown.
+        var state = StateStore();
+        const string alreadyIdentified = "FxBand|USD/CNY|汇率进入你设定的区间|rule:my-band@r0#band:7.1~-";
+        Record(state, alreadyIdentified);
+
+        var portfolio = PortfolioStore.UnderStateRoot(_root);
+        portfolio.SaveRawSetting("notifications.json", new NotificationSettings
+        {
+            FxAlertRules =
+            [
+                new FxAlertRule
+                {
+                    Kind = FxAlertRuleKind.RateBand,
+                    Pair = "USD/CNY",
+                    Lower = 7.1000001m,
+                    Id = "my-band",
+                },
+            ],
+        }.ToJson());
+
+        var store = SettingsStore();
+        var rule = Assert.Single(store.Load().FxAlertRules);
+        Assert.Equal("my-band", rule.Id);
+        Assert.Equal("band:7.1000001~-", rule.Level);
+
+        var records = state.Load().Records;
+        Assert.False(records.ContainsKey(alreadyIdentified));
+        Assert.Contains(KeyOf(Firing([rule]), 0), records.Keys);
+
+        var decision = AlertGatekeeper.Filter(Firing([rule]), state.Load(), Delivered.AddMinutes(30), Cooldown);
+        Assert.Empty(decision.ToSend);
+    }
+
+    [Fact]
+    public void AnExplicitIdentityIsNotHandedToAnIdenticalRuleInTheSameBatch()
+    {
+        // Review #C6-2: one rule states its identity, an indistinguishable sibling does not. The
+        // stated one must keep it, and the sibling must get one of its own — not a second copy.
+        _ = StateStore();
+        var store = SettingsStore();
+
+        var first = Assert.Single(
+            store.Save(new NotificationSettings { FxAlertRules = [LegacyBand(7m)] }).FxAlertRules);
+
+        var both = store.Save(new NotificationSettings
+        {
+            FxAlertRules = [first, LegacyBand(7m)],
+        }).FxAlertRules;
+
+        Assert.Equal(2, both.Count);
+        Assert.Equal(first.Id, both[0].Id);
+        Assert.Equal(2, both.Select(rule => rule.Id).Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Fact]
+    public void ReSavingTheOriginalIdentityLessInputAfterTheUpgradeDoesNotResurrectAnything()
+    {
+        // Review #C5-2, in the shape that matters now: the record is gone from the old key, so a stale
+        // retry of the original input cannot restore it, cannot re-send, and cannot move it twice.
+        var state = StateStore();
+        const string oldKey = "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-";
+        Record(state, oldKey);
+
+        var store = SettingsStore();
+        var first = Assert.Single(
+            store.Save(new NotificationSettings { FxAlertRules = [LegacyBand(7.1000001m)] }).FxAlertRules);
+        var afterUpgrade = File.ReadAllText(StateFile);
+        Assert.False(state.Load().Records.ContainsKey(oldKey));
+
+        // The same id-less input again (what a retrying caller would send).
+        var again = Assert.Single(
+            store.Save(new NotificationSettings { FxAlertRules = [LegacyBand(7.1000001m)] }).FxAlertRules);
+
+        Assert.Equal(first.Id, again.Id);
+        Assert.Equal(afterUpgrade, File.ReadAllText(StateFile));
+        Assert.False(state.Load().Records.ContainsKey(oldKey));
+
+        var decision = AlertGatekeeper.Filter(Firing([again]), state.Load(), Delivered.AddMinutes(30), Cooldown);
+        Assert.Empty(decision.ToSend);
+    }
+
     public void Dispose()
     {
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         try
         {
-            if (File.Exists(StateFile))
+            foreach (var file in new[] { StateFile, StateFile + ".pre-key-migration.bak" })
             {
-                File.SetAttributes(StateFile, FileAttributes.Normal);
+                if (File.Exists(file))
+                {
+                    File.SetAttributes(file, FileAttributes.Normal);
+                }
             }
 
             if (Directory.Exists(_root))

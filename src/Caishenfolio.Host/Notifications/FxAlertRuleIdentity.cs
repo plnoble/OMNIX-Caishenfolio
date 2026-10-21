@@ -73,11 +73,11 @@ public static class FxAlertRuleIdentity
         };
 
         var changed = WatchChanged(existing, settled);
+        // A real edit advances the revision, which renames the rule's key: the cooldown record of the
+        // condition the user has changed away from is NOT carried over, so the new condition can
+        // speak (review #C5-2). Toggling Enabled is not a watch change and keeps both.
         return changed
-            // A real edit abandons the old keys: they describe a condition the user has changed away
-            // from, so inheriting their cooldown would suppress the new one (review #C5-2). Toggling
-            // Enabled is not a watch change, so it keeps both the revision and the aliases.
-            ? settled with { Revision = existing.Revision + 1, LegacyRuleKeys = [] }
+            ? settled with { Revision = existing.Revision + 1 }
             : settled;
     }
 
@@ -129,13 +129,11 @@ public static class FxAlertRuleIdentity
         var settled = new List<FxAlertRule>(incoming.Count);
         foreach (var rule in incoming)
         {
-            var migrated = string.IsNullOrWhiteSpace(rule.Id);
-            var assigned = migrated
+            var assigned = string.IsNullOrWhiteSpace(rule.Id)
                 ? AdoptForMigration(rule, storedBySignature, cursor, taken)
                 : rule;
 
             assigned = SettleRevision(assigned, storedById);
-            assigned = SettleLegacyKeys(assigned, rule, storedById, migrated, settled);
             taken.Add(assigned.Id.Trim());
             settled.Add(assigned);
         }
@@ -175,7 +173,6 @@ public static class FxAlertRuleIdentity
                 {
                     Id = match.Id.Trim(),
                     Revision = match.Revision,
-                    LegacyRuleKeys = match.LegacyRuleKeys,
                 };
             }
         }
@@ -183,62 +180,6 @@ public static class FxAlertRuleIdentity
         // The inherited identity is only handed out if this batch has not spoken for it: the same set
         // that holds the explicit ids, so a half-migrated batch cannot mint it twice.
         return taken.Contains(rule.DerivedId) ? AssignNewIdentity(rule) : AdoptInheritedIdentity(rule);
-    }
-
-    /// <summary>
-    /// The complete keys this rule may already have been recorded under — the earlier build composed
-    /// "{identity}@r{revision}#{level}" with the derived identity it fell back to and the frozen
-    /// six-decimal level.
-    /// </summary>
-    /// <remarks>
-    /// Only a rule that actually ARRIVED without an identity is a migration, so only it may claim an
-    /// older key: attaching the derived form to a rule the settings page just created would hand it a
-    /// sibling's history and silently suppress its first alert (review #C5-1). An alias is also never
-    /// added when the complete old key is another rule's CURRENT key — then it is that rule's history,
-    /// not this one's, and keeping it live would swallow the sibling's real exit (review #C5-3). And a
-    /// real edit drops the aliases: they describe the watch the user has just changed away from, so
-    /// inheriting that cooldown would suppress the new condition (review #C5-2) — while toggling
-    /// Enabled keeps the revision and therefore keeps them.
-    /// </remarks>
-    private static FxAlertRule SettleLegacyKeys(
-        FxAlertRule rule,
-        FxAlertRule incoming,
-        Dictionary<string, FxAlertRule> storedById,
-        bool migrated,
-        IReadOnlyList<FxAlertRule> alreadySettled)
-    {
-        var keys = new List<string>(rule.LegacyRuleKeys);
-        var current = CurrentSuffix(rule);
-
-        if (storedById.TryGetValue(rule.Id.Trim(), out var previous) && WatchChanged(previous, rule))
-        {
-            // The watch itself changed: the old keys belong to a condition the user has left.
-            keys.Clear();
-        }
-
-        if (migrated)
-        {
-            var legacy = $"{incoming.DerivedId}@r{incoming.Revision}#{incoming.LegacyLevel}";
-            if (!string.Equals(legacy, current, StringComparison.Ordinal)
-                && !keys.Contains(legacy, StringComparer.Ordinal)
-                && alreadySettled.All(settled => !string.Equals(CurrentSuffix(settled), legacy, StringComparison.Ordinal)))
-            {
-                keys.Add(legacy);
-            }
-        }
-
-        if (storedById.TryGetValue(rule.Id.Trim(), out var stored))
-        {
-            foreach (var key in stored.LegacyRuleKeys)
-            {
-                if (!WatchChanged(stored, rule) && !keys.Contains(key, StringComparer.Ordinal))
-                {
-                    keys.Add(key);
-                }
-            }
-        }
-
-        return keys.Count == rule.LegacyRuleKeys.Count ? rule : rule with { LegacyRuleKeys = keys };
     }
 
     /// <summary>

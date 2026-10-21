@@ -55,13 +55,11 @@ public sealed record PortfolioAlert
     public string RuleLevel { get; init; } = "";
 
     /// <summary>
-    /// WP-03 D6: the complete "rule part" (<c>{identity}@r{revision}#{level}</c>) of notification keys
-    /// this alert's rule may have been recorded under by an earlier build. The gatekeeper rebuilds
-    /// those full keys and looks them up when adopting a record — and keeps them in the live set —
-    /// so an upgrade can neither re-send an alert the user already received inside its cooldown nor
-    /// fabricate an exit for a key the rule simply stopped producing.
+    /// The same level rendered the way the older build keyed it (frozen six decimals). An upgrade
+    /// only needs it to rename the cooldown record of a rule whose level format changed (WP-03 D6),
+    /// and that rename happens in the state file — nothing keeps it as a permanent alias.
     /// </summary>
-    public IReadOnlyList<string> LegacyRuleKeys { get; init; } = [];
+    public string LegacyRuleLevel { get; init; } = "";
 }
 
 /// <summary>

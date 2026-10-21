@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Caishenfolio.Host.Portfolio;
 
 namespace Caishenfolio.Host.Notifications;
@@ -103,8 +104,15 @@ public sealed record FxAlertRule
     /// an explicit precision switches to scientific notation below 1e-4, which would churn the key
     /// of an ordinary band rule (0.00001 → "1E-05"). Trailing zeros are still trimmed, so values
     /// with six decimals or fewer keep exactly the string they had.
+    ///
+    /// A rule that has no identity yet is the exception: it is still the rule the earlier build
+    /// keyed, so it keeps the SIX-DECIMAL rendering. That is what makes a postponed upgrade safe —
+    /// if the cooldown record cannot be renamed (see
+    /// <see cref="NotificationSettingsStore.LastMigrationFailure"/>), the rule must keep producing
+    /// the key that record is actually filed under, or the alert the user already saw would speak
+    /// again inside its cooldown (D6).
     /// </remarks>
-    public string Level => Kind switch
+    public string Level => string.IsNullOrWhiteSpace(Id) ? LegacyLevel : Kind switch
     {
         FxAlertRuleKind.RateBand => $"band:{LevelKey(Lower)}~{LevelKey(Upper)}",
         FxAlertRuleKind.HeldAdvantageAbove => $"pct:{LevelKey(ThresholdPct)}",
@@ -127,6 +135,12 @@ public sealed record FxAlertRule
     /// on purpose — it is here to find old records during an upgrade, never to build a new key — and
     /// it equals <see cref="Level"/> whenever no precision was ever lost.
     /// </summary>
+    /// <remarks>
+    /// Derived, never stored: it is a rendering of the current parameters, so persisting it would put
+    /// an old-key string in the settings file for no reason (WP-03 third round — the settings blob
+    /// carries no key material for keys we no longer use).
+    /// </remarks>
+    [JsonIgnore]
     public string LegacyLevel => Kind switch
     {
         FxAlertRuleKind.RateBand => $"band:{LegacyLevelKey(Lower)}~{LegacyLevelKey(Upper)}",
@@ -135,16 +149,6 @@ public sealed record FxAlertRule
         FxAlertRuleKind.BreakevenCrossed => "be",
         _ => "?",
     };
-
-    /// <summary>
-    /// The complete "rule part" of the notification keys this rule may have been recorded under by
-    /// an earlier build: <c>{identity}@r{revision}#{level}</c>, using the identity and the frozen
-    /// six-decimal level that build composed. The gatekeeper rebuilds the full key from the alert's
-    /// own kind/symbol/title, so the level — and, for a rule that had to be given a new identity, the
-    /// identity itself — is still found during an upgrade. The complete key is what a cooldown lives
-    /// under, so an identity alone is not enough (D6).
-    /// </summary>
-    public IReadOnlyList<string> LegacyRuleKeys { get; init; } = [];
 
     private static string LegacyLevelKey(decimal? value) =>
         value?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) ?? "-";
@@ -198,15 +202,13 @@ public sealed record FxRuleEvaluationResult
     public IReadOnlyList<FxRuleOutcome> Outcomes { get; init; } = [];
 
     /// <summary>
-    /// The alert keys whose condition could not be judged this run — including the complete keys an
-    /// earlier build wrote for the same rule. An outage did not prove the condition ended, and a key
-    /// format migration did not either, so every key the rule could be recorded under stays "live"
-    /// and the gatekeeper writes no exit for any of them (WP-02 R6, WP-03 D6 review #C4-4).
+    /// The alert keys whose condition could not be judged this run. An outage did not prove the
+    /// condition ended, so the gatekeeper writes no exit for them (WP-02 R6/A10).
     /// </summary>
     public IReadOnlySet<string> UnknownAlertKeys =>
         Outcomes
             .Where(outcome => outcome.State == FxRuleState.Unknown)
-            .SelectMany(outcome => outcome.LegacyAlertKeys.Prepend(outcome.AlertKey))
+            .Select(outcome => outcome.AlertKey)
             .ToHashSet(StringComparer.Ordinal);
 }
 
@@ -234,13 +236,6 @@ public sealed record FxRuleOutcome
 
     /// <summary>Why it is UNKNOWN — the failing input, in the user's words. Empty otherwise.</summary>
     public string Reason { get; init; } = "";
-
-    /// <summary>
-    /// The complete keys an earlier build wrote for this same rule, when the rule was recorded under
-    /// a different level string (or a different identity). Kept alongside the current key so an
-    /// un-evaluated round protects the history that actually holds the cooldown.
-    /// </summary>
-    public IReadOnlyList<string> LegacyAlertKeys { get; init; } = [];
 }
 
 /// <summary>
@@ -252,10 +247,9 @@ public sealed record FxRuleOutcome
 public static class FxAlertRuleEvaluator
 {
     /// <summary>
-    /// The alert identities these rules would own — plus, for every one of them, the complete keys an
-    /// earlier build wrote. Used when a whole evaluation round could not run: every one of them is
-    /// UNKNOWN, and the gatekeeper must keep their last verdict instead of recording an exit that
-    /// never happened (WP-02 R6, and the key-migration case in WP-03 review #C4-4).
+    /// The alert identities these rules would own. Used when a whole evaluation round could not run:
+    /// every one of them is UNKNOWN, and the gatekeeper must keep their last verdict instead of
+    /// recording an exit that never happened (WP-02 R6/A10).
     /// </summary>
     public static IReadOnlySet<string> KnownKeys(IEnumerable<FxAlertRule> rules)
     {
@@ -263,11 +257,12 @@ public static class FxAlertRuleEvaluator
         var keys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var rule in rules.Where(rule => rule.Enabled))
         {
-            keys.UnionWith(AlertGatekeeper.KeysOf(Probe(rule)));
+            keys.Add(AlertGatekeeper.KeyOf(Probe(rule)));
         }
 
         return keys;
     }
+
 
     public static FxRuleEvaluationResult Evaluate(
         IReadOnlyList<FxAlertRule> rules,
@@ -306,7 +301,6 @@ public static class FxAlertRuleEvaluator
             outcomes.Add(new FxRuleOutcome
             {
                 AlertKey = AlertGatekeeper.KeyOf(Probe(rule)),
-                LegacyAlertKeys = AlertGatekeeper.KeysOf(Probe(rule)).Skip(1).ToList(),
                 State = state,
                 Reason = reason,
             });
@@ -320,7 +314,7 @@ public static class FxAlertRuleEvaluator
     /// message. The outcome uses it so the gatekeeper can match an UNKNOWN evaluation to the
     /// alert it might have produced (R6).
     /// </summary>
-    private static PortfolioAlert Probe(FxAlertRule rule) => WithIdentity(ProbeShape(rule), rule);
+    internal static PortfolioAlert Probe(FxAlertRule rule) => WithIdentity(ProbeShape(rule), rule);
 
     /// <summary>
     /// R4/D5: stamp the rule's identity and level on every alert it produces, so the dedupe key
@@ -332,7 +326,6 @@ public static class FxAlertRuleEvaluator
         RuleId = rule.StableId,
         RuleRevision = rule.Revision,
         RuleLevel = rule.Level,
-        LegacyRuleKeys = rule.LegacyRuleKeys,
     };
 
     private static PortfolioAlert ProbeShape(FxAlertRule rule) => rule.Kind switch

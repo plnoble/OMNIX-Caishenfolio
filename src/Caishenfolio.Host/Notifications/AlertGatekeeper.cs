@@ -92,6 +92,141 @@ public sealed class AlertNotificationStateStore(string filePath)
             // Failing to persist dedup state must never fail the notification run itself.
         }
     }
+
+    /// <summary>
+    /// Moves the cooldown record of every renamed key onto the key the rule now uses — the upgrade
+    /// the earlier design tried to express with a permanent per-rule alias list (WP-03 D6, third
+    /// round). Doing it here, once, means no alias has to survive anywhere afterwards: the state file
+    /// simply holds the key the rule uses.
+    /// </summary>
+    /// <remarks>
+    /// Safety rules, in order:
+    /// <list type="number">
+    /// <item>Nothing to move ⇒ nothing is written (repeating an upgrade is a no-op, not a rewrite).</item>
+    /// <item>The current file is copied to <c>*.pre-key-migration.bak</c> BEFORE the replacement.</item>
+    /// <item>The new content goes to a temporary file and is then moved over the original, so a
+    /// failure leaves the original byte-for-byte intact — losing cooldown history is worse than
+    /// postponing the upgrade.</item>
+    /// </list>
+    /// </remarks>
+    public AlertKeyMigrationResult RewriteKeys(IReadOnlyList<AlertKeyMapping> mappings)
+    {
+        ArgumentNullException.ThrowIfNull(mappings);
+        var records = new Dictionary<string, AlertNotificationRecord>(
+            Load().Records, StringComparer.Ordinal);
+        var moved = 0;
+        var missing = 0;
+        foreach (var mapping in mappings)
+        {
+            if (string.Equals(mapping.From, mapping.To, StringComparison.Ordinal)
+                || !records.TryGetValue(mapping.From, out var previous))
+            {
+                missing++;
+                continue;
+            }
+
+            records.Remove(mapping.From);
+            records[mapping.To] = records.TryGetValue(mapping.To, out var current)
+                ? Merge(previous, current)
+                : previous;
+            moved++;
+        }
+
+        if (moved == 0)
+        {
+            // Idempotent by construction: a repeat finds no old key left and writes nothing at all.
+            return new AlertKeyMigrationResult { Succeeded = true, Moved = 0, Missing = missing };
+        }
+
+        var backupPath = FilePath + ".pre-key-migration.bak";
+        var tempPath = FilePath + ".key-migration.tmp";
+        try
+        {
+            var directory = Path.GetDirectoryName(FilePath);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            if (File.Exists(backupPath))
+            {
+                // An earlier attempt's backup may itself be read-only (it inherited that from the file
+                // it copied); make it writable so this attempt can refresh it.
+                File.SetAttributes(backupPath, FileAttributes.Normal);
+            }
+
+            File.Copy(FilePath, backupPath, overwrite: true);
+            // A copy inherits the source's attributes — a read-only state file would leave the backup
+            // read-only too, and the next attempt could not refresh it. The backup is ours to manage.
+            File.SetAttributes(backupPath, FileAttributes.Normal);
+            File.WriteAllText(tempPath, JsonSerializer.Serialize(
+                new AlertNotificationState { Records = records }, JsonOptions));
+            File.Move(tempPath, FilePath, overwrite: true);
+            return new AlertKeyMigrationResult
+            {
+                Succeeded = true,
+                Moved = moved,
+                Missing = missing,
+                BackupPath = backupPath,
+            };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+            catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
+            {
+                // The original file is what matters; a stray temp file is cosmetic.
+            }
+
+            return new AlertKeyMigrationResult
+            {
+                Succeeded = false,
+                Moved = 0,
+                Missing = missing,
+                FailureReason = ex.Message,
+            };
+        }
+    }
+
+    /// <summary>
+    /// Two records for the same watch: keep the newest delivery, and stay conservative about the
+    /// range flag — "was in range" suppresses one notification, while a wrongly cleared flag sends
+    /// one the user has already seen (D6).
+    /// </summary>
+    private static AlertNotificationRecord Merge(
+        AlertNotificationRecord a,
+        AlertNotificationRecord b) => new()
+    {
+        LastNotifiedAt = a.LastNotifiedAt > b.LastNotifiedAt ? a.LastNotifiedAt : b.LastNotifiedAt,
+        LastSeenAt = a.LastSeenAt > b.LastSeenAt ? a.LastSeenAt : b.LastSeenAt,
+        WasInRange = a.WasInRange || b.WasInRange,
+    };
+}
+
+/// <summary>One renamed notification key: the old complete key and the key the rule uses now.</summary>
+public sealed record AlertKeyMapping(string From, string To);
+
+/// <summary>What a key rewrite did, so a caller can postpone an upgrade instead of risking history.</summary>
+public sealed record AlertKeyMigrationResult
+{
+    /// <summary>True when the file is in its final, consistent form (also true for "nothing to do").</summary>
+    public required bool Succeeded { get; init; }
+
+    /// <summary>How many records actually moved.</summary>
+    public int Moved { get; init; }
+
+    /// <summary>How many mappings had no record to move (normal after a successful upgrade).</summary>
+    public int Missing { get; init; }
+
+    public string? BackupPath { get; init; }
+
+    public string? FailureReason { get; init; }
 }
 
 /// <summary>What the gatekeeper decided about one batch of alerts.</summary>
@@ -139,24 +274,6 @@ public static class AlertGatekeeper
             : $"{alert.Kind}|{alert.Symbol}|{alert.Title}|rule:{alert.RuleId}@r{alert.RuleRevision}#{alert.RuleLevel}";
 
     /// <summary>
-    /// Every key this alert may currently be recorded under: its own, plus the complete keys an
-    /// earlier build wrote for the same rule (<see cref="PortfolioAlert.LegacyRuleKeys"/>). Callers
-    /// use the whole set when deciding whether a condition is still live — an upgrade must not
-    /// fabricate an exit for a key the rule merely stopped producing (WP-03 review #C4-4).
-    /// </summary>
-    public static IReadOnlyList<string> KeysOf(PortfolioAlert alert)
-    {
-        ArgumentNullException.ThrowIfNull(alert);
-        var keys = new List<string> { KeyOf(alert) };
-        foreach (var legacy in alert.LegacyRuleKeys)
-        {
-            keys.Add($"{alert.Kind}|{alert.Symbol}|{alert.Title}|rule:{legacy}");
-        }
-
-        return keys;
-    }
-
-    /// <summary>
     /// The pre-rule part of a key: <c>kind|symbol|title</c>. Records written before keys carried a
     /// rule identity were filed under exactly this, and every rule with the same wording shares it.
     /// </summary>
@@ -173,16 +290,14 @@ public static class AlertGatekeeper
     /// day.
     /// </summary>
     /// <remarks>
-    /// Candidate keys are COMPOSED from structured fields (this alert's own kind/symbol/title plus
-    /// the rule's own recorded identity/revision/level), never parsed out of the current key, so an
-    /// unusual identity string cannot truncate the lookup and pull in another rule's record (WP-03
-    /// review #C4-6). Among the candidates the most recent delivery fact wins: a low-precision bare
-    /// record may not override the rule's own newer complete-key record (#C4-5).
+    /// Only the pre-WP-03 bare key is adopted here. Keys that changed format DURING WP-03 are not
+    /// aliased at all: the upgrade RENAMES their record in the state file instead
+    /// (<see cref="AlertNotificationStateStore.RewriteKeys"/>), so after it runs there is nothing
+    /// left to fall back to and nothing that can keep suppressing a sibling's rule (WP-03 third round).
     /// </remarks>
     private static AlertNotificationRecord? AdoptLegacy(
         IReadOnlyDictionary<string, AlertNotificationRecord> records,
-        string key,
-        IReadOnlyList<string> legacyRuleKeys)
+        string key)
     {
         var marker = key.IndexOf("|rule:", StringComparison.Ordinal);
         if (marker < 0)
@@ -190,36 +305,8 @@ public static class AlertGatekeeper
             return null;
         }
 
-        var prefix = key[..marker];
-        var candidates = new List<AlertNotificationRecord>();
-        foreach (var legacy in legacyRuleKeys)
-        {
-            if (records.TryGetValue($"{prefix}|rule:{legacy}", out var aliased))
-            {
-                candidates.Add(aliased);
-            }
-        }
-
-        if (records.TryGetValue(prefix, out var bare))
-        {
-            candidates.Add(bare);
-        }
-
-        if (candidates.Count == 0)
-        {
-            return null;
-        }
-
-        var newest = candidates[0];
-        foreach (var candidate in candidates)
-        {
-            if (candidate.LastNotifiedAt > newest.LastNotifiedAt)
-            {
-                newest = candidate;
-            }
-        }
-
-        return newest;
+        // Records written before keys carried a rule identity were filed under kind|symbol|title.
+        return records.GetValueOrDefault(key[..marker]);
     }
 
     public static GatekeeperDecision Filter(        IReadOnlyList<PortfolioAlert> alerts,
@@ -240,14 +327,11 @@ public static class AlertGatekeeper
         foreach (var alert in alerts)
         {
             var key = KeyOf(alert);
-            // Everything this alert may be recorded under is live: its own key, plus the complete
-            // keys an earlier build wrote for it.
-            live.UnionWith(KeysOf(alert));
+            live.Add(key);
             // WP-03 R5/D6: a state file written before the key carried a rule identity must not
             // read as "never sent" — that would re-send everything on the upgrade day. The old
             // record is adopted as this key's history; it stays in the file until it ages out.
-            var previous = records.GetValueOrDefault(key)
-                ?? AdoptLegacy(records, key, alert.LegacyRuleKeys);
+            var previous = records.GetValueOrDefault(key) ?? AdoptLegacy(records, key);
 
             var send = previous is null
                 || !previous.WasInRange
@@ -287,12 +371,6 @@ public static class AlertGatekeeper
             live.Add(BarePrefixOf(liveKey));
         }
 
-        // WP-03 D6, review #3 and #C4-4: a record must not be read as "left the range" merely because
-        // the same condition is now reported under a key the upgrade produced. Every key the rule can
-        // be recorded under — its own, the complete keys an earlier build wrote, and any key an
-        // un-evaluated round names — stays live for this round. Otherwise the first upgrade-day round
-        // that cannot be evaluated (or that fires under the new key) writes a fabricated exit, and the
-        // next round re-sends inside the cooldown the adoption was supposed to respect.
         foreach (var (key, record) in records)
         {
             if (!live.Contains(key) && record.WasInRange)

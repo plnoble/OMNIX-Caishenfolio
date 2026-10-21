@@ -34,17 +34,14 @@ public sealed record BackgroundCheckResult
     public IReadOnlyList<FxRuleOutcome> FxOutcomes { get; init; } = [];
 
     /// <summary>
-    /// Alert keys whose FX condition could not be judged this run — including the complete keys an
-    /// earlier build wrote for the same rule. This is the property the notifier reads, so it must
-    /// expand the legacy keys too: an un-evaluated round did not prove the condition ended, and
-    /// dropping them here would let the gatekeeper write a fabricated exit for the very record that
-    /// holds the cooldown (WP-03 review #C4-4 — the evaluator-level fix alone is not enough, because
-    /// the production path re-projects the outcomes into this record).
+    /// Alert keys whose FX condition could not be judged this run. The notifier reads this property
+    /// and hands it to the gatekeeper, which must keep their last verdict instead of writing an exit
+    /// for a condition nobody actually judged (WP-02 R6/A10).
     /// </summary>
     public IReadOnlySet<string> UnknownAlertKeys =>
         FxOutcomes
             .Where(outcome => outcome.State == FxRuleState.Unknown)
-            .SelectMany(outcome => outcome.LegacyAlertKeys.Prepend(outcome.AlertKey))
+            .Select(outcome => outcome.AlertKey)
             .ToHashSet(StringComparer.Ordinal);
 }
 

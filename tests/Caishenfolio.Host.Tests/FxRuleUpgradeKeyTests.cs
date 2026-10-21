@@ -4,12 +4,11 @@ using Caishenfolio.Host.Portfolio;
 namespace Caishenfolio.Host.Tests;
 
 /// <summary>
-/// WP-03 D6, the third pass (统筹 second send-back): an upgrade may not re-send an alert the user
-/// already received inside its cooldown — <b>any</b> of them. The previous round tied a migrated
-/// rule's old key to its inherited identity, which holds only while the level string is unchanged
-/// and nothing else in the batch claimed that identity. Both assumptions are wrong, and the state
-/// file is the only place that can tell us what was actually delivered, so these tests feed a real
-/// <c>alert-state.json</c> written by the old build and assert NOTHING is sent.
+/// WP-03 D6, third round: the upgrade RENAMES the cooldown records in <c>alert-state.json</c> instead
+/// of keeping a permanent alias on each rule. Everything the earlier rounds argued about — whose
+/// history is this, when does an alias expire, which record is newest — is decided once, here, by
+/// moving the record onto the key the rule actually uses. These tests drive the real settings store,
+/// the real state file and the real gatekeeper.
 /// </summary>
 public class FxRuleUpgradeKeyTests : IDisposable
 {
@@ -17,10 +16,11 @@ public class FxRuleUpgradeKeyTests : IDisposable
     private static readonly TimeSpan Cooldown = TimeSpan.FromHours(12);
 
     private readonly string _root = Path.Combine(
-        Path.GetTempPath(), "caishenfolio_upgrade_keys", Guid.NewGuid().ToString("N"));
+        Path.GetTempPath(), "caishenfolio_upgrade_key", Guid.NewGuid().ToString("N"));
 
-    private AlertNotificationStateStore StateStore() =>
-        new(Path.Combine(_root, "alert-state.json"));
+    private string StateFile => Path.Combine(_root, "alert-state.json");
+
+    private AlertNotificationStateStore StateStore() => new(StateFile);
 
     private NotificationSettingsStore SettingsStore()
     {
@@ -28,7 +28,6 @@ public class FxRuleUpgradeKeyTests : IDisposable
         return new NotificationSettingsStore(PortfolioStore.UnderStateRoot(_root));
     }
 
-    /// <summary>What the old build wrote for one rule: delivered 30 minutes ago, still in range.</summary>
     private static void Record(AlertNotificationStateStore store, params string[] keys)
     {
         var records = new Dictionary<string, AlertNotificationRecord>(StringComparer.Ordinal);
@@ -45,7 +44,6 @@ public class FxRuleUpgradeKeyTests : IDisposable
         store.Save(new AlertNotificationState { Records = records });
     }
 
-    /// <summary>A rate-band rule as the pre-identity settings file held it: no id, revision 0.</summary>
     private static FxAlertRule LegacyBand(decimal lower) => new()
     {
         Kind = FxAlertRuleKind.RateBand,
@@ -53,114 +51,101 @@ public class FxRuleUpgradeKeyTests : IDisposable
         Lower = lower,
     };
 
-    /// <summary>Evaluates the (already migrated) rules against a rate that satisfies every band.</summary>
+    private static FxAlertRule NetArrival(decimal threshold, decimal fixedFee) => new()
+    {
+        Kind = FxAlertRuleKind.NetArrivalAbove,
+        BaseCurrency = "CNY",
+        TargetCurrency = "USD",
+        HeldCurrency = "JPY",
+        ThresholdAmount = threshold,
+        SpreadPct = 0m,
+        FixedFee = fixedFee,
+    };
+
+    /// <summary>A rule the settings page just created: it owns an identity from birth.</summary>
+    private static FxAlertRule Created(FxAlertRule shape) => FxAlertRuleIdentity.AssignNewIdentity(shape);
+
+    /// <summary>The key a rule uses right now, whether or not it currently fires.</summary>
+    private static string KeyNow(FxAlertRule rule) => AlertGatekeeper.KeyOf(FxAlertRuleEvaluator.Probe(rule));
+
     private static IReadOnlyList<PortfolioAlert> Firing(IReadOnlyList<FxAlertRule> rules) =>
         FxAlertRuleEvaluator.Evaluate(rules, _ => (7.2m, "fixture"), _ => null).Alerts;
 
     [Fact]
-    public void A9_TwoLegacyBandsThatDifferOnlyByTheirLevelKeepBothOfTheirKeys()
+    public void A9_TwoLegacyBandsThatDifferOnlyByTheirLevelEachKeepTheirOwnHistory()
     {
-        // The audited regression: two legacy USD/CNY band rules (7.0 and 7.1) share one DerivedId,
-        // but their complete keys differ by level and BOTH were being delivered independently. A
-        // migration that reconciles by id alone hands the second one a fresh identity and loses the
-        // key its cooldown lives under — so the next run re-sends an alert it already sent.
+        // The named regression: two legacy rules with the same derived identity and different levels.
+        // Each record must end up on its OWN rule's key — not merely "found somewhere".
         var state = StateStore();
-        Record(
-            state,
-            "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7~-",
-            "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-");
+        const string lowKey = "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7~-";
+        const string highKey = "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-";
+        Record(state, lowKey, highKey);
 
-        // The upgrade: both rules still carry no id, exactly as the old settings file wrote them.
-        var settled = SettingsStore()
-            .Save(new NotificationSettings { FxAlertRules = [LegacyBand(7m), LegacyBand(7.1m)] })
-            .FxAlertRules;
+        var settled = SettingsStore().Save(new NotificationSettings
+        {
+            FxAlertRules = [LegacyBand(7m), LegacyBand(7.1m)],
+        }).FxAlertRules;
 
-        var alerts = Firing(settled);
-        Assert.Equal(2, alerts.Count);
+        Assert.Equal(2, settled.Count);
+        Assert.Equal(2, settled.Select(rule => rule.StableId).Distinct(StringComparer.Ordinal).Count());
 
-        // Both rules are separate identities (an id is unique — sharing one would break every other
-        // consumer), and each maps its COMPLETE old key: the one that owns the derived identity keeps
-        // it as its key, the other carries it as a legacy key it may have been recorded under.
-        Assert.NotEqual(settled[0].StableId, settled[1].StableId);
-        var allKeys = alerts.SelectMany(AlertGatekeeper.KeysOf).ToList();
-        Assert.Contains(
-            "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7~-",
-            allKeys);
-        Assert.Contains(
-            "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-",
-            allKeys);
+        var keys = settled.Select(KeyNow).ToList();
+        var records = state.Load().Records;
+        Assert.Equal(2, keys.Distinct(StringComparer.Ordinal).Count());
+        Assert.All(keys, key => Assert.True(records.ContainsKey(key), $"记录应该搬到 {key}"));
 
-        // D6: nothing may be sent again inside the cooldown.
-        var decision = AlertGatekeeper.Filter(alerts, state.Load(), Delivered.AddMinutes(30), Cooldown);
+        // The band-7 rule's key is unchanged (no precision was lost), so only the other one had to
+        // move: nothing may be left under a key that no rule uses any more.
+        Assert.Contains(lowKey, keys);
+        Assert.False(records.ContainsKey(highKey) && !keys.Contains(highKey));
+
+        var decision = AlertGatekeeper.Filter(Firing(settled), state.Load(), Delivered.AddMinutes(30), Cooldown);
         Assert.Empty(decision.ToSend);
     }
 
     [Fact]
-    public void A9_ALegacyRuleWhoseLevelGainedDigitsStillFindsItsOldKey()
+    public void A9_ALegacyRuleWhoseLevelGainedDigitsDoesNotSpeakAgain()
     {
-        // The precision fix changed the level STRING for a threshold with more than six decimals:
-        // 7.1000001 is recorded as band:7.1~- by the old build and band:7.1000001~- now. The format
-        // is right; what is missing is a migration of the old key. One rule, no identity conflict.
         var state = StateStore();
-        Record(state, "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-");
+        const string oldKey = "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-";
+        Record(state, oldKey);
 
-        var settled = SettingsStore()
+        var rule = Assert.Single(SettingsStore()
             .Save(new NotificationSettings { FxAlertRules = [LegacyBand(7.1000001m)] })
-            .FxAlertRules;
-        var rule = Assert.Single(settled);
+            .FxAlertRules);
 
-        // The fix must not be undone: the level keeps every digit.
+        // The level keeps its full precision, and the record moved onto the key that precision produces.
         Assert.Equal("band:7.1000001~-", rule.Level);
+        var records = state.Load().Records;
+        Assert.True(records.ContainsKey(KeyNow(rule)));
+        Assert.False(records.ContainsKey(oldKey));
 
-        var alerts = Firing(settled);
-        Assert.Single(alerts);
-        var decision = AlertGatekeeper.Filter(alerts, state.Load(), Delivered.AddMinutes(30), Cooldown);
+        var decision = AlertGatekeeper.Filter(Firing([rule]), state.Load(), Delivered.AddMinutes(30), Cooldown);
         Assert.Empty(decision.ToSend);
     }
 
     [Fact]
     public void SavingTheSameIdentityLessBatchTwiceKeepsTheIdentities()
     {
-        // Retrying a save of the SAME id-less batch may not rebuild identities: the second rule used
-        // to get a fresh random id on every attempt, so a retry would have looked like a new watch.
+        // Idempotency (the coordinator's third named case): retrying the same id-less input must not
+        // rebuild anyone's identity.
+        _ = StateStore();
         var store = SettingsStore();
-        NotificationSettings Batch() => new()
-        {
-            FxAlertRules =
-            [
-                new FxAlertRule
-                {
-                    Kind = FxAlertRuleKind.NetArrivalAbove,
-                    BaseCurrency = "CNY",
-                    TargetCurrency = "USD",
-                    HeldCurrency = "JPY",
-                    ThresholdAmount = 1_000m,
-                    SpreadPct = 0m,
-                    FixedFee = 0m,
-                },
-                new FxAlertRule
-                {
-                    Kind = FxAlertRuleKind.NetArrivalAbove,
-                    BaseCurrency = "CNY",
-                    TargetCurrency = "USD",
-                    HeldCurrency = "JPY",
-                    ThresholdAmount = 1_000m,
-                    SpreadPct = 0m,
-                    FixedFee = 2m,
-                },
-            ],
-        };
 
-        var first = store.Save(Batch()).FxAlertRules;
-        var second = store.Save(Batch()).FxAlertRules;   // the original input, retried
+        var first = store.Save(new NotificationSettings
+        {
+            FxAlertRules = [NetArrival(1_000m, 0m), NetArrival(1_000m, 2m)],
+        }).FxAlertRules;
+        var second = store.Save(new NotificationSettings
+        {
+            FxAlertRules = [NetArrival(1_000m, 0m), NetArrival(1_000m, 2m)],
+        }).FxAlertRules;
+        var third = store.Load().FxAlertRules;
 
         Assert.Equal(2, first.Count);
         Assert.NotEqual(first[0].Id, first[1].Id);
         Assert.Equal(first[0].Id, second[0].Id);
         Assert.Equal(first[1].Id, second[1].Id);
-
-        // And a third attempt still lands on the same two identities.
-        var third = store.Save(Batch()).FxAlertRules;
         Assert.Equal(first[0].Id, third[0].Id);
         Assert.Equal(first[1].Id, third[1].Id);
     }
@@ -168,10 +153,6 @@ public class FxRuleUpgradeKeyTests : IDisposable
     [Fact]
     public void A9_TheSecondLoadAfterMigrationKeepsTheHistoryAndTheRevisions()
     {
-        // Review #C4-1: two rules could no longer both inherit the same id (an id has to be unique —
-        // the settings page and every id-keyed lookup assume it), so the second one gets its own id
-        // and maps the old key as a legacy key. A LOAD right after the migration must not then treat
-        // the two as one rule and bump a revision — that would change a key and re-send.
         var state = StateStore();
         Record(
             state,
@@ -179,13 +160,12 @@ public class FxRuleUpgradeKeyTests : IDisposable
             "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-");
 
         var store = SettingsStore();
-        store.Save(new NotificationSettings { FxAlertRules = [LegacyBand(7m), LegacyBand(7.1m)] });
+        _ = store.Save(new NotificationSettings { FxAlertRules = [LegacyBand(7m), LegacyBand(7.1m)] });
 
-        // The read-back path, which is what the background check and the settings page use.
         var reloaded = store.Load().FxAlertRules;
         Assert.Equal(2, reloaded.Count);
         Assert.All(reloaded, rule => Assert.Equal(0, rule.Revision));
-        Assert.Equal(2, reloaded.Select(rule => rule.StableId).Distinct().Count());
+        Assert.Equal(2, reloaded.Select(rule => rule.StableId).Distinct(StringComparer.Ordinal).Count());
 
         var decision = AlertGatekeeper.Filter(Firing(reloaded), state.Load(), Delivered.AddMinutes(30), Cooldown);
         Assert.Empty(decision.ToSend);
@@ -194,47 +174,63 @@ public class FxRuleUpgradeKeyTests : IDisposable
     [Fact]
     public void A9_AHalfMigratedBatchDoesNotHandOutAnIdentityTwice()
     {
-        // Review #C4-2: a normal partially backfilled input — one rule already carries an identity, its
-        // neighbour is still the old id-less shape. The explicit identity must be reserved, or both
-        // end up on one id and one of them loses its history.
-        var state = StateStore();
-        Record(
-            state,
-            "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7~-",
-            "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-");
-
+        // One explicit identity plus one id-less rule, and the harder permutations of the same idea:
+        // every output identity appears exactly once.
+        _ = StateStore();
         var store = SettingsStore();
+
         var first = store.Save(new NotificationSettings { FxAlertRules = [LegacyBand(7m), LegacyBand(7.1m)] })
             .FxAlertRules;
 
-        // Re-submit with the first rule's identity stated and the second one still id-less.
-        var mixed = store.Save(new NotificationSettings
-        {
-            FxAlertRules = [first[0], LegacyBand(7.1m)],
-        }).FxAlertRules;
-
+        var mixed = store.Save(new NotificationSettings { FxAlertRules = [first[0], LegacyBand(7.1m)] })
+            .FxAlertRules;
         Assert.Equal(2, mixed.Count);
         Assert.Equal(2, mixed.Select(rule => rule.Id).Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(first[0].Id, mixed[0].Id);
 
-        var decision = AlertGatekeeper.Filter(Firing(mixed), state.Load(), Delivered.AddMinutes(30), Cooldown);
-        Assert.Empty(decision.ToSend);
+        // An explicit identity followed by two indistinguishable id-less rules.
+        var duplicate = store.Save(new NotificationSettings
+        {
+            FxAlertRules = [first[1], NetArrival(1_000m, 0m), NetArrival(1_000m, 0m)],
+        }).FxAlertRules;
+        Assert.Equal(3, duplicate.Count);
+        Assert.Equal(3, duplicate.Select(rule => rule.Id).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(first[1].Id, duplicate[0].Id);
+    }
+
+    [Fact]
+    public void C4_1_AddingASecondRuleAfterAFirstMigrationStillKeepsIdentitiesUnique()
+    {
+        // The audited fallback hole: A is migrated alone (taking the derived identity), then the same
+        // id-less A and a new id-less B are submitted. The allocator must see A already owns it.
+        _ = StateStore();
+        var store = SettingsStore();
+
+        var first = Assert.Single(
+            store.Save(new NotificationSettings { FxAlertRules = [LegacyBand(7m)] }).FxAlertRules);
+
+        var second = store.Save(new NotificationSettings
+        {
+            FxAlertRules = [LegacyBand(7m), LegacyBand(7.1m)],
+        }).FxAlertRules;
+
+        Assert.Equal(2, second.Count);
+        Assert.Equal(first.Id, second[0].Id);
+        Assert.Equal(2, second.Select(rule => rule.Id).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(second[0].Id, second[0].StableId);
     }
 
     [Fact]
     public void A9_ReorderingOrDroppingARuleDoesNotRebindIdentities()
     {
-        // Review #C4-3: the settings list has no order contract, and a user may remove one rule. A
-        // retry must not hand rule A the identity (and therefore the history) of rule B.
         _ = StateStore();
-
         var store = SettingsStore();
+
         var first = store.Save(new NotificationSettings
         {
             FxAlertRules = [NetArrival(1_000m, 0m), NetArrival(1_000m, 2m)],
         }).FxAlertRules;
 
-        // Reordered, still id-less: each rule keeps its own identity.
         var reordered = store.Save(new NotificationSettings
         {
             FxAlertRules = [NetArrival(1_000m, 2m), NetArrival(1_000m, 0m)],
@@ -242,7 +238,6 @@ public class FxRuleUpgradeKeyTests : IDisposable
         Assert.Equal(first[1].Id, reordered[0].Id);
         Assert.Equal(first[0].Id, reordered[1].Id);
 
-        // Drop the first rule (by keeping the second one's identity), then re-submit it id-less.
         var kept = store.Save(new NotificationSettings { FxAlertRules = [first[1]] }).FxAlertRules;
         Assert.Equal(first[1].Id, Assert.Single(kept).Id);
 
@@ -254,75 +249,132 @@ public class FxRuleUpgradeKeyTests : IDisposable
     }
 
     [Fact]
-    public void A9_AnUnknownRoundAfterTheKeyMigrationStillDoesNotFabricateAReEntry()
+    public void A9_AnUnknownRoundAfterTheUpgradeStillDoesNotFabricateAReEntry()
     {
-        // Review #C4-4: the old complete key has to stay live while the rule cannot be judged, or the
-        // recovery looks like a re-entry and re-sends inside the cooldown.
+        // After the rename, the record lives under the NEW key. A round that cannot be judged must
+        // keep that record's verdict, or the recovery looks like a re-entry.
         var state = StateStore();
         Record(state, "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-");
 
-        var settled = SettingsStore()
+        var rule = Assert.Single(SettingsStore()
             .Save(new NotificationSettings { FxAlertRules = [LegacyBand(7.1000001m)] })
-            .FxAlertRules;
-        var rule = Assert.Single(settled);
+            .FxAlertRules);
+        var newKey = KeyNow(rule);
 
-        // Round one, ten minutes later: the quote is missing, so the rule is reported un-evaluated.
         var unknown = FxAlertRuleEvaluator.Evaluate([rule], _ => null, _ => null);
+        Assert.Contains(newKey, unknown.UnknownAlertKeys);
+
         var roundOne = AlertGatekeeper.Filter(
             unknown.Alerts, state.Load(), Delivered.AddMinutes(10), Cooldown, unknown.UnknownAlertKeys);
+        Assert.True(roundOne.NextState.Records[newKey].WasInRange);
 
-        // The old complete key keeps its verdict: no fabricated exit.
-        Assert.True(
-            roundOne.NextState.Records[
-                "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-"]
-                .WasInRange);
-
-        // Round two: the quote is back, the condition has been true all along.
-        var roundTwo = AlertGatekeeper.Filter(
-            Firing([rule]), roundOne.NextState, Delivered.AddMinutes(20), Cooldown);
+        var roundTwo = AlertGatekeeper.Filter(Firing([rule]), roundOne.NextState, Delivered.AddMinutes(20), Cooldown);
         Assert.Empty(roundTwo.ToSend);
     }
 
     [Fact]
-    public void A9_TheMostRecentHistoryWinsWhenBareAndCompleteKeysCoexist()
+    public void A9_APreRuleBareRecordStillSuppressesTheFirstUpgradeDayAlert()
     {
-        // Review #C4-5: a mixed state file (bare pre-WP-03 key + a newer complete key) must not let the
-        // older bare record override the newer complete one.
+        // The other generation of old keys: a state file from before keys carried a rule identity.
+        // Nothing renames those, so the bare-prefix adoption still has to hold (D6).
         var state = StateStore();
-        var path = Path.Combine(_root, "alert-state.json");
-        state.Save(new AlertNotificationState
-        {
-            Records = new Dictionary<string, AlertNotificationRecord>(StringComparer.Ordinal)
-            {
-                ["FxBand|USD/CNY|汇率进入你设定的区间"] = new()
-                {
-                    LastNotifiedAt = Delivered.AddHours(-13),
-                    LastSeenAt = Delivered.AddHours(-13),
-                    WasInRange = true,
-                },
-                ["FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-"] = new()
-                {
-                    LastNotifiedAt = Delivered,
-                    LastSeenAt = Delivered,
-                    WasInRange = true,
-                },
-            },
-        });
-        Assert.True(File.Exists(path));
+        Record(state, "FxBand|USD/CNY|汇率进入你设定的区间");
 
-        var settled = SettingsStore()
-            .Save(new NotificationSettings { FxAlertRules = [LegacyBand(7.1000001m)] })
-            .FxAlertRules;
+        var rule = Assert.Single(SettingsStore()
+            .Save(new NotificationSettings { FxAlertRules = [LegacyBand(7.1m)] })
+            .FxAlertRules);
 
-        var decision = AlertGatekeeper.Filter(Firing(settled), state.Load(), Delivered.AddMinutes(30), Cooldown);
+        var decision = AlertGatekeeper.Filter(Firing([rule]), state.Load(), Delivered.AddMinutes(30), Cooldown);
         Assert.Empty(decision.ToSend);
+    }
+
+    [Fact]
+    public void A9_ANewlyCreatedRuleDoesNotInheritALeftoverRulesCooldown()
+    {
+        // Review #C5-1, under the new mechanism: a created rule owns its identity, its record is
+        // absent, and the leftover record of a rule that is no longer in the settings belongs to
+        // nobody. It must speak.
+        var state = StateStore();
+        Record(state, "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7~-");
+
+        var saved = Assert.Single(SettingsStore().Save(new NotificationSettings
+        {
+            FxAlertRules = [Created(LegacyBand(7m))],
+        }).FxAlertRules);
+
+        var decision = AlertGatekeeper.Filter(Firing([saved]), state.Load(), Delivered.AddMinutes(30), Cooldown);
+        Assert.Equal(saved.StableId, Assert.Single(decision.ToSend).RuleId);
+    }
+
+    [Fact]
+    public void C5_2_ARealEditDoesNotInheritTheOldRevisionsCooldown()
+    {
+        // The user changes what the rule watches. Its key changes with the revision, and the old
+        // record is not carried over — the new condition is allowed to speak.
+        var state = StateStore();
+        Record(state, "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-");
+
+        var store = SettingsStore();
+        var migrated = Assert.Single(
+            store.Save(new NotificationSettings { FxAlertRules = [LegacyBand(7.1000001m)] }).FxAlertRules);
+
+        var edited = FxAlertRuleIdentity.WithEditedParameters(migrated, LegacyBand(7.15m));
+        Assert.Equal(1, edited.Revision);
+
+        var saved = Assert.Single(store.Save(new NotificationSettings { FxAlertRules = [edited] }).FxAlertRules);
+        var records = state.Load().Records;
+        Assert.False(records.ContainsKey(KeyNow(saved)));
+
+        var decision = AlertGatekeeper.Filter(Firing([saved]), state.Load(), Delivered.AddMinutes(30), Cooldown);
+        Assert.Single(decision.ToSend);
+    }
+
+    [Fact]
+    public void C5_3_ARuleCanStillRecordItsExitWhenASiblingSharedItsOldKey()
+    {
+        // Two legacy rules the old build could not tell apart shared ONE record. The rule that keeps
+        // that history may still record that it left its range — no sibling alias keeps it alive.
+        var state = StateStore();
+        const string sharedKey = "FxNetArrival|JPY/USD|净到账达到你设定的目标|rule:NetArrivalAbove:?:CNY/USD/JPY@r0#amt:1000";
+        Record(state, sharedKey);
+
+        var migrated = SettingsStore().Save(new NotificationSettings
+        {
+            FxAlertRules = [NetArrival(1_000m, 2m), NetArrival(1_000m, 0m)],
+        }).FxAlertRules;
+        Assert.Equal(2, migrated.Count);
+
+        FxPathFacts FactsFor(FxAlertRule rule, decimal gross) =>
+            new() { NetArrival = gross - (rule.FixedFee ?? 0m) };
+        IReadOnlyList<PortfolioAlert> Evaluate(decimal gross) =>
+            FxAlertRuleEvaluator.Evaluate(migrated, _ => (7.2m, "fixture"), rule => FactsFor(rule, gross)).Alerts;
+
+        // T: the fee-paying rule is below its threshold, the other is above it.
+        var start = AlertGatekeeper.Filter(Evaluate(1_001m), state.Load(), Delivered, Cooldown);
+        var newcomer = migrated[1].StableId;
+        Assert.Equal(newcomer, Assert.Single(start.ToSend).RuleId);
+        var delivered = AlertGatekeeper.MarkDelivered(start.NextState, start.ToSend, Delivered);
+
+        // T+10: still below, so the rule that owns the shared record has really left its range.
+        var middle = AlertGatekeeper.Filter(Evaluate(1_001m), delivered, Delivered.AddMinutes(10), Cooldown);
+        Assert.Empty(middle.ToSend);
+        var ownerKey = KeyNow(migrated[0]);
+        Assert.True(middle.NextState.Records.ContainsKey(ownerKey) || middle.NextState.Records.ContainsKey(sharedKey));
+        Assert.False(
+            middle.NextState.Records.TryGetValue(ownerKey, out var ownerRecord)
+                ? ownerRecord.WasInRange
+                : middle.NextState.Records[sharedKey].WasInRange);
+
+        // T+20: both qualify again; the owner re-enters and must be announced.
+        var again = AlertGatekeeper.Filter(Evaluate(1_003m), middle.NextState, Delivered.AddMinutes(20), Cooldown);
+        Assert.Equal(migrated[0].StableId, Assert.Single(again.ToSend).RuleId);
     }
 
     [Fact]
     public void A9_AnUnusualExplicitIdentityCannotAdoptAnotherRulesHistory()
     {
-        // Review #C4-6: alias lookup composes keys from structured fields, so an identity that itself
-        // contains the key's separators cannot truncate the lookup and steal a neighbour's record.
+        // Review #C4-6: candidates are composed from structured fields, never parsed out of the
+        // current key, so an identity containing the key's own separators cannot truncate a lookup.
         var state = StateStore();
         Record(state, "FxBand|USD/CNY|汇率进入你设定的区间|rule:rule-a@r0#band:7.1~-");
 
@@ -335,30 +387,22 @@ public class FxRuleUpgradeKeyTests : IDisposable
             Revision = 7,
         };
 
-        var alerts = Firing([stranger]);
-        var decision = AlertGatekeeper.Filter(alerts, state.Load(), Delivered.AddMinutes(30), Cooldown);
+        var decision = AlertGatekeeper.Filter(Firing([stranger]), state.Load(), Delivered.AddMinutes(30), Cooldown);
 
         // It never delivered anything, so it must speak — not inherit rule-a's cooldown.
         Assert.Single(decision.ToSend);
     }
-
-    /// <summary>A net-arrival rule as the old settings file held it: no id, revision 0.</summary>
-    private static FxAlertRule NetArrival(decimal threshold, decimal fixedFee) => new()
-    {
-        Kind = FxAlertRuleKind.NetArrivalAbove,
-        BaseCurrency = "CNY",
-        TargetCurrency = "USD",
-        HeldCurrency = "JPY",
-        ThresholdAmount = threshold,
-        SpreadPct = 0m,
-        FixedFee = fixedFee,
-    };
 
     public void Dispose()
     {
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         try
         {
+            if (File.Exists(StateFile))
+            {
+                File.SetAttributes(StateFile, FileAttributes.Normal);
+            }
+
             if (Directory.Exists(_root))
             {
                 Directory.Delete(_root, recursive: true);

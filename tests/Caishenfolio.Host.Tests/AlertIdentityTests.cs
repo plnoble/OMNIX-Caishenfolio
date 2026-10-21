@@ -195,29 +195,41 @@ public class AlertIdentityTests
         // The audit's follow-up: Level rounded to six decimals while the threshold was parsed with
         // no such limit, so 7.1000001 and 7.1000002 collapsed into one "band:7.1~…" key — two
         // watches the user created separately would have shared one cooldown.
-        var fine = new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = 7.1000001m };
-        var finer = new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = 7.1000002m };
+        //
+        // The precision belongs to the key a rule is DELIVERED under: the settings store settles every
+        // rule's identity before anyone evaluates it, and a settled rule keys the full precision.
+        var fine = FxAlertRuleIdentity.AssignNewIdentity(
+            new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = 7.1000001m });
+        var finer = FxAlertRuleIdentity.AssignNewIdentity(
+            new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = 7.1000002m });
 
         Assert.NotEqual(fine.Level, finer.Level);
         Assert.Contains("7.1000001", fine.Level, StringComparison.Ordinal);
         Assert.Contains("7.1000002", finer.Level, StringComparison.Ordinal);
         Assert.NotEqual(AlertGatekeeper.KeyOf(Probe(fine)), AlertGatekeeper.KeyOf(Probe(finer)));
 
+        // A rule with no identity yet is the one the older build keyed, so it keeps the six-decimal
+        // rendering — that is what lets a postponed upgrade (the state file could not be rewritten)
+        // keep matching the record the file actually holds instead of re-sending it.
+        var unmigrated = new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = 7.1000001m };
+        Assert.Equal("band:7.1~-", unmigrated.Level);
+
         // A key is not a display string: never scientific notation, at either end of the scale.
         // ("G29" would have printed 0.00001 as 1E-05 — a key change for an ordinary band rule.)
-        var tiny = new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = 0.00001m };
+        var tiny = FxAlertRuleIdentity.AssignNewIdentity(
+            new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = 0.00001m });
         Assert.Equal("band:0.00001~-", tiny.Level);
         Assert.Equal(
             "band:-0.00001~-",
-            new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = -0.00001m }.Level);
+            Settled(new FxAlertRule { Kind = FxAlertRuleKind.RateBand, Pair = "USD/CNY", Lower = -0.00001m }).Level);
         Assert.Equal(
             "band:0.0000000000000000000000000001~-",
-            new FxAlertRule
+            Settled(new FxAlertRule
             {
                 Kind = FxAlertRuleKind.RateBand,
                 Pair = "USD/CNY",
                 Lower = 0.0000000000000000000000000001m,
-            }.Level);
+            }).Level);
         var huge = new FxAlertRule
         {
             Kind = FxAlertRuleKind.NetArrivalAbove,
@@ -256,6 +268,12 @@ public class AlertIdentityTests
         RuleRevision = rule.Revision,
         RuleLevel = rule.Level,
     };
+
+    /// <summary>
+    /// The same rule as the settings store would deliver it: with an identity, which is what keys the
+    /// full-precision level. Rules only reach the evaluator through that store.
+    /// </summary>
+    private static FxAlertRule Settled(FxAlertRule rule) => FxAlertRuleIdentity.AssignNewIdentity(rule);
 
     [Fact]
     public void A9_AnOldStateFileWithoutThatAlertStillSpeaks()
