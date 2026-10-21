@@ -503,3 +503,10 @@
 - 验证限制：预期 managed venv 路径不存在，改用系统 Python 3.13.7 仅跑隔离 FX 测试，不称正式全门禁；C# 编译后测试宿主 90 秒连接超时，TRX 0 executed。根因未确认，不归因于机器慢或纯环境抖动，也不通过重试筛绿灯。
 - 工具纠正：一次 PowerShell 检索误用了 Bash 大括号路径展开，解析失败后改为目录 rg；无产品文件变更。
 - 证据：.local/fx-android-review-20261018/；迁移与新引擎建议见 D:/Agent/Worktrees/OMNIX-Caishenfolio/reviews/fx-android-architecture-review-2026-10-18.md（仓库外：含真实交易金额，公开仓库不放）。相关经验加入 skill-candidates。
+
+## 2026-10-21 - Codex 只读沙箱锁失败被当成审查结论会是假报告
+
+- 症状：`codex exec --sandbox read-only` 退出码 0，并写出一份「必须修」的短报告。正文只说沙箱初始化失败（`helper_sandbox_lock_failed` / `SetNamedSecurityInfoW` 错误 5），五项都没核到。
+- 错误假设：退出码 0 加一份 markdown 就是审查通过了读代码。指定哈希目录 `896a0166b774037a`（0.163.0-alpha.10.2）也已不在，同目录顶层仍是 0.130。
+- 处理：换同目录现有的 0.163.0-alpha.11，第二次跳过沙箱重跑，才得到读过 `1f03a04..d61e3c2` 的报告。跑完核对那个 worktree 仍是干净的 detached HEAD。
+- 预防：Codex 报告的首句如果在讲审查环境而不是代码，就不能当代码结论。入库前去掉本机绝对路径。

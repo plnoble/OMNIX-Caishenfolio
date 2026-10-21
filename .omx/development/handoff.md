@@ -1,6 +1,15 @@
 # Agent Handoff
 
-## Latest — 2026-10-19 FX / Android 审查交付
+## Latest — 2026-10-21 WP-03 收尾（未合并）
+
+分支 `wp-03-balance-identity`，实现停在 `d61e3c2`，本窗口只加文档。不合并、不推送。
+
+- 永久别名的运行时查找（`LegacyRuleKeys` / `LegacyAlertKeys` / `KeysOf`）已不在代码里。`LegacyLevel` 是不入库的派生值。`PortfolioAlert.LegacyRuleLevel` 仍在，但是空属性，没有使用点。
+- 全新 worktree `wp-03-verify9` 对 `d61e3c2` 的全套检查退出码全是 0（Debug/Release 0 警告，C# 747，Python 467 加 1 skip，两个冒烟都过）。
+- 第七轮 Codex（`0.163.0-alpha.11`，指定的 `0.163.0-alpha.10.2` 目录已不在）结论是「必须修」。报告：`docs/work-packages/WP-03-审核报告-第七轮.md`。交付报告 §5.7 与 §9 列出待统筹决定的条目。本窗口没有改产品代码。
+- 下一窗口不要把 §10.1 里「五条由构造消失」当成已确认。审查认为 `C5-3` 未发现残留，其余四条仍在，而且「迁移失败就保持旧键」只对没有 Id 的规则成立。
+
+## Previous — 2026-10-19 FX / Android 审查交付
 
 本轮用户要求先阅读代码，再审查“外汇资产管理/换汇决策优先”的新定位，不立即重写。审查报告：
 `D:/Agent/Worktrees/OMNIX-Caishenfolio/reviews/fx-android-architecture-review-2026-10-18.md（仓库外：含真实交易金额，公开仓库不放）`。原 PC 基线为 `a3afe7c`，开始时工作区干净。

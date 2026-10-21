@@ -997,3 +997,10 @@ quality-gates.md。
 - 生产函数探针：绕行比例费 1% + 固定费 None 仍返回 ok/net；缺历史成本的 held 路径被丢弃；无来源现金换汇可产生负余额。代码未修改。
 - Python FX 64 项通过（系统 3.13.7，fixture，隔离 grid DB）；Host 与 Host.Tests 编译完成，但 vstest→testhost 90 秒连接超时，0 executed。未复用旧通过数，未启动正式桌面或真实通知。
 - 记录 current/handoff/decisions/error-ledger/quality-gates/reflections/skill-candidates；未提交、发布、改变版本或迁移真实数据。
+
+## 2026-10-21 - WP-03 收尾（不重做实现）
+
+- 接手 `wp-03-balance-identity` @ `d61e3c2`。确认 `LegacyRuleKeys` / `LegacyAlertKeys` / `KeysOf` 已不在源码与测试里；`LegacyLevel` 是 `[JsonIgnore]` 派生值。`PortfolioAlert.LegacyRuleLevel` 仍是空的 init 属性，无赋值、无读取。
+- 全新 worktree `wp-03-verify9`（detached `d61e3c2`）全套检查退出码全 0：Debug/Release 构建 0 警告，测试 Host 671 + Desktop 76，Python 467（1 skip），`ui_smoke` 与 `installed_smoke` 均通过。
+- Codex：指定的 `0.163.0-alpha.10.2` 目录已不在，用同目录 `0.163.0-alpha.11`。只读沙箱锁失败，第二次跳过沙箱才读到 `1f03a04..d61e3c2`。结论「必须修」。审查 worktree 跑完仍干净。
+- 没有改产品代码、没有改测试、没有重做迁移。报告见 `docs/work-packages/WP-03-审核报告-第七轮.md` 与交付报告 §4.1 / §5.7 / §9。不合并、不推送。
