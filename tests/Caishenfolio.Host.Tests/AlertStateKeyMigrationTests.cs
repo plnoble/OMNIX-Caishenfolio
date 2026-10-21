@@ -291,6 +291,34 @@ public class AlertStateKeyMigrationTests : IDisposable
         Assert.Empty(decision.ToSend);
     }
 
+    [Fact]
+    public void ASaveThatCannotRenameTheRecordIsRefusedInsteadOfPersistingANewIdentity()
+    {
+        // Saving is a user action, so it fails loudly: the caller (the settings page) can say why.
+        // Nothing is written — neither the settings nor the cooldown history.
+        var state = StateStore();
+        const string oldKey = "FxBand|USD/CNY|汇率进入你设定的区间|rule:RateBand:USD/CNY:?/?/?@r0#band:7.1~-";
+        Record(state, oldKey);
+        var portfolio = PortfolioStore.UnderStateRoot(_root);
+        var before = File.ReadAllText(StateFile);
+
+        File.SetAttributes(StateFile, FileAttributes.ReadOnly);
+        try
+        {
+            var store = SettingsStore();
+            var thrown = Assert.Throws<AlertStateMigrationException>(
+                () => store.Save(new NotificationSettings { FxAlertRules = [LegacyBand(7.1000001m)] }));
+
+            Assert.Contains("冷却记录", thrown.Message, StringComparison.Ordinal);
+            Assert.Equal(before, File.ReadAllText(StateFile));
+            Assert.Null(portfolio.LoadRawSetting("notifications.json"));
+        }
+        finally
+        {
+            File.SetAttributes(StateFile, FileAttributes.Normal);
+        }
+    }
+
     public void Dispose()
     {
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();

@@ -291,9 +291,10 @@ public partial class PortfolioSettingsWindow : Window
             DialogResult = true;
             Close();
         }
-        catch (Exception ex) when (ex is LedgerException or ArgumentException)
+        catch (Exception ex) when (ex is LedgerException or ArgumentException or AlertStateMigrationException)
         {
-            // Nothing was written: ApplySettings validates before touching the store.
+            // Nothing was written: ApplySettings validates before touching the store, and a refused
+            // cooldown-record migration leaves both the settings and the alert history untouched.
             ErrorText.Text = ex.Message;
         }
     }
@@ -741,7 +742,19 @@ public partial class PortfolioSettingsWindow : Window
 
     private async void TestNotifyButton_OnClick(object sender, RoutedEventArgs e)
     {
-        var settings = _notifications.Save(ReadNotificationForm());
+        NotificationSettings settings;
+        try
+        {
+            settings = _notifications.Save(ReadNotificationForm());
+        }
+        catch (Exception ex) when (ex is LedgerException or ArgumentException or AlertStateMigrationException)
+        {
+            // Including "the cooldown history could not be updated, so this save was refused": the
+            // test button must say why instead of letting it escape the click handler.
+            NotifyStatusText.Text = ex.Message;
+            return;
+        }
+
         if (!settings.HasUsableChannel)
         {
             NotifyStatusText.Text = "还没有可用的渠道：请勾选「启用通知推送」并填写机器人地址。";
