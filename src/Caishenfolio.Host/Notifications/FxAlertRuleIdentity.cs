@@ -90,8 +90,8 @@ public static class FxAlertRuleIdentity
         ArgumentNullException.ThrowIfNull(incoming);
         ArgumentNullException.ThrowIfNull(stored);
 
-        var previousById = new Dictionary<string, FxAlertRule>(StringComparer.Ordinal);
-        var disambiguated = new Dictionary<string, Queue<FxAlertRule>>(StringComparer.Ordinal);
+        var storedById = new Dictionary<string, FxAlertRule>(StringComparer.Ordinal);
+        var storedBySignature = new Dictionary<string, List<FxAlertRule>>(StringComparer.Ordinal);
         foreach (var rule in stored)
         {
             if (string.IsNullOrWhiteSpace(rule.Id))
@@ -99,33 +99,49 @@ public static class FxAlertRuleIdentity
                 continue;
             }
 
-            previousById[rule.Id.Trim()] = rule;
-
-            // A rule that owns an identity of its own (not the inherited one) is what a previous
-            // round handed to one member of a colliding group. Remember it so a retry of the SAME
-            // identity-less batch lands on the same identity instead of inventing another one.
-            if (!string.Equals(rule.Id.Trim(), rule.DerivedId, StringComparison.Ordinal))
+            storedById[rule.Id.Trim()] = rule;
+            var signature = Signature(rule);
+            if (!storedBySignature.TryGetValue(signature, out var matches))
             {
-                var signature = Signature(rule);
-                if (!disambiguated.TryGetValue(signature, out var queue))
-                {
-                    disambiguated[signature] = queue = new Queue<FxAlertRule>();
-                }
+                storedBySignature[signature] = matches = [];
+            }
 
-                queue.Enqueue(rule);
+            matches.Add(rule);
+        }
+
+        // Identities the batch states explicitly can never be handed to another rule: that is how a
+        // partially migrated / partially backfilled input stays consistent (review #C4-2).
+        var reserved = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var rule in incoming)
+        {
+            if (!string.IsNullOrWhiteSpace(rule.Id))
+            {
+                reserved.Add(rule.Id.Trim());
             }
         }
 
+        // The inherited identity of a rule that already carries it is spoken for, too.
+        var claimedDerived = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var rule in incoming)
+        {
+            if (!string.IsNullOrWhiteSpace(rule.Id)
+                && string.Equals(rule.Id.Trim(), rule.DerivedId, StringComparison.Ordinal))
+            {
+                claimedDerived.Add(rule.DerivedId);
+            }
+        }
+
+        var cursor = new Dictionary<string, int>(StringComparer.Ordinal);
         var settled = new List<FxAlertRule>(incoming.Count);
-        var claimed = new HashSet<string>(StringComparer.Ordinal);
         foreach (var rule in incoming)
         {
             var assigned = string.IsNullOrWhiteSpace(rule.Id)
-                ? AdoptForMigration(rule, claimed, disambiguated)
+                ? AdoptForMigration(rule, storedBySignature, cursor, reserved, claimedDerived)
                 : rule;
 
-            assigned = SettleLegacyLevels(assigned, previousById);
-            assigned = SettleRevision(assigned, previousById);
+            assigned = SettleLegacyKeys(assigned, rule, storedById);
+            assigned = SettleRevision(assigned, storedById);
+            reserved.Add(assigned.Id.Trim());
             settled.Add(assigned);
         }
 
@@ -133,65 +149,86 @@ public static class FxAlertRuleIdentity
     }
 
     /// <summary>
-    /// Migration for a rule that carries no identity. The inherited identity is claimed per
-    /// <b>(identity, level)</b> — not per identity — because the complete key contains both: two
-    /// legacy rules that differ only by their threshold were two independent watches, and giving the
-    /// second one a fresh identity would throw away the key its cooldown lives under (audited
-    /// regression). Only a genuine duplicate of the same identity AND level takes a fresh identity,
-    /// and even then a previously assigned one is reused so retrying a save is idempotent.
+    /// Migration for a rule that carries no identity. The FIRST match is by what the rule actually
+    /// watches (<see cref="Signature"/>): a rule that was already saved under an identity keeps it,
+    /// whatever order the settings file lists things in, which is what makes a retry, a reorder or a
+    /// removal stable (review #C4-2/#C4-3). Only rules the store cannot tell apart — same watch, same
+    /// level — are matched positionally. With no match at all, the rule inherits the identity its
+    /// notification keys were already built from, and only a genuine duplicate of that identity gets
+    /// one of its own.
     /// </summary>
     private static FxAlertRule AdoptForMigration(
         FxAlertRule rule,
-        HashSet<string> claimed,
-        Dictionary<string, Queue<FxAlertRule>> disambiguated)
+        Dictionary<string, List<FxAlertRule>> storedBySignature,
+        Dictionary<string, int> cursor,
+        HashSet<string> reserved,
+        HashSet<string> claimedDerived)
     {
-        var inherited = AdoptInheritedIdentity(rule);
-        var signature = Signature(inherited);
-        if (claimed.Add(signature))
+        var signature = Signature(rule);
+        if (storedBySignature.TryGetValue(signature, out var matches))
         {
-            return inherited;
+            var start = cursor.GetValueOrDefault(signature);
+            for (var i = start; i < matches.Count; i++)
+            {
+                if (reserved.Contains(matches[i].Id.Trim()))
+                {
+                    continue;
+                }
+
+                cursor[signature] = i + 1;
+                var match = matches[i];
+                return rule with
+                {
+                    Id = match.Id.Trim(),
+                    Revision = match.Revision,
+                    LegacyRuleKeys = match.LegacyRuleKeys,
+                };
+            }
         }
 
-        if (disambiguated.TryGetValue(signature, out var queue) && queue.Count > 0)
-        {
-            var previous = queue.Dequeue();
-            return inherited with { Id = previous.Id.Trim(), Revision = previous.Revision };
-        }
-
-        // A genuine duplicate: nothing in the state file can tell these two apart, and under the old
-        // fallback they suppressed each other. It gets an identity of its own — from the id-less
-        // incoming rule, because the inherited one already carries the shared identity.
-        return AssignNewIdentity(rule);
+        return claimedDerived.Add(rule.DerivedId) ? AdoptInheritedIdentity(rule) : AssignNewIdentity(rule);
     }
 
     /// <summary>
-    /// Keeps every level string this rule may already have been recorded under, so the upgrade can
-    /// find its old key even after the level format changed (a threshold with more than six decimals
-    /// went from "band:7.1~-" to "band:7.1000001~-"). Merges what a stored copy already knew.
+    /// Keeps every COMPLETE key this rule may already have been recorded under: the earlier build
+    /// composed "{identity}@r{revision}#{level}" with the identity it had then and the six-decimal
+    /// level. Both the identity it used (its derived one, when it had no id) and the level it used are
+    /// remembered, so an upgrade finds the record that holds the cooldown — the level alone is not
+    /// enough once a rule had to be given a fresh identity (audited regression). Merges what a stored
+    /// copy already knew.
     /// </summary>
-    private static FxAlertRule SettleLegacyLevels(
+    private static FxAlertRule SettleLegacyKeys(
         FxAlertRule rule,
-        Dictionary<string, FxAlertRule> previousById)
+        FxAlertRule incoming,
+        Dictionary<string, FxAlertRule> storedById)
     {
-        var levels = new List<string>(rule.LegacyLevels);
-        if (!string.Equals(rule.LegacyLevel, rule.Level, StringComparison.Ordinal)
-            && !levels.Contains(rule.LegacyLevel, StringComparer.Ordinal))
+        var keys = new List<string>(rule.LegacyRuleKeys);
+        var current = $"{rule.StableId}@r{rule.Revision}#{rule.Level}";
+        foreach (var legacy in new[]
+                 {
+                     $"{incoming.DerivedId}@r{incoming.Revision}#{incoming.LegacyLevel}",
+                     $"{incoming.StableId}@r{incoming.Revision}#{incoming.LegacyLevel}",
+                 })
         {
-            levels.Add(rule.LegacyLevel);
+            if (!string.Equals(legacy, current, StringComparison.Ordinal)
+                && !keys.Contains(legacy, StringComparer.Ordinal))
+            {
+                keys.Add(legacy);
+            }
         }
 
-        if (previousById.TryGetValue(rule.Id.Trim(), out var previous))
+        if (storedById.TryGetValue(rule.Id.Trim(), out var previous))
         {
-            foreach (var level in previous.LegacyLevels)
+            foreach (var key in previous.LegacyRuleKeys)
             {
-                if (!levels.Contains(level, StringComparer.Ordinal))
+                if (!keys.Contains(key, StringComparer.Ordinal))
                 {
-                    levels.Add(level);
+                    keys.Add(key);
                 }
             }
         }
 
-        return levels.Count == rule.LegacyLevels.Count ? rule : rule with { LegacyLevels = levels };
+        return keys.Count == rule.LegacyRuleKeys.Count ? rule : rule with { LegacyRuleKeys = keys };
     }
 
     /// <summary>
@@ -200,9 +237,9 @@ public static class FxAlertRuleIdentity
     /// </summary>
     private static FxAlertRule SettleRevision(
         FxAlertRule assigned,
-        Dictionary<string, FxAlertRule> previousById)
+        Dictionary<string, FxAlertRule> storedById)
     {
-        if (!previousById.TryGetValue(assigned.Id.Trim(), out var previous))
+        if (!storedById.TryGetValue(assigned.Id.Trim(), out var previous))
         {
             return assigned;
         }
@@ -218,10 +255,23 @@ public static class FxAlertRuleIdentity
     }
 
     /// <summary>
-    /// What makes two rules the same watch for migration purposes: the identity they inherit plus
-    /// the level that is part of their notification key.
+    /// What makes two rules the same watch for migration purposes: every field that decides WHEN it
+    /// fires (kind, currencies, bounds, thresholds, cost model), formatted invariantly. This is what
+    /// lets a rule keep its identity across a reorder or a neighbouring removal — the list position
+    /// only decides between rules the store genuinely cannot tell apart.
     /// </summary>
-    private static string Signature(FxAlertRule rule) => $"{rule.DerivedId}\u0001{rule.Level}";
+    private static string Signature(FxAlertRule rule) => string.Join(
+        '\u0001',
+        rule.DerivedId,
+        Dec(rule.Lower),
+        Dec(rule.Upper),
+        Dec(rule.ThresholdPct),
+        Dec(rule.ThresholdAmount),
+        Dec(rule.SpreadPct),
+        Dec(rule.FixedFee));
+
+    private static string Dec(decimal? value) =>
+        value?.ToString("G29", System.Globalization.CultureInfo.InvariantCulture) ?? "-";
 
     /// <summary>
     /// True when the two rules watch for different things. Deliberately blind to <c>Id</c>,

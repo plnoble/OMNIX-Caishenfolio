@@ -78,7 +78,8 @@ public sealed class NotificationSettingsStore
         for (var i = 0; i < before.Count; i++)
         {
             if (!string.Equals(before[i].Id, after[i].Id, StringComparison.Ordinal)
-                || before[i].Revision != after[i].Revision)
+                || before[i].Revision != after[i].Revision
+                || !before[i].LegacyRuleKeys.SequenceEqual(after[i].LegacyRuleKeys, StringComparer.Ordinal))
             {
                 return true;
             }

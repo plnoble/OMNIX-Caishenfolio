@@ -139,53 +139,87 @@ public static class AlertGatekeeper
             : $"{alert.Kind}|{alert.Symbol}|{alert.Title}|rule:{alert.RuleId}@r{alert.RuleRevision}#{alert.RuleLevel}";
 
     /// <summary>
-    /// The pre-WP-03 record for a key that now carries a rule identity: the legacy key is exactly
-    /// the new key's prefix (kind|symbol|title). Conservative on purpose (R5/D6) — adopting it can
-    /// at worst delay one repeat, while ignoring it would re-send everything on upgrade day.
+    /// Every key this alert may currently be recorded under: its own, plus the complete keys an
+    /// earlier build wrote for the same rule (<see cref="PortfolioAlert.LegacyRuleKeys"/>). Callers
+    /// use the whole set when deciding whether a condition is still live — an upgrade must not
+    /// fabricate an exit for a key the rule merely stopped producing (WP-03 review #C4-4).
     /// </summary>
-    private static string LegacyPrefixOf(string key)
+    public static IReadOnlyList<string> KeysOf(PortfolioAlert alert)
+    {
+        ArgumentNullException.ThrowIfNull(alert);
+        var keys = new List<string> { KeyOf(alert) };
+        foreach (var legacy in alert.LegacyRuleKeys)
+        {
+            keys.Add($"{alert.Kind}|{alert.Symbol}|{alert.Title}|rule:{legacy}");
+        }
+
+        return keys;
+    }
+
+    /// <summary>
+    /// The pre-rule part of a key: <c>kind|symbol|title</c>. Records written before keys carried a
+    /// rule identity were filed under exactly this, and every rule with the same wording shares it.
+    /// </summary>
+    private static string BarePrefixOf(string key)
     {
         var marker = key.IndexOf("|rule:", StringComparison.Ordinal);
         return marker < 0 ? key : key[..marker];
     }
 
+    /// <summary>
+    /// The record this key can be matched to: the complete keys an earlier build wrote for the same
+    /// rule, then the bare pre-WP-03 <c>kind|symbol|title</c> key. Conservative on purpose (R5/D6) —
+    /// adopting a record can at worst delay one repeat, while ignoring it would re-send on upgrade
+    /// day.
+    /// </summary>
+    /// <remarks>
+    /// Candidate keys are COMPOSED from structured fields (this alert's own kind/symbol/title plus
+    /// the rule's own recorded identity/revision/level), never parsed out of the current key, so an
+    /// unusual identity string cannot truncate the lookup and pull in another rule's record (WP-03
+    /// review #C4-6). Among the candidates the most recent delivery fact wins: a low-precision bare
+    /// record may not override the rule's own newer complete-key record (#C4-5).
+    /// </remarks>
     private static AlertNotificationRecord? AdoptLegacy(
         IReadOnlyDictionary<string, AlertNotificationRecord> records,
         string key,
-        IReadOnlyList<string> legacyLevels)
+        IReadOnlyList<string> legacyRuleKeys)
     {
-        var legacyKey = LegacyPrefixOf(key);
-        if (legacyKey == key)
+        var marker = key.IndexOf("|rule:", StringComparison.Ordinal);
+        if (marker < 0)
         {
             return null;
         }
 
-        // Pre-WP-03: the record was filed under the bare kind|symbol|title key.
-        if (records.TryGetValue(legacyKey, out var bare))
+        var prefix = key[..marker];
+        var candidates = new List<AlertNotificationRecord>();
+        foreach (var legacy in legacyRuleKeys)
         {
-            return bare;
-        }
-
-        // WP-03 before the level format was fixed: same prefix, same identity, same revision, but a
-        // level string the rule no longer produces (e.g. "band:7.1~-" for a threshold that now keeps
-        // "band:7.1000001~-"). The level is part of the key, so without this lookup the rule misses
-        // the record holding its cooldown and is delivered again inside it (review #2).
-        var separator = key.IndexOf('#', key.IndexOf("|rule:", StringComparison.Ordinal));
-        if (separator < 0)
-        {
-            return null;
-        }
-
-        var head = key[..(separator + 1)];
-        foreach (var level in legacyLevels)
-        {
-            if (records.TryGetValue(head + level, out var aliased))
+            if (records.TryGetValue($"{prefix}|rule:{legacy}", out var aliased))
             {
-                return aliased;
+                candidates.Add(aliased);
             }
         }
 
-        return null;
+        if (records.TryGetValue(prefix, out var bare))
+        {
+            candidates.Add(bare);
+        }
+
+        if (candidates.Count == 0)
+        {
+            return null;
+        }
+
+        var newest = candidates[0];
+        foreach (var candidate in candidates)
+        {
+            if (candidate.LastNotifiedAt > newest.LastNotifiedAt)
+            {
+                newest = candidate;
+            }
+        }
+
+        return newest;
     }
 
     public static GatekeeperDecision Filter(        IReadOnlyList<PortfolioAlert> alerts,
@@ -202,16 +236,18 @@ public static class AlertGatekeeper
         var records = new Dictionary<string, AlertNotificationRecord>(
             state.Records, StringComparer.Ordinal);
 
-        var firing = new HashSet<string>(StringComparer.Ordinal);
+        var live = new HashSet<string>(StringComparer.Ordinal);
         foreach (var alert in alerts)
         {
             var key = KeyOf(alert);
-            firing.Add(key);
+            // Everything this alert may be recorded under is live: its own key, plus the complete
+            // keys an earlier build wrote for it.
+            live.UnionWith(KeysOf(alert));
             // WP-03 R5/D6: a state file written before the key carried a rule identity must not
             // read as "never sent" — that would re-send everything on the upgrade day. The old
             // record is adopted as this key's history; it stays in the file until it ages out.
             var previous = records.GetValueOrDefault(key)
-                ?? AdoptLegacy(records, key, alert.LegacyRuleLevels);
+                ?? AdoptLegacy(records, key, alert.LegacyRuleKeys);
 
             var send = previous is null
                 || !previous.WasInRange
@@ -241,26 +277,25 @@ public static class AlertGatekeeper
         // record untouched means the outage neither advances the cooldown nor fabricates a
         // re-entry when the quote comes back (A11).
         var unknown = notEvaluated ?? (IReadOnlySet<string>)new HashSet<string>(StringComparer.Ordinal);
+        live.UnionWith(unknown);
 
-        // WP-03 D6, review #3: an old record must not be read as "left the range" merely because the
-        // same condition is now reported under its new rule identity. While any key that adopts the
-        // old one is firing OR un-evaluated, that old prefix is still live. Without this, the first
-        // upgrade-day round that cannot be evaluated writes a fabricated exit, and the next round
-        // re-sends inside the cooldown the adoption was supposed to respect.
-        var livePrefixes = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var liveKey in firing.Concat(unknown))
+        // A record may also be filed under the bare pre-WP-03 key, which is shared by everything with
+        // the same kind/symbol/title. As long as ANY key with that prefix is live, that record is not
+        // an exit — it is the shared history the adopting rule is still using.
+        foreach (var liveKey in live.ToList())
         {
-            livePrefixes.Add(LegacyPrefixOf(liveKey));
+            live.Add(BarePrefixOf(liveKey));
         }
 
+        // WP-03 D6, review #3 and #C4-4: a record must not be read as "left the range" merely because
+        // the same condition is now reported under a key the upgrade produced. Every key the rule can
+        // be recorded under — its own, the complete keys an earlier build wrote, and any key an
+        // un-evaluated round names — stays live for this round. Otherwise the first upgrade-day round
+        // that cannot be evaluated (or that fires under the new key) writes a fabricated exit, and the
+        // next round re-sends inside the cooldown the adoption was supposed to respect.
         foreach (var (key, record) in records)
         {
-            if (unknown.Contains(key))
-            {
-                continue;
-            }
-
-            if (!firing.Contains(key) && record.WasInRange && !livePrefixes.Contains(key))
+            if (!live.Contains(key) && record.WasInRange)
             {
                 records[key] = record with { WasInRange = false, LastSeenAt = now };
             }
